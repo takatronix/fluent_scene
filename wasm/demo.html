@@ -1,0 +1,161 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fluent scene — WASM local</title>
+<style>
+  body { margin: 0; background: #0b0d10; color: #dfe5ec;
+         font: 14px/1.5 system-ui, sans-serif; }
+  #v { display: block; width: 100vw; height: auto; background: #000;
+       touch-action: none; user-select: none; }
+  #bar { padding: 8px 14px; font-family: ui-monospace, monospace; color: #9aa7b4;
+         white-space: pre-wrap; }
+</style>
+<canvas id="v" width="854" height="480"></canvas>
+<div id="bar">loading wasm…</div>
+<script type="module">
+// Everything happens in this tab: webcam capture, the Scene document, the
+// water simulation, filters, compositing — the same C++ that runs on the
+// robot, compiled to WebAssembly. No server round trip: touch feedback is
+// as fast as the CPU renders.
+import createFluentScene from './fluent_scene.mjs';
+
+const SCENE = `
+schema: fluent.scene/v1alpha2
+stage: { size: [854, 480] }
+inputs:
+  camera: { type: image.rgba8, update: per_frame }
+layers:
+  - id: water
+    content: { image: { source: $inputs.camera, fit: cover } }
+  - id: hud
+    position: [18, 16]
+    opacity: 0.92
+    shadow: {}
+    sublayers:
+      - content: { rect: { size: [330, 46], corner_radius: 12, color: [0, 0, 0, 0.45] } }
+      - content: { text: { text: "FLUENT SCENE - WASM local", position: [14, 10], size: 20 } }
+  - id: tiles
+    position: [0, 378]
+    sublayers:
+      - content: { rect: { rect: [0, 0, 854, 102], color: [0, 0, 0, 0.35] } }
+      - id: t1
+        frame: [8, 6, 160, 90]
+        content: { image: { source: $inputs.camera, fit: cover } }
+        corner_radius: 8
+        masks_to_bounds: true
+        filters: [ { toon: {} } ]
+      - id: t2
+        frame: [176, 6, 160, 90]
+        content: { image: { source: $inputs.camera, fit: cover } }
+        corner_radius: 8
+        masks_to_bounds: true
+        filters: [ { sketch: {} } ]
+      - id: t3
+        frame: [344, 6, 160, 90]
+        content: { image: { source: $inputs.camera, fit: cover } }
+        corner_radius: 8
+        masks_to_bounds: true
+        filters: [ { halftone: {} } ]
+      - id: t4
+        frame: [512, 6, 160, 90]
+        content: { image: { source: $inputs.camera, fit: cover } }
+        corner_radius: 8
+        masks_to_bounds: true
+        filters: [ { hue: { angle: 150 } } ]
+      - id: t5
+        frame: [680, 6, 160, 90]
+        content: { image: { source: $inputs.camera, fit: cover } }
+        corner_radius: 8
+        masks_to_bounds: true
+        filters: [ { pixelate: {} } ]
+`;
+
+const bar = document.getElementById('bar');
+const canvas = document.getElementById('v');
+const ctx = canvas.getContext('2d');
+
+const mod = await createFluentScene();
+const fs = {
+  create: mod.cwrap('fs_create', 'number', ['number']),
+  error: mod.cwrap('fs_error', 'string', []),
+  stageW: mod.cwrap('fs_stage_width', 'number', ['number']),
+  stageH: mod.cwrap('fs_stage_height', 'number', ['number']),
+  imageBuffer: mod.cwrap('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
+  commitImage: mod.cwrap('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
+  pointer: mod.cwrap('fs_pointer', null, ['number', 'number', 'number', 'number']),
+  attachRipple: mod.cwrap('fs_attach_ripple', 'number', ['number', 'string']),
+  render: mod.cwrap('fs_render', 'number', ['number', 'number', 'number', 'number']),
+  renderW: mod.cwrap('fs_render_width', 'number', ['number']),
+  renderH: mod.cwrap('fs_render_height', 'number', ['number']),
+  renderStride: mod.cwrap('fs_render_stride', 'number', ['number']),
+};
+
+const yamlPtr = mod.stringToNewUTF8(SCENE);
+const inst = fs.create(yamlPtr);
+if (!inst) {
+  bar.textContent = 'scene rejected:\n' + fs.error();
+  throw new Error(fs.error());
+}
+fs.attachRipple(inst, 'water');
+const stageW = fs.stageW(inst), stageH = fs.stageH(inst);
+
+// ---- pointer: straight into the local engine (zero network) ---------------
+function hook(el) {
+  let down = false;
+  const send = (phase, e) => {
+    const r = el.getBoundingClientRect();
+    fs.pointer(inst, phase,
+               (e.clientX - r.left) / r.width * stageW,
+               (e.clientY - r.top) / r.height * stageH);
+  };
+  el.addEventListener('pointerdown', e => { down = true; el.setPointerCapture(e.pointerId); send(0, e); e.preventDefault(); });
+  el.addEventListener('pointermove', e => send(1, e));
+  el.addEventListener('pointerup', e => { down = false; send(2, e); });
+}
+hook(canvas);
+
+// ---- webcam → wasm heap ----------------------------------------------------
+const CAM_W = 640, CAM_H = 480;
+const grab = document.createElement('canvas');
+grab.width = CAM_W; grab.height = CAM_H;
+const grabCtx = grab.getContext('2d', { willReadFrequently: true });
+let video = null;
+try {
+  const stream = await navigator.mediaDevices.getUserMedia(
+      { video: { width: CAM_W, height: CAM_H }, audio: false });
+  video = document.createElement('video');
+  video.srcObject = stream; video.muted = true;
+  await video.play();
+} catch (e) {
+  bar.textContent = 'webcam: ' + e + ' (needs https or localhost)';
+}
+
+// ---- the loop: everything local -------------------------------------------
+let last = performance.now(), frames = 0, fpsShown = 0;
+setInterval(() => { fpsShown = frames; frames = 0; }, 1000);
+
+function tick() {
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+
+  if (video && video.readyState >= 2) {
+    grabCtx.drawImage(video, 0, 0, CAM_W, CAM_H);
+    const data = grabCtx.getImageData(0, 0, CAM_W, CAM_H).data;
+    const ptr = fs.imageBuffer(inst, 'camera', CAM_W, CAM_H);
+    mod.HEAPU8.set(data, ptr);
+    fs.commitImage(inst, 'camera', CAM_W, CAM_H);
+  }
+
+  const px = fs.render(inst, dt, canvas.width, canvas.height);
+  const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
+  if (w === canvas.width && stride === w * 4) {
+    const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
+    ctx.putImageData(new ImageData(view, w, h), 0, 0);
+  }
+  ++frames;
+  bar.textContent = `wasm local  ${fpsShown} fps  —  touch the water (zero round trip)`;
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
