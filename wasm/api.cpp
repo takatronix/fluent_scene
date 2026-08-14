@@ -79,6 +79,11 @@ FsInstance* fs_create(const char* yaml_utf8) {
 EMSCRIPTEN_KEEPALIVE
 const char* fs_error() { return g_error.c_str(); }
 
+/// The renderer behind fs_render — "cpu" today; "webgpu" when W3 lands.
+/// Shown in HUDs so nobody has to wonder what is drawing.
+EMSCRIPTEN_KEEPALIVE
+const char* fs_backend() { return "cpu"; }
+
 /// The document's canonical digest.
 EMSCRIPTEN_KEEPALIVE
 const char* fs_digest(FsInstance* inst) { return inst->scene->digest().c_str(); }
