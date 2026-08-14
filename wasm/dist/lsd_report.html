@@ -169,6 +169,20 @@
          border-radius: 20px; margin-top: 1.5rem; margin-bottom: 3rem;
          box-shadow: 0 12px 60px rgba(0, 0, 0, 0.16); }
   @supports not (backdrop-filter: blur(1px)) { main { background: var(--bg); } }
+  .langsw { position: fixed; z-index: 5;
+            top: max(12px, env(safe-area-inset-top));
+            right: max(12px, env(safe-area-inset-right));
+            display: flex; align-items: stretch; overflow: hidden;
+            border: 1.5px solid var(--line); border-radius: 999px;
+            background: color-mix(in srgb, var(--surface) 88%, transparent);
+            backdrop-filter: blur(8px); font-size: 0.78rem; font-weight: 700;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12); }
+  .langsw a, .langsw span { padding: 0.42rem 0.8rem; text-decoration: none;
+                            display: flex; align-items: center; }
+  .langsw a { color: var(--muted); }
+  .langsw a:hover { color: var(--accent); background: var(--accent-soft); }
+  .langsw a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .langsw [aria-current] { background: var(--accent); color: #fff; }
   .stage-link { display: block; position: relative; text-decoration: none;
                 border-radius: 14px; }
   .stage-link:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
@@ -191,6 +205,7 @@
 </head>
 <body>
 <canvas id="bg" width="320" height="180" aria-hidden="true"></canvas>
+<nav class="langsw" aria-label="language"><span aria-current="page">日本語</span><a href="lsd_report.en.html">English</a></nav>
 
 
 <main>
@@ -207,7 +222,6 @@
   </figure>
 
   <div class="cta-row">
-    <a class="cta" href="lsd_report.en.html">English</a>
     <a class="cta primary" href="lsd.html" target="_blank" rel="noopener">デモを開く(要カメラ許可)</a>
     <a class="cta" href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">GitHub: fluent_scene</a>
     <a class="cta" href="https://x.com/takatronix" target="_blank" rel="noopener">作者 @takatronix</a>
@@ -217,18 +231,13 @@
 
 <section class="panel intro">
   <h2 class="flush">fluent_scene とは</h2>
-  <p><strong>fluent_scene</strong> は C++17製の宣言的2Dシーン/映像エフェクトエンジンです。
-  売りは3つ — <strong>GPUで速い</strong>・<strong>書くのが簡単</strong>・
-  <strong>AIが安全に書ける</strong>。
-  <a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">github.com/takatronix/fluent_scene</a>
-  でOSS(MIT)として公開しています。</p>
+  <p><strong>fluent_scene</strong> は、ロボットにもブラウザにも同じ絵を描かせるために作られた、C++17製の宣言的2Dシーン/映像エフェクトライブラリです。<a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">github.com/takatronix/fluent_scene</a> でOSSとして公開しています。</p>
   <ul>
-    <li><strong>GPUで高速</strong> — Vulkan(実行時シェーダーコンパイルゼロ)と WebGPU で描画し、1080pで5.6ms/frame(CPU比~17倍)。GPUの無い環境ではCPUリファレンスが同じ絵をそのまま出します</li>
-    <li><strong>簡単</strong> — 画面はYAML数行の宣言、エフェクトはパラメータ1行。この記事の幻覚も、任意のレイヤーに <code>filters: [ { lsd: { trip: 0.8 } } ]</code> と書くだけで掛かります。実行時はパラメータを差し替えるだけで、UIコントロールもシーングラフの一部です</li>
-    <li><strong>AIが書ける</strong> — シーン文書は型検査・参照解決・digest・デザインリンターを<em>実行前に</em>全部通ります。AIが画面を生成・編集しても、壊れたフレームが表に出る経路が存在しない — これを契約にした設計です</li>
-    <li><strong>フィルタ本体は世界に1つだけ</strong> — YAMLが書くのは「どのフィルタを・どの強さで・どこに掛けるか」であって、数式ではありません。数式の本体は GLSL∩C++ の共通サブセットで<em>一度だけ</em>書かれた1関数(この記事なら <code>fs_lsd()</code>)で、CPUリファレンス・Vulkan・WebGPU(SPIR-V→WGSL自動変換)の3バックエンドが<strong>同一のコード</strong>を実行します。手作業の移植版は存在せず、ゴールデン画像テストが3者の出力一致を継続的に検証します</li>
+    <li><strong>フィルタ本体は世界に1つだけ</strong> — 全32種のフィルタは GLSL∩C++ の共通サブセットで<em>一度だけ</em>記述され、CPUリファレンス・Vulkan・WebGPU(SPIR-V→WGSL自動変換)の3バックエンドが<strong>同一のコード</strong>を実行します。手作業の移植版は存在しません。この記事の <code>lsd</code> フィルタも1関数です</li>
+    <li><strong>クロスバックエンド契約</strong> — ゴールデン画像テストがCPUとGPUの出力差を継続的に検証します</li>
+    <li><strong>宣言的シーン(.fvs)</strong> — レイヤー構造をYAMLで書き、実行時にパラメータだけ差し替え。UIコントロールもシーングラフの一部として描画されます</li>
     <li><strong>情報量を安く買う</strong> — <code>lsd</code>の幾何が示す通り、1つの場を多段で切り、段ごとに前段で歪めるだけで、計算量をほぼ増やさずに複雑さが跳ね上がります</li>
-    <li><strong>どこでも動く</strong> — ロボット実機(Jetson/Vulkan)からブラウザ(wasm+WebGPU)、ヘッドレスCIまで。このページのデモはブラウザ内のwasmで完結し、映像はサーバーに送られません</li>
+    <li><strong>どこでも動く</strong> — ロボット実機(Jetson/Vulkan)、ブラウザ(wasm+WebGPU)、ヘッドレスCI。このページのデモはブラウザ内のwasmで完結し、映像はサーバーに送られません</li>
   </ul>
 </section>
 

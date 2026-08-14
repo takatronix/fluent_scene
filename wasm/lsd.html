@@ -430,7 +430,7 @@ if (res && /^\d+x\d+$/.test(res)) {
 let last = performance.now(), t0 = last, frames = 0, fpsShown = 0, uiTick = 0;
 // the come-up: the first half minute barely touches the image, so you
 // see your own room before it starts moving
-const ONSET = 28;
+const ONSET = 15;
 const LADDER = [[1280, 720], [1024, 576], [854, 480], [640, 360]];
 let rung = 0;
 setInterval(() => {
