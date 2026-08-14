@@ -390,7 +390,7 @@ setInterval(() => {
         eyesClosedAt = performance.now();
       }
     } else {
-      if (eyeState === 'closed' && performance.now() - eyesClosedAt < 500) {
+      if (eyeState === 'closed' && performance.now() - eyesClosedAt < 450) {
         const roll = Math.random();
         if (roll < 0.25) {
           blinkSnap = true;    // 1/4: the world flips — 「パッ」
@@ -489,13 +489,13 @@ function tick() {
   // Holding the eyes closed (not a blink) washes the trip away: the longer
   // they stay shut, the closer the world eases back to its freshly-loaded
   // state — parameters toward defaults, trail history fading out. A full
-  // hold (~0.8 s total) commits the reset: sliders return home and the
+  // hold (~0.5 s total) commits the reset: sliders return home and the
   // conductor forgets where it was.
   const nowMs = performance.now();
   const closedHeld = gazechk.checked && eyeState === 'closed' &&
       nowMs - eyesClosedAt > 250 && nowMs - faceSeen < 1200;
   closedLevel = Math.min(1, Math.max(0,
-      closedLevel + (closedHeld ? dt / 0.55 : -dt / 0.4)));
+      closedLevel + (closedHeld ? dt / 0.25 : -dt / 0.4)));
   if (closedLevel > 0) {
     prevCtx.fillStyle = `rgba(0,0,0,${Math.min(0.9, closedLevel * dt * 6).toFixed(3)})`;
     prevCtx.fillRect(0, 0, CAM_W, CAM_H);
