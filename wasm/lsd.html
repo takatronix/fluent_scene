@@ -60,9 +60,9 @@
   #title span { font-size: 11.5px; color: rgba(255,255,255,0.58); max-width: 62vw; }
 </style>
 <canvas id="v" width="1280" height="720"></canvas>
-<button id="fsbtn" class="corner" data-k="fullscreen" title="全画面" aria-label="全画面">⛶</button>
+<button id="fsbtn" class="corner" data-kt="fullscreen" title="全画面" aria-label="全画面">⛶</button>
 <button id="langbtn" class="corner" title="English / 日本語" aria-label="language">EN</button>
-<button id="gear" class="corner" data-k="settings" title="設定" aria-label="設定">⚙</button>
+<button id="gear" class="corner" data-kt="settings" title="設定" aria-label="設定">⚙</button>
 <div id="drawer">
 <div class="panel">
   <span class="group" data-k="pharma">薬理</span>
@@ -164,16 +164,20 @@ let LANG = qLang ? (qLang === 'en' ? 'en' : 'ja')
          : savedLang ? savedLang
          : (navigator.language || '').toLowerCase().startsWith('ja') ? 'ja' : 'en';
 
-const JA = {};
+const JA = {}, JAT = {};
 document.querySelectorAll('[data-k]').forEach(el => { JA[el.dataset.k] = el.textContent; });
+// data-kt marks the icon buttons: their glyph must survive, only the
+// tooltip changes language
+document.querySelectorAll('[data-kt]').forEach(el => { JAT[el.dataset.kt] = el.title; });
 function applyLang() {
   document.documentElement.lang = LANG;
   document.querySelectorAll('[data-k]').forEach(el => {
     const v = LANG === 'en' ? EN[el.dataset.k] : JA[el.dataset.k];
-    if (v) {
-      el.textContent = v;
-      if (el.hasAttribute('title')) el.title = v;
-    }
+    if (v) el.textContent = v;
+  });
+  document.querySelectorAll('[data-kt]').forEach(el => {
+    const v = LANG === 'en' ? EN[el.dataset.kt] : JAT[el.dataset.kt];
+    if (v) { el.title = v; el.setAttribute('aria-label', v); }
   });
   const rl = document.getElementById('reportlink');
   if (rl) rl.href = LANG === 'en' ? 'lsd_report.en.html' : 'lsd_report.html';
