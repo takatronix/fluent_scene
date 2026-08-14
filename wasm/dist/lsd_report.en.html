@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Science of an LSD Shader</title>
+<meta name="description" content="LSDの視覚変容を神経科学から導き、fluent_sceneのlsdフィルタとして実装した技術レポート。">
+<meta property="og:title" content="The Science of an LSD Shader">
+<meta property="og:description" content="なぜサイケデリックな視覚はああ見えるのか — 分子から皮質、そしてシェーダーまで。">
+<style>
+  :root {
+    --bg: #faf8fc;
+    --surface: #ffffff;
+    --ink: #241f2e;
+    --muted: #6d6580;
+    --line: #e2dcea;
+    --accent: #6d4fc4;
+    --accent-soft: #efe9fb;
+    --code-bg: #f3eff9;
+    --warn-bg: #fdf3ec;
+    --warn-ink: #8a4b1d;
+  }
+  :root:not([data-theme="light"]) { }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16121e;
+      --surface: #1e1929;
+      --ink: #e9e4f2;
+      --muted: #9c92b2;
+      --line: #362e47;
+      --accent: #a78bfa;
+      --accent-soft: #2a2140;
+      --code-bg: #251e35;
+      --warn-bg: #2e2117;
+      --warn-ink: #e0a875;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16121e;
+    --surface: #1e1929;
+    --ink: #e9e4f2;
+    --muted: #9c92b2;
+    --line: #362e47;
+    --accent: #a78bfa;
+    --accent-soft: #2a2140;
+    --code-bg: #251e35;
+    --warn-bg: #2e2117;
+    --warn-ink: #e0a875;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Hiragino Sans", "Noto Sans CJK JP", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+    line-height: 1.85;
+    font-size: 15.5px;
+  }
+  main { max-width: 46rem; margin: 0 auto; padding: 3.5rem 1.4rem 6rem; }
+  header.hero { margin-bottom: 3rem; }
+  .eyebrow {
+    font-size: 12px; letter-spacing: 0.18em; color: var(--accent);
+    text-transform: uppercase; font-weight: 600; margin-bottom: 1rem;
+  }
+  h1 {
+    font-size: 2.3rem; line-height: 1.3; margin: 0 0 1rem; font-weight: 800;
+    text-wrap: balance; letter-spacing: 0.01em;
+  }
+  .lede { font-size: 1.06rem; color: var(--muted); margin: 0; }
+  h2 {
+    font-size: 1.45rem; margin: 3.2rem 0 1rem; font-weight: 700;
+    text-wrap: balance; padding-top: 1.2rem; border-top: 1px solid var(--line);
+  }
+  h3 { font-size: 1.08rem; margin: 2rem 0 0.6rem; font-weight: 700; }
+  p { margin: 0 0 1rem; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.87em;
+    background: var(--code-bg); padding: 0.15em 0.4em; border-radius: 5px;
+  }
+  pre {
+    background: var(--code-bg); border-radius: 10px; padding: 0.9rem 1.1rem;
+    overflow-x: auto; font-size: 0.82rem; line-height: 1.6;
+  }
+  pre code { background: none; padding: 0; }
+  figure { margin: 2rem 0; }
+  figure svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+  figcaption {
+    font-size: 0.84rem; color: var(--muted); margin-top: 0.7rem;
+    line-height: 1.7; max-width: 40rem; margin-left: auto; margin-right: auto;
+  }
+  .fig-num { color: var(--accent); font-weight: 700; }
+  .panel {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 14px; padding: 1.4rem 1.5rem; margin: 1.6rem 0;
+  }
+  .canvas-row {
+    display: flex; gap: 18px; align-items: center; justify-content: center;
+    flex-wrap: wrap; margin: 0.6rem 0 0.9rem;
+  }
+  .canvas-col { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .canvas-col span { font-size: 0.78rem; color: var(--muted); letter-spacing: 0.06em; }
+  .canvas-col canvas { border-radius: 10px; background: #0d0a14; max-width: 100%; }
+  .mode-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .mode-row button {
+    font: 600 13px/1 inherit; font-family: inherit; color: var(--ink);
+    background: var(--surface); border: 1.5px solid var(--line);
+    border-radius: 999px; padding: 7px 16px; cursor: pointer;
+  }
+  .mode-row button:hover { border-color: var(--accent); }
+  .mode-row button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .mode-row button[aria-pressed="true"] {
+    background: var(--accent-soft); border-color: var(--accent); color: var(--accent);
+  }
+  .arrow-note {
+    text-align: center; font-size: 0.82rem; color: var(--muted); margin: 0 0 0.4rem;
+  }
+  table {
+    border-collapse: collapse; width: 100%; font-size: 0.86rem; line-height: 1.6;
+  }
+  .table-wrap { overflow-x: auto; margin: 1.4rem 0; }
+  th {
+    text-align: left; font-size: 0.76rem; letter-spacing: 0.08em; color: var(--muted);
+    border-bottom: 2px solid var(--line); padding: 0.5rem 0.8rem 0.4rem 0;
+    white-space: nowrap;
+  }
+  td { border-bottom: 1px solid var(--line); padding: 0.55rem 0.8rem 0.55rem 0; vertical-align: top; }
+  td:first-child { font-weight: 600; white-space: nowrap; }
+  .caution {
+    background: var(--warn-bg); color: var(--warn-ink); border-radius: 12px;
+    padding: 1rem 1.3rem; font-size: 0.9rem; margin: 2rem 0;
+  }
+  ol.refs { padding-left: 1.4rem; font-size: 0.88rem; }
+  ol.refs li { margin-bottom: 0.55rem; }
+  ul { padding-left: 1.3rem; }
+  li { margin-bottom: 0.35rem; }
+  .param-name { font-weight: 700; color: var(--accent); }
+  /* ---- hero stage ---- */
+  .stage-frame { margin: 1.8rem 0 1.2rem; }
+  .stage-frame canvas {
+    display: block; width: 100%; height: auto; aspect-ratio: 16 / 9;
+    border-radius: 14px; background: #0d0a14;
+    box-shadow: 0 18px 50px rgba(20, 10, 40, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+  .stage-frame figcaption { text-align: left; margin-left: 0; margin-right: 0; }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 1rem; }
+  .cta {
+    display: inline-block; text-decoration: none; font-size: 0.88rem; font-weight: 600;
+    padding: 0.55rem 1.05rem; border-radius: 999px;
+    border: 1.5px solid var(--line); color: var(--ink); background: var(--surface);
+  }
+  .cta:hover { border-color: var(--accent); color: var(--accent); }
+  .cta:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cta.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .cta.primary:hover { opacity: 0.9; color: #fff; }
+  .byline { font-size: 0.85rem; color: var(--muted); margin: 0; }
+  .intro h2.flush { margin-top: 0; border-top: none; padding-top: 0; font-size: 1.2rem; }
+  .intro { margin-top: 2.4rem; }
+
+  /* ---- the live engine, running behind the article ---- */
+  #bg { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0;
+        object-fit: cover; opacity: 0.24; filter: saturate(0.85);
+        pointer-events: none; }
+  body { position: relative; }
+  /* the article rides on its own sheet so the animation never fights the
+     text; it stays visible in the margins and faintly through the blur */
+  main { position: relative; z-index: 1;
+         background: color-mix(in srgb, var(--bg) 92%, transparent);
+         backdrop-filter: blur(9px);
+         border-radius: 20px; margin-top: 1.5rem; margin-bottom: 3rem;
+         box-shadow: 0 12px 60px rgba(0, 0, 0, 0.16); }
+  @supports not (backdrop-filter: blur(1px)) { main { background: var(--bg); } }
+  .stage-link { display: block; position: relative; text-decoration: none;
+                border-radius: 14px; }
+  .stage-link:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .play { position: absolute; inset: 0; margin: auto; width: max-content; height: max-content;
+          display: flex; align-items: center; gap: 9px; padding: 12px 22px 12px 18px;
+          border-radius: 999px; background: rgba(12, 8, 20, 0.5);
+          backdrop-filter: blur(6px); border: 1.5px solid rgba(255, 255, 255, 0.35);
+          color: #fff; font-size: 0.92rem; font-weight: 700; letter-spacing: 0.02em;
+          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35); transition: transform 0.18s ease; }
+  .stage-link:hover .play { transform: scale(1.05); background: rgba(12, 8, 20, 0.65); }
+  @media (prefers-reduced-motion: reduce) { .play { transition: none; } }
+  .engine-tag { display: inline-flex; align-items: center; gap: 7px;
+                font-size: 0.76rem; letter-spacing: 0.08em; font-weight: 700;
+                color: var(--accent); text-transform: uppercase; margin-bottom: 0.7rem; }
+  .engine-tag::before { content: ''; width: 8px; height: 8px; border-radius: 50%;
+                        background: var(--accent); animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+  @media (prefers-reduced-motion: reduce) { .engine-tag::before { animation: none; } }
+</style>
+</head>
+<body>
+<canvas id="bg" width="320" height="180" aria-hidden="true"></canvas>
+
+
+<main>
+<header class="hero">
+  <div class="eyebrow">fluent_scene technical report</div>
+  <h1>The Science of an LSD Shader</h1>
+  <p class="lede">A psychedelic trip is not a vague swirl of colour — it is a phenomenon you can derive from the wiring of the visual system. This report walks through fluent_scene’s new <code>lsd</code> filter and shows which neural mechanism each stage of the computation stands for.</p>
+
+  <figure class="stage-frame">
+    <span class="engine-tag" id="engine-tag">starting engine…</span>
+  <a class="stage-link" href="lsd.html?lang=en"><span class="play"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M8 5.5 L19 12 L8 18.5 Z" fill="currentColor"/></svg>Open the live demo</span>
+  <canvas id="hero" width="320" height="180" aria-label="the lsd filter’s hallucination stage running live: an eternally expanding fractal field in misregistered primaries"></canvas></a>
+    <figcaption>Above is the shader’s hallucination stage — the eternal-zoom fractal field with its misregistered primaries — running live on this page. In the app it rides on your webcam feed, with gaze tracking and feedback recursion on top.</figcaption>
+  </figure>
+
+  <div class="cta-row">
+    <a class="cta" href="lsd_report.html">日本語</a>
+    <a class="cta primary" href="lsd.html?lang=en" target="_blank" rel="noopener">Open the demo (needs camera access)</a>
+    <a class="cta" href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">GitHub: fluent_scene</a>
+    <a class="cta" href="https://x.com/takatronix" target="_blank" rel="noopener">Author: @takatronix</a>
+  </div>
+  <p class="byline">Created by <strong>takatronix</strong>, author of fluent_scene and fluent_vision. The demo is served from GitHub Pages and every pixel is processed inside your browser through wasm — no camera frame is ever sent to a server.</p>
+</header>
+
+<section class="panel intro">
+  <h2 class="flush">What fluent_scene is</h2>
+  <p><strong>fluent_scene</strong> is a declarative 2D scene and video-effect library in C++17, built so that a robot and a browser draw the very same picture.<a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">github.com/takatronix/fluent_scene</a> — open source.</p>
+  <ul>
+    <li><strong>One body per filter, worldwide</strong> — all 32 filters are written <em>once</em> in the GLSL∩C++ subset, and three backends run that identical code: the CPU reference, Vulkan, and WebGPU (whose WGSL is machine-translated from the same SPIR-V). No hand-ported variants exist. The <code>lsd</code> filter in this article is one function</li>
+    <li><strong>A cross-backend contract</strong> — golden-image tests continuously check that CPU and GPU outputs agree</li>
+    <li><strong>Declarative scenes (.fvs)</strong> — layer trees are written in YAML and only parameters change at runtime. Even UI controls are drawn as part of the scene graph</li>
+    <li><strong>Complexity, bought cheaply</strong> — as the <code>lsd</code> geometry shows, folding one field through a sliding octave ladder multiplies apparent structure for almost no extra arithmetic</li>
+    <li><strong>Runs anywhere</strong> — on the robot (Jetson/Vulkan), in the browser (wasm + WebGPU), and headless in CI. The animation on this page is that same engine, in wasm</li>
+  </ul>
+</section>
+
+<p>On 15 August 2026 a thirty-first filter, <code>lsd</code>, joined fluent_scene. Applied to a camera feed it reproduces the visual changes people report under LSD — drifting, breathing, enhanced colour, geometry, trails — as computation stages that each stand for a specific mechanism. The demo runs at <code>wasm/lsd.html</code>, entirely in the browser, and the filter also appears in the <code>stage_web</code> filter list.</p>
+
+<h2>1. What people actually see</h2>
+<p>Decades of subjective reports have been sorted into a surprisingly precise taxonomy (the fullest catalogue is PsychonautWiki’s <a href="https://psychonautwiki.org/wiki/Visual_effects_-_Psychedelics">Visual effects</a>). The main classes:</p>
+<ul>
+  <li><strong>Drifting</strong> — textures and contours ripple, melt, and flow. “The wall is breathing”</li>
+  <li><strong>Colour enhancement</strong> — saturation and brightness rise; reds get redder</li>
+  <li><strong>Tracers and after-images (palinopsia)</strong> — moving objects leave trails, and crucially they read as <em>a row of frozen frames</em> rather than a continuous blur</li>
+  <li><strong>Geometric hallucinations</strong> — tunnels, spirals, rays, lattices; strongest with eyes closed, in the dark, or over flat surfaces</li>
+  <li><strong>Diffraction</strong> — rainbow fringes around bright edges</li>
+  <li><strong>Sharpened acuity</strong> — edges look unusually crisp</li>
+</ul>
+
+<h2>2. Why it looks that way — from molecule to cortex</h2>
+
+<h3>2-0. Why LSD works at all — a key, a lock, and a lid</h3>
+<p>It starts with the shape of a molecule. At the core of LSD sits an <strong>indole ring</strong> — a benzene ring fused to a pyrrole ring — which is precisely the skeleton of <strong>serotonin</strong>, the brain’s own transmitter. LSD is, in effect, serotonin’s shape carried inside a larger, more rigid molecule, and it slots into the serotonin receptor’s binding pocket like a key.</p>
+<p>In 2017, Wacker and colleagues solved <a href="https://www.cell.com/fulltext/S0092-8674(16)31749-4">the crystal structure of an LSD-bound serotonin receptor</a> [13]. The decisive finding: the receptor’s extracellular loop 2 (EL2) folds over the entrance <strong>like a lid, trapping the molecule inside</strong>. That lid makes LSD <strong>extraordinarily slow to dissociate</strong> — it sits there for hours — which is why a trip lasts eight to twelve of them. Mutating the lid to make it more mobile speeds dissociation up and selectively removes the biased (β-arrestin) signalling.</p>
+<figure>
+<svg viewBox="0 0 680 300" role="img" aria-label="serotonin enters and leaves the receptor pocket quickly, while LSD fits by the same indole ring and is then trapped for hours behind the closed EL2 lid">
+  <defs>
+    <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="ar3v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b5cf6"/>
+    </marker>
+    <!-- the indole core: benzene fused to pyrrole, the shape both molecules share -->
+    <g id="indole">
+      <polygon points="14,0 7,12.1 -7,12.1 -14,0 -7,-12.1 7,-12.1"
+               fill="none" stroke="#8b5cf6" stroke-width="2.4"/>
+      <polygon points="7,-12.1 7,12.1 25,18 35,0 25,-18"
+               fill="none" stroke="#8b5cf6" stroke-width="2.4"/>
+    </g>
+  </defs>
+
+  <!-- ---- left: serotonin ---- -->
+  <g fill="none" stroke="currentColor" stroke-width="1.6">
+    <path d="M 60 100 L 60 200 Q 60 228 92 228 L 188 228 Q 220 228 220 200 L 220 100"/>
+    <path d="M 60 100 L 34 70"/>
+    <path d="M 220 100 L 246 70"/>
+  </g>
+  <g transform="translate(128 168)"><use href="#indole"/></g>
+  <g fill="none" stroke="currentColor" stroke-width="1.6">
+    <path d="M 100 58 L 118 92" marker-end="url(#ar3)"/>
+    <path d="M 178 92 L 196 58" marker-end="url(#ar3)"/>
+  </g>
+  <g font-size="12.5" fill="currentColor" text-anchor="middle">
+    <text x="140" y="30" font-weight="700">Serotonin (5-HT)</text>
+    <text x="140" y="52" opacity="0.65">the lid stays open</text>
+    <text x="140" y="262" opacity="0.65">in and out in seconds</text>
+    <text x="140" y="282" opacity="0.65">= ordinary signalling</text>
+  </g>
+
+  <!-- ---- right: LSD ---- -->
+  <g fill="none" stroke="currentColor" stroke-width="1.6">
+    <path d="M 420 100 L 420 200 Q 420 228 452 228 L 548 228 Q 580 228 580 200 L 580 100"/>
+  </g>
+  <!-- EL2 lid, closed -->
+  <g fill="none" stroke="#8b5cf6" stroke-width="3">
+    <path d="M 420 100 Q 470 122 500 120"/>
+    <path d="M 580 100 Q 530 122 500 120"/>
+  </g>
+  <!-- LSD: the same indole core inside a bigger rigid scaffold + tail -->
+  <g transform="translate(482 176) scale(0.86)"><use href="#indole"/></g>
+  <g fill="none" stroke="currentColor" stroke-width="1.6" opacity="0.75">
+    <path d="M 448 150 Q 470 138 500 142 Q 534 147 540 170 Q 546 196 520 206
+             Q 492 216 468 204 Q 444 192 448 150 z"/>
+    <path d="M 540 170 L 560 162 M 560 162 L 572 152 M 560 162 L 572 174"/>
+  </g>
+  <!-- blocked escape -->
+  <path d="M 500 152 L 500 128" stroke="#8b5cf6" stroke-width="2"
+        stroke-dasharray="5 4" fill="none" marker-end="url(#ar3v)"/>
+  <g font-size="12.5" fill="currentColor" text-anchor="middle">
+    <text x="500" y="30" font-weight="700">LSD</text>
+    <text x="500" y="52" fill="#8b5cf6">the EL2 lid closes</text>
+    <text x="500" y="262" opacity="0.65">hours to dissociate</text>
+    <text x="500" y="282" opacity="0.65">= an 8–12 hour trip</text>
+  </g>
+  <g font-size="11.5" fill="currentColor" opacity="0.65">
+    <text x="596" y="152">diethylamide</text>
+    <text x="340" y="180" text-anchor="middle" font-size="20" opacity="0.35">→</text>
+  </g>
+  <text x="340" y="205" font-size="11.5" fill="#8b5cf6" text-anchor="middle">same indole ring</text>
+</svg>
+<figcaption><span class="fig-num">Fig. 1</span> — In purple, the indole ring that serotonin and LSD share; it is the key that fits the pocket. The difference is on the way out: for LSD the extracellular loop EL2 closes over the entrance and traps the molecule, so dissociation is glacial and the effect runs for eight to twelve hours (Wacker et al. 2017).</figcaption>
+</figure>
+
+<p>In short: <strong>the indole ring fits the 5-HT2A receptor, the EL2 lid locks it in for hours, and cortical excitation stays off balance the whole time</strong> — the molecular origin of everything that follows.</p>
+
+<h3>2-1. The 5-HT2A receptor — cortical gain up, gating down</h3>
+<p>LSD’s main action is agonism at the serotonin 5-HT2A receptor. That raises the excitability of cortical pyramidal cells while damping the visual cortex’s alpha rhythm — the gate that normally thins incoming signal [4][6]. fMRI adds that thalamo-cortical connectivity increases, and that the loosening of thalamic sensory filtering correlates with how strong the visual hallucinations feel [5]. The upshot: <strong>the gain goes up and the filtering goes slack</strong> — colours deepen, edges sharpen, and faint patterns start to look meaningful.</p>
+
+<figure>
+<svg viewBox="0 0 680 190" role="img" aria-label="the pathway from retina through thalamus and V1 to higher visual areas; LSD loosens the thalamic gate, tips V1’s excitation-inhibition balance, and lets predictions from higher areas dominate">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <g fill="none" stroke="currentColor" stroke-width="1.4">
+    <rect x="14" y="60" width="104" height="46" rx="10"/>
+    <rect x="180" y="60" width="124" height="46" rx="10"/>
+    <rect x="366" y="60" width="104" height="46" rx="10"/>
+    <rect x="532" y="60" width="134" height="46" rx="10"/>
+    <line x1="118" y1="83" x2="176" y2="83" marker-end="url(#ar)"/>
+    <line x1="304" y1="83" x2="362" y2="83" marker-end="url(#ar)"/>
+    <line x1="470" y1="76" x2="528" y2="76" marker-end="url(#ar)"/>
+    <line x1="528" y1="92" x2="470" y2="92" marker-end="url(#ar)" stroke="#8b5cf6" stroke-width="2"/>
+  </g>
+  <g font-size="13" fill="currentColor" text-anchor="middle" font-weight="600">
+    <text x="66" y="88">Retina</text>
+    <text x="242" y="88">Thalamus (LGN)</text>
+    <text x="418" y="88">V1</text>
+    <text x="599" y="88">Higher visual areas</text>
+  </g>
+  <g font-size="11" fill="currentColor" opacity="0.65" text-anchor="middle">
+    <text x="147" y="72">input</text>
+    <text x="499" y="66">features</text>
+    <text x="499" y="112" fill="#8b5cf6" opacity="1">priors dominate</text>
+    <text x="242" y="130">gate loosens:</text>
+    <text x="242" y="146">unfiltered input passes [5]</text>
+    <text x="418" y="130">E/I balance breaks:</text>
+    <text x="418" y="146">patterns self-organize [2][3]</text>
+    <text x="66" y="130">pupils dilate:</text>
+    <text x="66" y="146">diffraction fringes</text>
+    <text x="340" y="30">5-HT2A agonism → cortical gain ↑, alpha rhythm ↓ [4][6]</text>
+  </g>
+</svg>
+<figcaption><span class="fig-num">Fig. 2</span> — The visual pathway and where LSD acts. The purple arrow running back down from higher areas to V1 is the crux: the brain’s own predictions outweigh the evidence arriving from the world, and wherever input is thin, the brain paints something in.</figcaption>
+</figure>
+
+<h3>2-2. Where the geometry comes from — V1, a logarithm, and a fractal</h3>
+<p>Klüver sorted geometric hallucinations into four classes in 1926 — the <strong>form constants</strong>: tunnels and funnels, spirals, lattices, cobwebs [1]. Why does everyone see the same handful of shapes? Ermentrout and Cowan gave a beautiful answer in 1979 [2].</p>
+<p>Neurons in V1 excite their near neighbours and inhibit those a little further out. Push excitation up with a drug and that balance tips, so <strong>activity patterns arise spontaneously</strong> across the cortical sheet — the same bifurcation that gives Turing patterns in chemistry. What makes them visible is anatomy: the retina-to-V1 projection is approximately a <strong>complex logarithm</strong>, <code>(x,y) → (log r, θ)</code>. Map plain cortical stripes back through it and you get:</p>
+<ul>
+  <li>stripes perpendicular to <code>log r</code> → <strong>concentric rings = tunnels</strong></li>
+  <li>stripes perpendicular to <code>θ</code> → <strong>radial rays = funnels</strong></li>
+  <li>oblique stripes → <strong>logarithmic spirals</strong></li>
+  <li>two stripe directions at once → <strong>lattices and chequerboards</strong></li>
+</ul>
+<p>A single plane wave — one tidy set of stripes — will not give you what people actually describe: <strong>masses of every size, nested fractally, streaming toward you</strong>. Two findings say why.</p>
+<ul>
+  <li><strong>Lattice planforms</strong> — Bressloff and colleagues [3] showed that once V1’s orientation-tuned, anisotropic lateral wiring (shift-twist symmetry) is included, the stable solutions are not lone stripes but <strong>rhombic and hexagonal lattices</strong>: honeycombs, cobwebs, filigrees. Klüver’s lattice and cobweb classes fall out of this.</li>
+  <li><strong>A rise in fractal dimension</strong> — Varley et al. [10] measured, under both LSD and psilocybin, an increase in the fractal dimension of cortical activity <strong>in space and in time</strong>. A system near criticality is scale-free: no single dominant wavelength survives, and <strong>structure stands at every scale at once</strong>.</li>
+</ul>
+<p>Drawing the theory’s lattice solutions straight out of a trigonometric function, though, comes out far too regular to be true. Two things recur in every report: <strong>there are no straight lines, right angles, or perfect circles</strong>, and <strong>you are flying through a 3D space where everything expands forever</strong>. So the shader’s geometry field uses no periodic function at all:</p>
+<ul>
+  <li><strong>Eternal zoom</strong> — depth shells an octave apart crossfade under a Hann window. As the flight advances the nearest shell expands past the window and fades, while a fresh far shell fades in with new content seeded by an integer flight index, so <strong>the expansion never ends and never repeats</strong></li>
+  <li><strong>Detail the way nature has detail</strong> — each shell is domain-warped value noise weighted toward its high octaves, so finer tufts keep hanging off the edges of coarser flows: the statistics of coastlines, clouds, and lichen</li>
+  <li><strong>Depth cues</strong> — nearer shells are brighter and combine by maximum, so near masses occlude far ones, and each shell owns a hue a golden angle from its neighbours, which <strong>separates depth by colour as well as by motion</strong></li>
+</ul>
+<p>Klüver’s classes survive not as drawn figures but as <strong>statistics: multi-scale, flowing, biased toward the centre</strong>. Combined with the feedback zoom described below, the whole frame reads as something welling up out of the distance and rushing past you.</p>
+<p>The demo below shows the principle. On the left, a pattern on the cortical sheet; on the right, the same pattern mapped back into retinal coordinates. “Nested lattice” is the multi-octave construction the shader uses:</p>
+
+<div class="panel">
+  <p class="arrow-note">cortical stripes &nbsp;──&nbsp; inverse map <code>r = e^u, θ = v</code> &nbsp;──&gt;&nbsp; what is perceived</p>
+  <div class="canvas-row">
+    <div class="canvas-col">
+      <canvas id="cortex" width="240" height="200" aria-label="a plane-wave pattern on the V1 cortical sheet"></canvas>
+      <span>V1 cortical sheet (u = log r, v = θ)</span>
+    </div>
+    <div class="canvas-col">
+      <canvas id="retina" width="220" height="220" aria-label="the perceived image, inverse-mapped into retinal coordinates"></canvas>
+      <span>perceived image (retinal coordinates)</span>
+    </div>
+  </div>
+  <div class="mode-row" role="group" aria-label="choose the stripe orientation">
+    <button data-mode="tunnel" aria-pressed="true">Tunnel</button>
+    <button data-mode="funnel" aria-pressed="false">Rays</button>
+    <button data-mode="spiral" aria-pressed="false">Spiral</button>
+    <button data-mode="lattice" aria-pressed="false">Lattice</button>
+    <button data-mode="fractal" aria-pressed="false">Nested lattice</button>
+  </div>
+  <figcaption style="margin-top:0.9rem"><span class="fig-num">Fig. 3</span> — Ermentrout–Cowan, live. On the cortex it is only a sum of simple waves; pushed through the logarithm, Klüver’s classes appear. “Nested lattice” stacks three frequency-doubled octaves, showing that self-similarity — the same structure at every scale — is the heart of a fractal hallucination. The shader’s <code>geometry</code> stage lays this multi-octave version over the darker parts of the image as masses.</figcaption>
+</div>
+
+<h3>2-3. Trails and after-images — a broken suppressor, and recursion</h3>
+<p>Normally the brain actively erases the smear a moving object leaves on the retina — motion streak suppression. LSD appears to push that circuit outside its working range, so frames that should have been erased persist [7]. The texture of the reports matters: the tail is not a smooth blur but <strong>a row of discrete frozen images</strong>, strobe-like.</p>
+<p>Computationally that is <strong>feedback: the output re-entering the input</strong>. A single-pass shader has no memory of the previous frame, so the demo takes the rendered result each frame, scales and rotates it slightly, decays it, and composites it back into the next input. That recursion gives the trails — and also <strong>the endlessly proliferating fractal depth of the tunnel</strong>, the same dynamics as pointing a camera at its own monitor.</p>
+
+<figure>
+<svg viewBox="0 0 680 210" role="img" aria-label="the camera frame and the previous output are composited, passed through the fs_lsd filter, and shown; the output returns to the compositor scaled, rotated, and decayed">
+  <defs>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <g fill="none" stroke="currentColor" stroke-width="1.4">
+    <rect x="14" y="40" width="120" height="46" rx="10"/>
+    <rect x="200" y="40" width="90" height="46" rx="23"/>
+    <rect x="356" y="40" width="130" height="46" rx="10"/>
+    <rect x="552" y="40" width="114" height="46" rx="10"/>
+    <rect x="286" y="140" width="220" height="44" rx="10" stroke="#8b5cf6" stroke-width="2"/>
+    <line x1="134" y1="63" x2="196" y2="63" marker-end="url(#ar2)"/>
+    <line x1="290" y1="63" x2="352" y2="63" marker-end="url(#ar2)"/>
+    <line x1="486" y1="63" x2="548" y2="63" marker-end="url(#ar2)"/>
+    <path d="M 609 86 L 609 162 L 510 162" marker-end="url(#ar2)" stroke="#8b5cf6" stroke-width="2"/>
+    <path d="M 286 162 L 245 162 L 245 90" marker-end="url(#ar2)" stroke="#8b5cf6" stroke-width="2"/>
+  </g>
+  <g font-size="13" fill="currentColor" text-anchor="middle" font-weight="600">
+    <text x="74" y="68">camera</text>
+    <text x="245" y="68">compose ⊕</text>
+    <text x="421" y="68">fs_lsd filter</text>
+    <text x="609" y="68">output</text>
+    <text x="396" y="167" fill="#8b5cf6">scale, rotate, decay (warp)</text>
+  </g>
+  <g font-size="11" fill="currentColor" opacity="0.65" text-anchor="middle">
+    <text x="165" y="52">fresh retinal image</text>
+    <text x="321" y="52">warp + colour + geometry</text>
+    <text x="583" y="130">previous frame</text>
+    <text x="150" y="200">two blend modes: smooth (weighted average) / glow trails (max blend = the discrete frozen frames [7])</text>
+  </g>
+</svg>
+<figcaption><span class="fig-num">Fig. 4</span> — The feedback loop in <code>wasm/lsd.html</code>. The purple path is the recursion; trails, palinopsia, and the recursive tunnel all come from it. The decay coefficient — the Persistence slider — stands for how well the suppressing circuit is still working.</figcaption>
+</figure>
+
+<h3>2-4. Why the same image never comes twice — non-stationarity</h3>
+<p>The other signature of the experience is <strong>non-stationarity</strong>. It is never a static “effect”; it transforms continuously and never returns to a state it has been in. The transitions are not uniform either: <strong>some you only notice afterwards, some bleed slowly, some snap</strong>. Measurements agree:</p>
+<ul>
+  <li>Under psilocybin the brain wanders a <strong>wider repertoire of dynamical states</strong> than usual (Tagliazucchi et al. [11]); under LSD the use of connectome harmonics — the eigenmodes of brain activity — expands, and the trajectory stops repeating (Atasoy et al. [12]).</li>
+  <li>Varley et al. [10] measured a <strong>rise in the fractal dimension of the time course</strong>, meaning the fluctuations have no characteristic timescale. In power-law fluctuation, slow drifts and sudden jumps are <strong>the body and the tail of one distribution</strong> — that both happen is not a coincidence.</li>
+</ul>
+<p>The demo implements this as a <strong>trip conductor</strong>. Every parameter wanders around its slider value: a slow incommensurate jitter you never quite catch, plus metastable jumps arriving as a Poisson process (about one every twenty seconds). Each jump’s transition time is drawn <strong>log-uniformly from 0.25 to 20 seconds</strong> — a heavy tail — so some changes snap and others take the better part of a minute. And because the feedback loop is a nonlinear recursion, it is sensitive to its own history: <strong>no frame is ever produced twice</strong>.</p>
+
+<h2>3. Phenomenon → mechanism → implementation</h2>
+<div class="table-wrap">
+<table>
+  <tr><th>Phenomenon</th><th>Neural mechanism</th><th>In the shader</th><th>Parameter</th></tr>
+  <tr><td>Drifting, breathing</td><td>Higher gain and dominant priors destabilise where a contour is judged to be [4][6]</td><td>Sampling coordinates warped by a slow radial swell plus two incommensurate travelling fields</td><td><code>drift</code></td></tr>
+  <tr><td>Colour enhancement</td><td>Unfiltered input through a loosened thalamic gate [5]</td><td>Saturation and contrast lifted, hue rotating slowly</td><td><code>trip</code></td></tr>
+  <tr><td>Sharpened acuity</td><td>The same amplification, acting on edge responses</td><td>Four-tap unsharp mask</td><td><code>trip</code></td></tr>
+  <tr><td>Rainbow fringes</td><td>Diffraction through dilated pupils</td><td>Radial RGB separation, widening toward the periphery</td><td><code>chroma</code></td></tr>
+  <tr><td>Geometry (flying in 3D)</td><td>V1 self-organisation [1][2][3] plus a raised fractal dimension [10]. It has a centre, it is finely detailed, and it expands forever</td><td>Three depth shells in an eternal zoom (Hann crossfade, content re-seeded by flight index). Masses are domain-warped value noise over four high-weighted octaves; nearer shells are brighter and combine by maximum; each shell owns a hue so depth separates in colour</td><td><code>geometry</code></td></tr>
+  <tr><td>Trails, after-images</td><td>Motion streak suppression breaking down [7]</td><td>Output fed back into input, decayed and slightly zoomed and turned; max blending reproduces the discrete frozen frames</td><td>Persistence / Zoom / Swirl</td></tr>
+  <tr><td>Ceaseless transformation</td><td>An expanded dynamical repertoire [11][12] and scale-free fluctuation [10]</td><td>The trip conductor: micro-jitter plus Poisson-arriving metastable jumps, transition times log-uniform over 0.25–20 s</td><td>Auto-flux / Depth</td></tr>
+</table>
+</div>
+
+<h2>4. Playing with the parameters</h2>
+<p>The demo lives at <a href="https://takatronix.github.io/fluent_scene/lsd.html?lang=en">takatronix.github.io/fluent_scene/lsd.html</a>. The picture fills the screen; the controls hide behind the <strong>⚙</strong> in the corner. <strong>⛶</strong> or a double-tap goes fullscreen, and on a phone the first tap does it for you. The <em>pharmacology</em> group drives the filter itself, <em>recursion</em> drives the feedback, and <em>flux</em> drives the trip conductor.</p>
+<ul>
+  <li><span class="param-name">Trip</span> — master gain. Zero passes the image through untouched, 1.5 runs every stage at full. This is the dose</li>
+  <li><span class="param-name">Drift</span> — how far things ripple and breathe. At 3 the walls melt</li>
+  <li><span class="param-name">Geometry</span> — how strongly the hallucinated structure is laid over the image. It favours dark and flat regions, exactly as the reports do</li>
+  <li><span class="param-name">Chroma</span> — the width of the rainbow fringing</li>
+  <li><span class="param-name">Persistence</span> — feedback decay. Past 0.9 the past stops fading</li>
+  <li><span class="param-name">Zoom</span> — the recursion’s scale step. Positive pulls you in, negative pushes outward</li>
+  <li><span class="param-name">Swirl</span> — the recursion’s rotation. With persistence it grows logarithmic spirals on its own</li>
+  <li><span class="param-name">Auto-flux / Depth</span> — the trip conductor and how far it swings. While it runs, every parameter wanders around its slider and the image never repeats; the status line shows whether it is holding or shifting, and whether the shift snaps or crawls</li>
+</ul>
+<h3>Recipes worth trying</h3>
+<ul>
+  <li><strong>Eyes closed</strong>: cover the camera, Geometry 1.2, Trip 1.0 — with the input gone only the endogenous pattern remains, which is why the geometry shows up in the dark</li>
+  <li><strong>Strobe trails</strong>: Trail set to glow, Persistence 0.85, then wave your hand — the discrete trailing of [7]</li>
+  <li><strong>Infinite tunnel</strong>: Persistence 0.9, Zoom 0.3, Swirl 0.2 — video-feedback dynamics</li>
+  <li><strong>Threshold dose</strong>: Trip 0.3, Geometry 0 — colours a little deeper, contours barely moving</li>
+</ul>
+
+<h2>5. Implementation notes</h2>
+<p>The filter is one function — <code>fs_lsd()</code> in <code>include/fluent_scene/shared/filters_shared.h</code>, written once in the GLSL∩C++ subset and run identically by the CPU reference, Vulkan, and WebGPU (whose WGSL is machine-translated through naga). Time arrives through the <code>time</code> parameter slot, driven per frame by the host in the same pattern <code>fx::Ripple</code> uses, so at <code>time=0</code> the filter is static and golden-testable. The feedback loop is closed outside the filter pipeline, in the demo, leaving the core renderers untouched.</p>
+<pre><code>// the heart of the geometry stage (from fs_lsd): depth shells expanding forever
+float zp = t * 0.3;                        // flight speed, octaves per second
+float zf = zp - floor(zp);
+for (int i = 0; i &lt; 3; ++i) {
+    float e  = float(i) - zf;              // depth exponent; smaller is nearer
+    float sc = exp2(e);                    // shrinks in domain → expands on screen
+    float m  = float(i) + floor(zp);       // this shell’s flight index
+    vec2  off = hash(m);                   // fresh content per shell
+    float w  = 0.5 - 0.5*cos(2.094*(e+1)); // Hann window: born, grown, gone
+    vec2 pl = pc * 3.0 * sc + warp * 2.2 * sc + off;
+    float nv = vnoise(pl) * 0.38 + vnoise(pl * 2.1) * 0.27   // weighted toward
+             + vnoise(pl * 4.4) * 0.2 + vnoise(pl * 8.9) * 0.15;  // the fine octaves
+    float near_f = smoothstep(2.0, -1.0, e);
+    float clv = smoothstep(0.52, 0.72, nv) * w * (0.5 + 0.5*near_f);
+    mass_ph = clv &gt; mass ? m*2.39996 + ... : mass_ph;  // the shell’s own hue
+    mass = max(mass, clv);                 // near occludes far = depth
+}</code></pre>
+
+<div class="caution">This is a computational approximation of a visual phenomenon — neither a faithful reproduction of a drug experience nor an encouragement to seek one. Flashing and spiralling patterns can be intense for photosensitive viewers; start with gentle settings.</div>
+
+<h2>References</h2>
+<ol class="refs">
+  <li>Klüver, H. (1966). <em>Mescal and Mechanisms of Hallucinations.</em> University of Chicago Press. (the origin of the form constants; first published 1926)</li>
+  <li>Ermentrout, G. B. &amp; Cowan, J. D. (1979). A mathematical theory of visual hallucination patterns. <em>Biological Cybernetics</em>, 34, 137–150.</li>
+  <li>Bressloff, P. C., Cowan, J. D., Golubitsky, M., et al. (2001). <a href="https://pubmed.ncbi.nlm.nih.gov/11860679/">What geometric visual hallucinations tell us about the visual cortex.</a> <em>Neural Computation</em>, 14(3), 473–491.</li>
+  <li>Carhart-Harris, R. L., et al. (2016). <a href="https://www.pnas.org/doi/10.1073/pnas.1518377113">Neural correlates of the LSD experience revealed by multimodal neuroimaging.</a> <em>PNAS</em>, 113(17), 4853–4858.</li>
+  <li>Müller, F., et al. (2017). <a href="https://www.researchgate.net/publication/319966851_Increased_thalamic_resting-state_connectivity_as_a_core_driver_of_LSD-induced_hallucinations">Increased thalamic resting-state connectivity as a core driver of LSD-induced hallucinations.</a> <em>Acta Psychiatrica Scandinavica</em>, 136(6), 648–657.</li>
+  <li>Kometer, M. &amp; Vollenweider, F. X. (2016). <a href="https://pubmed.ncbi.nlm.nih.gov/27900674/">Serotonergic hallucinogen-induced visual perceptual alterations.</a> <em>Current Topics in Behavioral Neurosciences</em>, 36, 257–282.</li>
+  <li>Dubois, J. &amp; VanRullen, R. (2011). <a href="https://journals.plos.org/plosbiology/article?id=10.1371/journal.pbio.1001056">Visual trails: do the doors of perception open periodically?</a> <em>PLOS Biology</em>, 9(5), e1001056.</li>
+  <li>Kwan, A. C., et al. (2024). <a href="https://www.nature.com/articles/s41380-024-02632-3">Neural mechanisms of psychedelic visual imagery.</a> <em>Molecular Psychiatry</em>, 30, 809–818.</li>
+  <li>General audience: <a href="https://www.quantamagazine.org/a-math-theory-for-why-people-hallucinate-20180730/">A Math Theory for Why People Hallucinate</a> (Quanta Magazine, 2018) / phenomenology catalogue: <a href="https://psychonautwiki.org/wiki/Visual_effects_-_Psychedelics">PsychonautWiki</a></li>
+  <li>Varley, T. F., Carhart-Harris, R., Roseman, L., Menon, D. K. &amp; Stamatakis, E. A. (2020). <a href="https://www.sciencedirect.com/science/article/pii/S1053811920305358">Serotonergic psychedelics LSD &amp; psilocybin increase the fractal dimension of cortical brain activity in spatial and temporal domains.</a> <em>NeuroImage</em>, 220, 117049.</li>
+  <li>Tagliazucchi, E., Carhart-Harris, R., Leech, R., Nutt, D. &amp; Chialvo, D. R. (2014). Enhanced repertoire of brain dynamical states during the psychedelic experience. <em>Human Brain Mapping</em>, 35(11), 5442–5456.</li>
+  <li>Atasoy, S., et al. (2017). Connectome-harmonic decomposition of human brain activity reveals dynamical repertoire re-organization under LSD. <em>Scientific Reports</em>, 7, 17661.</li>
+  <li>Wacker, D., Wang, S., McCorvy, J. D., et al. (2017). <a href="https://www.cell.com/fulltext/S0092-8674(16)31749-4">Crystal structure of an LSD-bound human serotonin receptor.</a> <em>Cell</em>, 168(3), 377–389. (the EL2 lid and ultra-slow dissociation — the structural basis of the long duration)</li>
+</ol>
+</main>
+
+<script>
+
+(function () {
+  const cortex = document.getElementById('cortex');
+  const retina = document.getElementById('retina');
+  const cctx = cortex.getContext('2d');
+  const rctx = retina.getContext('2d');
+  const CW = cortex.width, CH = cortex.height;
+  const RW = retina.width, RH = retina.height;
+  const cImg = cctx.createImageData(CW, CH);
+  const rImg = rctx.createImageData(RW, RH);
+  // wave vectors (a: along u = log r, b: along v = θ; b must be an integer
+  // harmonic so the seam at ±π is invisible)
+  const MODES = {
+    tunnel: [[8, 0]],
+    funnel: [[0, 9]],
+    spiral: [[6, 6]],
+    lattice: [[6, 6], [6, -6]],
+    fractal: 'octaves',  // 3 self-similar octaves of the lattice product
+  };
+  let mode = 'tunnel';
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let t = 2.0;
+
+  function field(u, v, t) {
+    if (MODES[mode] === 'octaves') {
+      // the shader's construction: lattice products, frequencies doubling
+      let s = 0, amp = 1, norm = 0, fu = 3, fm = 3;
+      for (let n = 0; n < 3; ++n) {
+        s += amp * Math.cos(fu * u + fm * v - t * (1 + 0.3 * n)) *
+                   Math.cos(fu * u - fm * v - t * 0.7);
+        norm += amp; amp *= 0.6; fu *= 2; fm *= 2;
+      }
+      return s / norm * 1.6;
+    }
+    let s = 0;
+    const waves = MODES[mode];
+    for (const [a, b] of waves) s += Math.sin(a * u + b * v - t);
+    s /= waves.length;
+    return s;
+  }
+  // violet-tinted stripe shading on a dark ground (fixed-look panel: the
+  // canvases commit to one visual world in both page themes)
+  function shade(s) {
+    const v = Math.max(0, Math.min(1, 0.5 + 0.62 * s));
+    return [Math.round(30 + 165 * v), Math.round(22 + 120 * v), Math.round(48 + 200 * v)];
+  }
+
+  function draw() {
+    // cortical sheet: u ∈ [-3.2, 0], v ∈ [-π, π]
+    let p = 0;
+    for (let y = 0; y < CH; ++y) {
+      const v = (y / CH) * 2 * Math.PI - Math.PI;
+      for (let x = 0; x < CW; ++x) {
+        const u = (x / CW) * 3.2 - 3.2;
+        const [r, g, b] = shade(field(u, v, t));
+        cImg.data[p++] = r; cImg.data[p++] = g; cImg.data[p++] = b; cImg.data[p++] = 255;
+      }
+    }
+    cctx.putImageData(cImg, 0, 0);
+    // retinal view: inverse map r = e^u
+    p = 0;
+    for (let y = 0; y < RH; ++y) {
+      for (let x = 0; x < RW; ++x) {
+        const dx = (x - RW / 2) / (RW / 2), dy = (y - RH / 2) / (RH / 2);
+        const rad = Math.hypot(dx, dy);
+        if (rad > 1 || rad < 0.02) {
+          rImg.data[p++] = 13; rImg.data[p++] = 10; rImg.data[p++] = 20; rImg.data[p++] = 255;
+          continue;
+        }
+        const u = Math.log(rad);
+        const v = Math.atan2(dy, dx);
+        const [r, g, b] = shade(field(u, v, t));
+        rImg.data[p++] = r; rImg.data[p++] = g; rImg.data[p++] = b; rImg.data[p++] = 255;
+      }
+    }
+    rctx.putImageData(rImg, 0, 0);
+  }
+
+  const buttons = document.querySelectorAll('.mode-row button');
+  buttons.forEach(btn => btn.addEventListener('click', () => {
+    mode = btn.dataset.mode;
+    buttons.forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    if (reduced) draw();
+  }));
+
+  if (reduced) {
+    draw();
+  } else {
+    (function loop() {
+      t += 0.035;
+      draw();
+      requestAnimationFrame(loop);
+    })();
+  }
+})();
+</script>
+
+
+<script type="module">
+// The report's own background IS the subject: fluent_scene's wasm build
+// runs the real fs_lsd filter here — the same GLSL∩C++ body the Vulkan
+// backend compiles on the robot. No camera; the input is a procedural
+// plate, and the feedback loop (output re-entering the input, zoomed and
+// turned) supplies the recursion a single pass cannot.
+const bg = document.getElementById('bg');
+const heroEl = document.getElementById('hero');
+const tag = document.getElementById('engine-tag');
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const SCENE = `
+schema: fluent.scene/v1alpha2
+stage: { size: [960, 540] }
+inputs:
+  plate: { type: image.rgba8, update: per_frame }
+layers:
+  - id: live
+    content: { image: { source: $inputs.plate, fit: cover } }
+    filters: [ { lsd: { trip: 1.0, time: 0, drift: 1.2, geometry: 0.9, chroma: 1.4 } } ]
+`;
+
+try {
+  const mod = await (await import('./fluent_scene.mjs')).default();
+  const fs = {
+    create: mod.cwrap('fs_create', 'number', ['number']),
+    error: mod.cwrap('fs_error', 'string', []),
+    imageBuffer: mod.cwrap('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
+    commitImage: mod.cwrap('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
+    render: mod.cwrap('fs_render', 'number', ['number', 'number', 'number', 'number']),
+    renderW: mod.cwrap('fs_render_width', 'number', ['number']),
+    renderH: mod.cwrap('fs_render_height', 'number', ['number']),
+    renderStride: mod.cwrap('fs_render_stride', 'number', ['number']),
+    setFilter: mod.cwrap('fs_layer_set_filter', 'number',
+        ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
+  };
+  const inst = fs.create(mod.stringToNewUTF8(SCENE));
+  if (!inst) throw new Error(fs.error());
+
+  const W = 320, H = 180;
+  bg.width = W; bg.height = H;
+  heroEl.width = W; heroEl.height = H;
+  const bgCtx = bg.getContext('2d');
+  const heroCtx = heroEl.getContext('2d');
+
+  // the plate: a quiet coloured ground, and the previous frame folded back
+  const plate = document.createElement('canvas');
+  plate.width = W; plate.height = H;
+  const pCtx = plate.getContext('2d', { willReadFrequently: true });
+  const grad = pCtx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, '#2b3f6b');
+  grad.addColorStop(0.5, '#6b4f8c');
+  grad.addColorStop(1, '#2f6b63');
+  const prev = document.createElement('canvas');
+  prev.width = W; prev.height = H;
+  const prevCtx = prev.getContext('2d');
+  let hasPrev = false;
+
+  let last = performance.now(), t0 = last, visible = true;
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(es => { visible = es[0].isIntersecting; },
+                             { threshold: 0.01 }).observe(bg);
+  }
+  document.addEventListener('visibilitychange', () => { last = performance.now(); });
+
+  function frame() {
+    const now = performance.now();
+    const dt = Math.min((now - last) / 1000, 0.1);
+    last = now;
+    const t = (now - t0) / 1000;
+
+    pCtx.globalCompositeOperation = 'source-over';
+    pCtx.globalAlpha = 1;
+    pCtx.fillStyle = grad;
+    pCtx.fillRect(0, 0, W, H);
+    if (hasPrev) {                       // feedback: zoom in, turn, decay
+      pCtx.globalAlpha = 0.72;
+      pCtx.translate(W / 2, H / 2);
+      pCtx.scale(Math.exp(0.16 * dt * 4), Math.exp(0.16 * dt * 4));
+      pCtx.rotate(0.1 * dt * 4);
+      pCtx.translate(-W / 2, -H / 2);
+      pCtx.drawImage(prev, 0, 0);
+      pCtx.setTransform(1, 0, 0, 1, 0, 0);
+      pCtx.globalAlpha = 1;
+    }
+    const px = fs.imageBuffer(inst, 'plate', W, H);
+    mod.HEAPU8.set(pCtx.getImageData(0, 0, W, H).data, px);
+    fs.commitImage(inst, 'plate', W, H);
+    fs.setFilter(inst, 'live', 'lsd', 1.0, t, 1.2, 0.9, 1.4);
+
+    const out = fs.render(inst, dt, W, H);
+    if (fs.renderW(inst) === W && fs.renderStride(inst) === W * 4) {
+      const view = new Uint8ClampedArray(mod.HEAPU8.buffer, out, W * H * 4);
+      const frameData = new ImageData(view, W, H);
+      bgCtx.putImageData(frameData, 0, 0);
+      heroCtx.putImageData(frameData, 0, 0);
+      prevCtx.drawImage(bg, 0, 0);
+      hasPrev = true;
+    }
+    if (!reduced) {
+      if (visible) requestAnimationFrame(frame);
+      else setTimeout(() => requestAnimationFrame(frame), 400);
+    }
+  }
+  frame();
+  if (tag) tag.textContent = 'fluent_scene engine — live in wasm';
+} catch (e) {
+  console.error('engine unavailable:', e);
+  if (tag) tag.textContent = 'engine unavailable — static page';
+  bg.style.display = 'none';
+}
+</script>
+
+</body>
+</html>

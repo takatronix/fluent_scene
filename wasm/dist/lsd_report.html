@@ -169,6 +169,17 @@
          border-radius: 20px; margin-top: 1.5rem; margin-bottom: 3rem;
          box-shadow: 0 12px 60px rgba(0, 0, 0, 0.16); }
   @supports not (backdrop-filter: blur(1px)) { main { background: var(--bg); } }
+  .stage-link { display: block; position: relative; text-decoration: none;
+                border-radius: 14px; }
+  .stage-link:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .play { position: absolute; inset: 0; margin: auto; width: max-content; height: max-content;
+          display: flex; align-items: center; gap: 9px; padding: 12px 22px 12px 18px;
+          border-radius: 999px; background: rgba(12, 8, 20, 0.5);
+          backdrop-filter: blur(6px); border: 1.5px solid rgba(255, 255, 255, 0.35);
+          color: #fff; font-size: 0.92rem; font-weight: 700; letter-spacing: 0.02em;
+          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35); transition: transform 0.18s ease; }
+  .stage-link:hover .play { transform: scale(1.05); background: rgba(12, 8, 20, 0.65); }
+  @media (prefers-reduced-motion: reduce) { .play { transition: none; } }
   .engine-tag { display: inline-flex; align-items: center; gap: 7px;
                 font-size: 0.76rem; letter-spacing: 0.08em; font-weight: 700;
                 color: var(--accent); text-transform: uppercase; margin-bottom: 0.7rem; }
@@ -190,12 +201,14 @@
 
   <figure class="stage-frame">
     <span class="engine-tag" id="engine-tag">starting engine…</span>
-  <canvas id="hero" width="320" height="180" aria-label="LSDフィルタの幻覚生成部のライブ実行: 永遠に拡大するフラクタル場と原色のズレ"></canvas>
+  <a class="stage-link" href="lsd.html"><span class="play"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M8 5.5 L19 12 L8 18.5 Z" fill="currentColor"/></svg>ライブデモを開く</span>
+  <canvas id="hero" width="320" height="180" aria-label="LSDフィルタの幻覚生成部のライブ実行: 永遠に拡大するフラクタル場と原色のズレ"></canvas></a>
     <figcaption>上はシェーダーの幻覚生成部(永遠ズームのフラクタル場+原色のズレ)を、このページ上で <strong>fluent_scene のエンジン本体(wasm)</strong> を動かして描いたものです。ロボット実機のVulkanと同じ <code>fs_lsd</code> のコードが、いまブラウザで走っています。実アプリではこれがWebカメラ映像に重なり、視線追従とフィードバック再帰が加わります。</figcaption>
   </figure>
 
   <div class="cta-row">
-    <a class="cta primary" href="https://takatronix.github.io/fluent_scene/lsd.html" target="_blank" rel="noopener">デモを開く(要カメラ許可)</a>
+    <a class="cta" href="lsd_report.en.html">English</a>
+    <a class="cta primary" href="lsd.html" target="_blank" rel="noopener">デモを開く(要カメラ許可)</a>
     <a class="cta" href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">GitHub: fluent_scene</a>
     <a class="cta" href="https://x.com/takatronix" target="_blank" rel="noopener">作者 @takatronix</a>
   </div>

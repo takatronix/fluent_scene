@@ -21,6 +21,8 @@
   .corner:active { background: rgba(157, 141, 217, 0.35); }
   #gear { right: max(10px, env(safe-area-inset-right)); }
   #fsbtn { right: calc(max(10px, env(safe-area-inset-right)) + 52px); }
+  #langbtn { right: calc(max(10px, env(safe-area-inset-right)) + 104px);
+             font-size: 12px; font-weight: 700; letter-spacing: 0.04em; }
   /* the control drawer: hidden until ⚙ */
   #drawer { position: fixed; left: 0; right: 0;
             bottom: 0; z-index: 2; padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
@@ -58,37 +60,38 @@
   #title span { font-size: 11.5px; color: rgba(255,255,255,0.58); max-width: 62vw; }
 </style>
 <canvas id="v" width="1280" height="720"></canvas>
-<button id="fsbtn" class="corner" title="全画面" aria-label="全画面">⛶</button>
-<button id="gear" class="corner" title="設定" aria-label="設定">⚙</button>
+<button id="fsbtn" class="corner" data-k="fullscreen" title="全画面" aria-label="全画面">⛶</button>
+<button id="langbtn" class="corner" title="English / 日本語" aria-label="language">EN</button>
+<button id="gear" class="corner" data-k="settings" title="設定" aria-label="設定">⚙</button>
 <div id="drawer">
 <div class="panel">
-  <span class="group">薬理</span>
-  <label>トリップ <input id="trip" type="range" min="0" max="1.5" step="0.01" value="0.8"><output>0.80</output></label>
-  <label>ドリフト <input id="drift" type="range" min="0" max="3" step="0.01" value="1"><output>1.00</output></label>
-  <label>幾何幻覚 <input id="geometry" type="range" min="0" max="1.5" step="0.01" value="0.5"><output>0.50</output></label>
-  <label>質感 <select id="style">
-    <option value="organic">オーガニック</option>
-    <option value="digital">デジタル</option>
+  <span class="group" data-k="pharma">薬理</span>
+  <label><span data-k="trip">トリップ</span> <input id="trip" type="range" min="0" max="1.5" step="0.01" value="0.8"><output>0.80</output></label>
+  <label><span data-k="drift">ドリフト</span> <input id="drift" type="range" min="0" max="3" step="0.01" value="1"><output>1.00</output></label>
+  <label><span data-k="geometry">幾何幻覚</span> <input id="geometry" type="range" min="0" max="1.5" step="0.01" value="0.5"><output>0.50</output></label>
+  <label><span data-k="texture">質感</span> <select id="style">
+    <option value="organic" data-k="organic">オーガニック</option>
+    <option value="digital" data-k="digital">デジタル</option>
   </select></label>
-  <label>色収差 <input id="chroma" type="range" min="0" max="3" step="0.01" value="1"><output>1.00</output></label>
-  <span class="group">再帰</span>
-  <label>残像 <input id="persist" type="range" min="0" max="0.95" step="0.01" value="0.55"><output>0.55</output></label>
-  <label>吸い込み <input id="zoom" type="range" min="-0.4" max="0.4" step="0.01" value="0.12"><output>0.12</output></label>
-  <label>渦 <input id="rot" type="range" min="-0.6" max="0.6" step="0.01" value="0.08"><output>0.08</output></label>
-  <label>トレイル <select id="trailmode">
-    <option value="source-over">なめらか</option>
-    <option value="lighten">発光残像</option>
+  <label><span data-k="chroma">色収差</span> <input id="chroma" type="range" min="0" max="3" step="0.01" value="1"><output>1.00</output></label>
+  <span class="group" data-k="recur">再帰</span>
+  <label><span data-k="persist">残像</span> <input id="persist" type="range" min="0" max="0.95" step="0.01" value="0.55"><output>0.55</output></label>
+  <label><span data-k="zoom">吸い込み</span> <input id="zoom" type="range" min="-0.4" max="0.4" step="0.01" value="0.12"><output>0.12</output></label>
+  <label><span data-k="swirl">渦</span> <input id="rot" type="range" min="-0.6" max="0.6" step="0.01" value="0.08"><output>0.08</output></label>
+  <label><span data-k="trail">トレイル</span> <select id="trailmode">
+    <option value="source-over" data-k="smooth">なめらか</option>
+    <option value="lighten" data-k="glow">発光残像</option>
   </select></label>
-  <span class="group">変容</span>
-  <label>自動変容 <input id="auto" type="checkbox" checked style="width:20px;height:20px;accent-color:#9d8dd9"></label>
-  <label>深度 <input id="depth" type="range" min="0" max="1" step="0.01" value="0.6"><output>0.60</output></label>
-  <label>視線追従 <input id="gazechk" type="checkbox" checked style="width:20px;height:20px;accent-color:#9d8dd9"></label>
+  <span class="group" data-k="flux">変容</span>
+  <label><span data-k="auto">自動変容</span> <input id="auto" type="checkbox" checked style="width:20px;height:20px;accent-color:#9d8dd9"></label>
+  <label><span data-k="depth">深度</span> <input id="depth" type="range" min="0" max="1" step="0.01" value="0.6"><output>0.60</output></label>
+  <label><span data-k="gaze">視線追従</span> <input id="gazechk" type="checkbox" checked style="width:20px;height:20px;accent-color:#9d8dd9"></label>
 </div>
 </div>
 <div id="title"><b>LSD</b><span>serotonergic visual phenomenology on fluent_scene</span>
-<span><a href="lsd_report.html" target="_blank" rel="noopener"
+<span><a id="reportlink" href="lsd_report.html" target="_blank" rel="noopener"
   style="pointer-events:auto;color:rgba(200,185,235,0.85);text-decoration:none;
-         border-bottom:1px dotted rgba(200,185,235,0.5)">解説レポート — なぜこう見えるのか →</a></span></div>
+         border-bottom:1px dotted rgba(200,185,235,0.5)"><span data-k="report">解説レポート — なぜこう見えるのか →</span></a></span></div>
 <div id="bar">loading wasm…</div>
 <a href="https://x.com/takatronix" target="_blank" rel="noopener" style="position:fixed;right:12px;bottom:10px;z-index:9;font:11px ui-monospace,monospace;color:rgba(255,255,255,0.6);text-decoration:none;background:rgba(0,0,0,0.35);padding:4px 10px;border-radius:999px;backdrop-filter:blur(4px)">fluent_scene · by <b style="color:rgba(255,255,255,0.85)">@takatronix</b></a>
 <script type="module">
@@ -140,6 +143,50 @@ if (!inst) {
   bar.textContent = 'scene rejected:\n' + fs.error();
   throw new Error(fs.error());
 }
+
+
+// ---- language ---------------------------------------------------------------
+// ?lang= wins (the English report links here with it), then a remembered
+// choice, then the browser. Labels carry data-k; only the English strings
+// live here, so Japanese needs no table.
+const EN = {
+  pharma: 'PHARMACOLOGY', recur: 'RECURSION', flux: 'FLUX',
+  trip: 'Trip', drift: 'Drift', geometry: 'Geometry', texture: 'Texture',
+  chroma: 'Chroma', persist: 'Persistence', zoom: 'Zoom', swirl: 'Swirl',
+  trail: 'Trail', auto: 'Auto-flux', depth: 'Depth', gaze: 'Gaze',
+  organic: 'Organic', digital: 'Digital', smooth: 'Smooth', glow: 'Glow trails',
+  fullscreen: 'Fullscreen', settings: 'Settings',
+  report: 'Read the report — why it looks like this →',
+};
+const qLang = new URLSearchParams(location.search).get('lang');
+const savedLang = localStorage.getItem('lsd_lang');
+let LANG = qLang ? (qLang === 'en' ? 'en' : 'ja')
+         : savedLang ? savedLang
+         : (navigator.language || '').toLowerCase().startsWith('ja') ? 'ja' : 'en';
+
+const JA = {};
+document.querySelectorAll('[data-k]').forEach(el => { JA[el.dataset.k] = el.textContent; });
+function applyLang() {
+  document.documentElement.lang = LANG;
+  document.querySelectorAll('[data-k]').forEach(el => {
+    const v = LANG === 'en' ? EN[el.dataset.k] : JA[el.dataset.k];
+    if (v) {
+      el.textContent = v;
+      if (el.hasAttribute('title')) el.title = v;
+    }
+  });
+  const rl = document.getElementById('reportlink');
+  if (rl) rl.href = LANG === 'en' ? 'lsd_report.en.html' : 'lsd_report.html';
+  const lb = document.getElementById('langbtn');
+  if (lb) { lb.textContent = LANG === 'en' ? '日本' : 'EN'; }
+}
+applyLang();
+document.getElementById('langbtn').addEventListener('click', () => {
+  LANG = LANG === 'en' ? 'ja' : 'en';
+  localStorage.setItem('lsd_lang', LANG);
+  applyLang();
+});
+const T = (ja, en) => (LANG === 'en' ? en : ja);
 
 // ---- sliders ---------------------------------------------------------------
 const ids = ['trip', 'drift', 'geometry', 'chroma', 'persist', 'zoom', 'rot', 'depth'];
@@ -206,13 +253,18 @@ for (const d in DIMS) {
 }
 function conduct(t) {
   const depth = Number(sl.depth.value);
+  // every blink moves the trip along: a fresh jump, and a fast one, so the
+  // scene has visibly turned over by the time the eyes are open again
+  const snap = blinkJump;
+  if (snap) { conductor.next = t; blinkJump = false; }
   if (t >= conductor.next) {                            // a metastable jump
     for (const d in DIMS) {
       conductor.from[d] = currentOffset(d, t);
       conductor.to[d] = (Math.random() * 2 - 1) * DIMS[d].span;
     }
     conductor.t0 = t;
-    conductor.dur = 0.25 * Math.pow(80, Math.random()); // 0.25–20 s, log-uniform
+    conductor.dur = snap ? 0.2 + 0.5 * Math.random()
+                        : 0.25 * Math.pow(80, Math.random());  // log-uniform
     conductor.next = t + 3 + 17 * -Math.log(1 - Math.random());
   }
   const eff = {};
@@ -255,6 +307,9 @@ const grabCtx = grab.getContext('2d', { willReadFrequently: true });
 const gazechk = document.getElementById('gazechk');
 let gazePivot = { x: CAM_W / 2, y: CAM_H / 2 };
 let gazeRaw = null, contactLevel = 0, faceSeen = 0;
+// a blink is a moment of no retinal input at all — the geometry the
+// closed eye sees surges, then settles. Detected already; now used.
+let blinkPulse = 0, wasBlink = false, blinkJump = false;
 // 閉眼幻視 (CEV): まばたき(<0.35s)は素通し、目を閉じ続けると網膜入力が
 // 絶たれて内因性の幾何が支配する — そして閉じた瞬間に世界はリセットされる
 let eyeState = 'open', eyesClosedAt = 0, closedLevel = 0, cevArmed = false;
@@ -322,6 +377,8 @@ setInterval(() => {
       eyePitch = -((R.vy + L.vy) / 2) * 0.8;
     }
   }
+  if (blink && !wasBlink) { blinkPulse = 1; blinkJump = true; }
+  wasBlink = blink;
   const rawYaw = head.yaw + eyeYaw, rawPitch = head.pitch + eyePitch;
   if (gcalib !== null && !blink) {
     gcalib.push([rawYaw, rawPitch]);
@@ -371,6 +428,9 @@ if (res && /^\d+x\d+$/.test(res)) {
   canvas.width = rw; canvas.height = rh;
 }
 let last = performance.now(), t0 = last, frames = 0, fpsShown = 0, uiTick = 0;
+// the come-up: the first half minute barely touches the image, so you
+// see your own room before it starts moving
+const ONSET = 28;
 const LADDER = [[1280, 720], [1024, 576], [854, 480], [640, 360]];
 let rung = 0;
 setInterval(() => {
@@ -481,9 +541,13 @@ function tick() {
   //    trip, time, drift, geometry, chroma
   //    (geometry's SIGN selects the texture: + organic, − digital)
   const styleSign = document.getElementById('style').value === 'digital' ? -1 : 1;
+  blinkPulse = Math.max(0, blinkPulse - dt * 1.6);
+  const onset = Math.min(1, t / ONSET);
+  const come = onset * onset;                    // slow at first, then arrives
   fs.layerSetFilter(inst, 'live', 'lsd',
-      Math.min(1.5, eff.trip + 0.35 * contactLevel),  // eye contact deepens it
-      t, eff.drift, styleSign * eff.geometry, eff.chroma);
+      Math.min(1.5, come * (eff.trip + 0.35 * contactLevel) + 0.5 * blinkPulse),
+      t, come * eff.drift,
+      styleSign * (come * eff.geometry + 0.6 * blinkPulse), eff.chroma);
 
   // 5) render, paint, and remember the output for the next re-entry
   const px = fs.render(inst, dt, canvas.width, canvas.height);
@@ -497,9 +561,11 @@ function tick() {
   ++frames;
   const phase = autoBox.checked
       ? (t < conductor.t0 + conductor.dur
-             ? `転移中 ${conductor.dur < 1.5 ? '(パッ)' : '(ゆっくり)'}`
-             : `滞留 → 次の転移まで ${Math.max(0, conductor.next - t).toFixed(0)}s`)
-      : '手動';
+             ? T(`転移中 ${conductor.dur < 1.5 ? '(パッ)' : '(ゆっくり)'}`,
+                 `shifting ${conductor.dur < 1.5 ? '(snap)' : '(slow)'}`)
+             : T(`滞留 → 次の転移まで ${Math.max(0, conductor.next - t).toFixed(0)}s`,
+                 `holding → next shift in ${Math.max(0, conductor.next - t).toFixed(0)}s`))
+      : T('手動', 'manual');
   const eye = closedLevel > 0.4 ? ' · 🌌閉眼幻視'
             : contactLevel > 0.5 ? ' · 👁アイコンタクト' : '';
   bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · 変容: ${phase}${eye}`;
