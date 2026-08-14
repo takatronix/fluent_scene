@@ -66,25 +66,25 @@
 <div id="drawer">
 <div class="panel">
   <span class="group" data-k="pharma">薬理</span>
-  <label><span data-k="trip">トリップ</span> <input id="trip" type="range" min="0" max="1.5" step="0.01" value="0.8"><output>0.80</output></label>
-  <label><span data-k="drift">ドリフト</span> <input id="drift" type="range" min="0" max="3" step="0.01" value="1"><output>1.00</output></label>
-  <label><span data-k="geometry">幾何幻覚</span> <input id="geometry" type="range" min="0" max="1.5" step="0.01" value="0.5"><output>0.50</output></label>
+  <label><span data-k="trip">トリップ</span> <input id="trip" type="range" min="0" max="1.5" step="0.01" value="0.3"><output>0.80</output></label>
+  <label><span data-k="drift">ドリフト</span> <input id="drift" type="range" min="0" max="3" step="0.01" value="0.4"><output>1.00</output></label>
+  <label><span data-k="geometry">幾何幻覚</span> <input id="geometry" type="range" min="0" max="1.5" step="0.01" value="0.18"><output>0.50</output></label>
   <label><span data-k="texture">質感</span> <select id="style">
     <option value="organic" data-k="organic">オーガニック</option>
     <option value="digital" data-k="digital">デジタル</option>
   </select></label>
-  <label><span data-k="chroma">色収差</span> <input id="chroma" type="range" min="0" max="3" step="0.01" value="1"><output>1.00</output></label>
+  <label><span data-k="chroma">色収差</span> <input id="chroma" type="range" min="0" max="3" step="0.01" value="0.35"><output>1.00</output></label>
   <span class="group" data-k="recur">再帰</span>
-  <label><span data-k="persist">残像</span> <input id="persist" type="range" min="0" max="0.95" step="0.01" value="0.55"><output>0.55</output></label>
-  <label><span data-k="zoom">吸い込み</span> <input id="zoom" type="range" min="-0.4" max="0.4" step="0.01" value="0.12"><output>0.12</output></label>
-  <label><span data-k="swirl">渦</span> <input id="rot" type="range" min="-0.6" max="0.6" step="0.01" value="0.08"><output>0.08</output></label>
+  <label><span data-k="persist">残像</span> <input id="persist" type="range" min="0" max="0.95" step="0.01" value="0.3"><output>0.55</output></label>
+  <label><span data-k="zoom">吸い込み</span> <input id="zoom" type="range" min="-0.4" max="0.4" step="0.01" value="0.05"><output>0.12</output></label>
+  <label><span data-k="swirl">渦</span> <input id="rot" type="range" min="-0.6" max="0.6" step="0.01" value="0.03"><output>0.08</output></label>
   <label><span data-k="trail">トレイル</span> <select id="trailmode">
     <option value="source-over" data-k="smooth">なめらか</option>
     <option value="lighten" data-k="glow">発光残像</option>
   </select></label>
   <span class="group" data-k="flux">変容</span>
   <label><span data-k="auto">自動変容</span> <input id="auto" type="checkbox" checked style="width:20px;height:20px;accent-color:#9d8dd9"></label>
-  <label><span data-k="depth">深度</span> <input id="depth" type="range" min="0" max="1" step="0.01" value="0.6"><output>0.60</output></label>
+  <label><span data-k="depth">深度</span> <input id="depth" type="range" min="0" max="1" step="0.01" value="0.4"><output>0.60</output></label>
   <label><span data-k="gaze">視線追従</span> <input id="gazechk" type="checkbox" checked style="width:20px;height:20px;accent-color:#9d8dd9"></label>
 </div>
 </div>
@@ -104,9 +104,16 @@
 // two canvases before the pixels enter the wasm heap.
 import createFluentScene from './fluent_scene.mjs';
 
+// Portrait phones get a portrait pipeline: camera, feedback plane, stage,
+// and canvas all share the viewport's orientation, so nobody gets
+// cover-cropped into a face closeup. Rotation reloads with the other set.
+const portrait = matchMedia('(orientation: portrait)').matches;
+matchMedia('(orientation: portrait)').addEventListener('change', () => location.reload());
+const STAGE_W = portrait ? 720 : 1280, STAGE_H = portrait ? 1280 : 720;
+
 const SCENE = `
 schema: fluent.scene/v1alpha2
-stage: { size: [1280, 720] }
+stage: { size: [${STAGE_W}, ${STAGE_H}] }
 inputs:
   camera: { type: image.rgba8, update: per_frame }
 layers:
@@ -204,6 +211,8 @@ function labels() {
 }
 for (const id of ids) sl[id].addEventListener('input', labels);
 labels();
+// the freshly-loaded state — what a long eye closure resets back to
+const DEFAULTS = Object.fromEntries(ids.map(d => [d, Number(sl[d].value)]));
 
 // ---- immersive chrome ------------------------------------------------------
 // The view fills the screen; controls live in a drawer behind ⚙. Browsers
@@ -289,11 +298,11 @@ function clampDim(d, v) { return Math.min(DIMS[d].max, Math.max(DIMS[d].min, v))
 // ---- webcam ----------------------------------------------------------------
 // 16:9 capture so camera, feedback plane, and stage share one aspect —
 // a mismatch here would make the fed-back echo slide against the image.
-const CAM_W = 640, CAM_H = 360;
+const CAM_W = portrait ? 360 : 640, CAM_H = portrait ? 640 : 360;
 let video = null;
 try {
   const stream = await navigator.mediaDevices.getUserMedia(
-      { video: { width: 640, height: 360 }, audio: false });
+      { video: { width: CAM_W, height: CAM_H }, audio: false });
   video = document.createElement('video');
   video.srcObject = stream; video.muted = true;
   await video.play();
@@ -314,8 +323,8 @@ let gazeRaw = null, contactLevel = 0, faceSeen = 0;
 // a blink is a moment of no retinal input at all — the geometry the
 // closed eye sees surges, then settles. Detected already; now used.
 let blinkPulse = 0, wasBlink = false, blinkJump = false;
-// 閉眼幻視 (CEV): まばたき(<0.35s)は素通し、目を閉じ続けると網膜入力が
-// 絶たれて内因性の幾何が支配する — そして閉じた瞬間に世界はリセットされる
+// 閉眼リセット: まばたきは素通し、目を閉じ続けるほど世界が初期状態へ
+// 洗い流される(長い閉眼=完全リセット)
 let eyeState = 'open', eyesClosedAt = 0, closedLevel = 0, cevArmed = false;
 let gbias = { yaw: 0, pitch: 0 }, gcalib = [];
 try {
@@ -369,11 +378,16 @@ setInterval(() => {
   const L = irisOffset(lm, 362, 263, 386, 374, 473);
   let eyeYaw = 0, eyePitch = 0, blink = false;
   if (R && L) {
-    blink = (R.open + L.open) / 2 < 0.09;
-    if (blink && eyeState !== 'closed') {
-      eyeState = 'closed';
-      eyesClosedAt = performance.now();
-    } else if (!blink) {
+    const openAvg = (R.open + L.open) / 2;
+    blink = openAvg < 0.09;
+    // the closure detector is deliberately laxer than the gaze guard:
+    // phone landmarkers under-report closure on small faces
+    if (openAvg < 0.13) {
+      if (eyeState !== 'closed') {
+        eyeState = 'closed';
+        eyesClosedAt = performance.now();
+      }
+    } else {
       eyeState = 'open';
     }
     if (!blink) {
@@ -435,7 +449,10 @@ let last = performance.now(), t0 = last, frames = 0, fpsShown = 0, uiTick = 0;
 // the come-up: the first half minute barely touches the image, so you
 // see your own room before it starts moving
 const ONSET = 15;
-const LADDER = [[1280, 720], [1024, 576], [854, 480], [640, 360]];
+const LADDER = portrait
+    ? [[720, 1280], [576, 1024], [480, 854], [360, 640]]
+    : [[1280, 720], [1024, 576], [854, 480], [640, 360]];
+canvas.width = LADDER[0][0]; canvas.height = LADDER[0][1];
 let rung = 0;
 setInterval(() => {
   fpsShown = frames; frames = 0;
@@ -458,32 +475,37 @@ function tick() {
   const eff = autoBox.checked ? conduct(t) :
       Object.fromEntries(Object.keys(DIMS).map(d => [d, Number(sl[d].value)]));
 
-  // ---- 閉眼幻視 (CEV) ------------------------------------------------------
-  // A held closure (not a blink) fades the retinal input to black; the
-  // kernel's geometry gate rides weak retinal drive, so the hallucination
-  // field takes over. Closing the eyes also RESETS the world: the trail
-  // history clears and the conductor snaps to a fresh regime — opening
-  // them again lands somewhere new.
+  // ---- 閉眼リセット ---------------------------------------------------------
+  // Holding the eyes closed (not a blink) washes the trip away: the longer
+  // they stay shut, the closer the world eases back to its freshly-loaded
+  // state — parameters toward defaults, trail history fading out. A full
+  // hold (~2 s) commits the reset: sliders return to defaults and the
+  // conductor forgets where it was.
   const nowMs = performance.now();
   const closedHeld = gazechk.checked && eyeState === 'closed' &&
-      nowMs - eyesClosedAt > 350 && nowMs - faceSeen < 1200;
+      nowMs - eyesClosedAt > 250 && nowMs - faceSeen < 1200;
   closedLevel = Math.min(1, Math.max(0,
-      closedLevel + (closedHeld ? dt / 0.7 : -dt / 0.5)));
-  if (closedHeld && !cevArmed) {
-    cevArmed = true;
-    prevCtx.clearRect(0, 0, CAM_W, CAM_H);   // the outside world's echo dies
-    hasPrev = false;
-    conductor.next = t;                      // and a new regime begins
-  } else if (!closedHeld && cevArmed && closedLevel < 0.05) {
-    cevArmed = false;
-    conductor.next = t;                      // reopening snaps again — 「パッ」
-  }
+      closedLevel + (closedHeld ? dt / 2.0 : -dt / 0.4)));
   if (closedLevel > 0) {
-    eff.trip = clampDim('trip', eff.trip + 0.5 * closedLevel);
-    eff.geometry = clampDim('geometry', eff.geometry + 0.9 * closedLevel);
-    eff.chroma = clampDim('chroma', eff.chroma + 0.6 * closedLevel);
-    eff.persist = clampDim('persist', eff.persist + 0.25 * closedLevel);
-    eff.zoom = clampDim('zoom', eff.zoom + 0.1 * closedLevel);
+    for (const d in DIMS) {
+      eff[d] += (DEFAULTS[d] - eff[d]) * closedLevel;
+    }
+    prevCtx.fillStyle = `rgba(0,0,0,${Math.min(0.9, closedLevel * dt * 6).toFixed(3)})`;
+    prevCtx.fillRect(0, 0, CAM_W, CAM_H);
+    if (closedLevel >= 0.999 && cevArmed !== 'reset') {
+      cevArmed = 'reset';
+      for (const d in DIMS) {
+        conductor.from[d] = 0;
+        conductor.to[d] = 0;
+        sl[d].value = DEFAULTS[d];
+      }
+      labels();
+      conductor.next = t + 3;
+      prevCtx.clearRect(0, 0, CAM_W, CAM_H);
+      hasPrev = false;
+    }
+  } else if (cevArmed) {
+    cevArmed = false;
   }
   // show WHERE the conductor currently is: each readout becomes 基準→実効
   if (++uiTick % 10 === 0) {
@@ -499,11 +521,6 @@ function tick() {
     fbCtx.globalCompositeOperation = 'source-over';
     fbCtx.globalAlpha = 1;
     drawCover(fbCtx, video, video.videoWidth || 640, video.videoHeight || 360);
-    if (closedLevel > 0) {
-      // eyelids: retinal input fades out, the field and the echo remain
-      fbCtx.fillStyle = `rgba(0,0,0,${(0.88 * closedLevel).toFixed(3)})`;
-      fbCtx.fillRect(0, 0, CAM_W, CAM_H);
-    }
     // 2) re-enter the previous output: decayed, slightly zoomed + rotated.
     //    'lighten' keeps only the brighter history — the discrete frozen
     //    afterimages of true palinopsia; 'source-over' is the smooth smear.
@@ -570,7 +587,7 @@ function tick() {
              : T(`滞留 → 次の転移まで ${Math.max(0, conductor.next - t).toFixed(0)}s`,
                  `holding → next shift in ${Math.max(0, conductor.next - t).toFixed(0)}s`))
       : T('手動', 'manual');
-  const eye = closedLevel > 0.4 ? ' · 🌌閉眼幻視'
+  const eye = closedLevel > 0.3 ? ' · ↺ 初期化中…'
             : contactLevel > 0.5 ? ' · 👁アイコンタクト' : '';
   bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · 変容: ${phase}${eye}`;
   requestAnimationFrame(tick);
