@@ -283,7 +283,7 @@ void sceneLsd(Renderer& r) {
     stage.image(view).frame({330, 10, 140, 130}).filter(Lsd().time(7.9f).geometry(1.2f));
     stage.image(view).frame({10, 160, 150, 130}).filter(Lsd().trip(0.2f).time(5.0f));
     stage.image(view).frame({170, 160, 150, 130}).filter(
-        Lsd().time(11.3f).drift(2.0f).chroma(2.5f));
+        Lsd().time(11.3f).drift(2.0f).chroma(2.5f).geometry(-1.0f));  // digital
     const int saved_limit = g_max_diff_limit;
     g_max_diff_limit = 255;
     checkScene("lsd", r.render(stage, 0.0f));

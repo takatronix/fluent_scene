@@ -459,62 +459,63 @@ vec3 fs_lsd(vec2 uv, float trip, float time_s, float drift, float geometry, floa
     float t = time_s;
 
     // centered coordinates, x in units of image height (isotropic angles);
-    // the singularity wanders slowly — hallucinated tunnels aren't pinned
-    // to the fixation point
-    vec2 d0 = uv - vec2(0.5 + 0.05 * k * sin(t * 0.13),
-                        0.5 + 0.05 * k * sin(t * 0.17 + 1.0));
+    // the center is FIXED — the experience always has one, and the eternal
+    // expansion radiates from it
+    vec2 d0 = uv - vec2(0.5, 0.5);
     vec2 pc = vec2(d0.x * (FS_TEXEL.y / FS_TEXEL.x), d0.y);
     float r = max(length(pc), 1e-4);
 
     // the hallucination field comes FIRST: it also drives the image warp,
-    // so the drift itself is organic — no sinusoidal wallpaper anywhere
-    // ETERNAL ZOOM — the defining 3D sensation: flying forward while the
-    // whole field expands, forever. Three log2-spaced scale layers
-    // crossfade under a hann window on the depth exponent; a layer that
-    // grows past the window fades out while a fresh far layer fades in,
-    // decorrelated by its integer flight index — so the expansion never
-    // ends and never repeats. A low-frequency warp bends every layer:
-    // still no lines, no right angles, no circles.
-    vec2 qw0 = pc * 1.3 + vec2(t * 0.021, 0.0 - t * 0.017);
+    // so the drift itself is organic — no sinusoidal wallpaper anywhere.
+    // ETERNAL-ZOOM FRACTAL — one fBM whose whole octave ladder slides
+    // through scale space: rung n sits at scale 2^(n − zf); as zf advances
+    // every feature expands, the over-grown coarse rung fades out and a
+    // newborn fine rung fades in with fresh content (its integer flight
+    // index seeds it). Six rungs span a 64× range of scale, so looking
+    // closer keeps revealing structure — and the flight never ends and
+    // never repeats. Varley (2020): the trip raises the fractal dimension
+    // of cortical activity; this is that, drawn.
+    vec2 qw0 = pc * 1.3 + vec2(t * 0.06, 0.0 - t * 0.047);
     float n1 = fs_lsd_vnoise(qw0);
     float n2 = fs_lsd_vnoise(qw0 * 1.9 + vec2(7.7, 3.1));
     vec2 warp = vec2(n1 - 0.5, n2 - 0.5);
-    float zp = t * 0.3;                                    // flight speed
+    float zp = t * 0.5;                                    // flight speed
     float zf = zp - floor(zp);
-    float fieldv = 0.0;                                    // hue carrier
-    float wsum = 0.0;
-    float mass = 0.0;                                      // depth-layered masses
-    float mass_ph = 0.0;                                   // hue of nearest mass
-    for (int i = 0; i < 3; ++i) {
-        float e = float(i) - zf;                           // depth exponent
-        float sc = exp2(e);                                // shrinks → expands
-        float m = float(i) + floor(zp);                    // stable layer id
-        vec2 off = vec2(fs_lsd_hash(vec2(m, 1.7)) * 61.3,
-                        fs_lsd_hash(vec2(m, 9.2)) * 47.7);
-        float w = 0.5 - 0.5 * cos(2.0943951 * (e + 1.0));  // hann on [-1, 2]
-        vec2 pl = pc * (3.0 * sc) + warp * (2.2 * sc) + off;
-        float nv = fs_lsd_vnoise(pl) * 0.5 +
-                   fs_lsd_vnoise(vec2(pl.x * 2.1 + 31.7, pl.y * 2.1 - 17.3)) * 0.3 +
-                   fs_lsd_vnoise(vec2(pl.x * 4.3 - 13.1, pl.y * 4.7 + 23.9)) * 0.2;
-        fieldv += w * nv;
-        wsum += w;
-        // each depth shell contributes its own masses, thresholded BEFORE
-        // blending (contrast survives), nearer shells brighter, max-combined
-        // so near masses read as occluding far ones — this is the 3D. Each
-        // shell also owns a hue (golden-angle spaced), so depth separates
-        // in color the way parallax separates in motion
-        float near_f = smoothstep(2.0, -1.0, e);
-        float clv = smoothstep(0.55, 0.75, nv) * w * (0.5 + 0.5 * near_f);
-        float phm = m * 2.39996 + nv * 2.0 + t * 0.15;
-        mass_ph = clv > mass ? phm : mass_ph;
-        mass = max(mass, clv);
+    // prism misregistration on the coarse rungs: R reads forward and B
+    // backward along a slowly turning axis while G stays centered — the
+    // primaries land slightly apart, overlaps make yellow/cyan/white, and
+    // R+B without G (purple) almost never occurs. Only pure colours.
+    vec2 poff = vec2(cos(t * 0.9), sin(t * 0.9)) * (0.05 * clamp(chroma, 0.0, 3.0));
+    float amt = abs(geometry);
+    float digital = geometry < 0.0 ? 1.0 : 0.0;            // sign picks texture
+    vec3 acc = vec3(0.0, 0.0, 0.0);
+    float norm = 0.0;
+    for (int n = 0; n < 6; ++n) {
+        float en = float(n) - zf;                          // ladder position
+        float sc = exp2(en);
+        float mm = float(n) + floor(zp);                   // stable rung id
+        vec2 offn = vec2(fs_lsd_hash(vec2(mm, 1.7)) * 61.3,
+                         fs_lsd_hash(vec2(mm, 9.2)) * 47.7);
+        float w = 0.5 - 0.5 * cos(6.2831853 * (en + 1.0) / 7.0);
+        float fq = 2.6 * sc;
+        vec2 pl = pc * fq + warp * (1.8 * sc) + offn;
+        float g = fs_lsd_vnoise(pl);
+        if (n < 3) {
+            // screen-space prism shift: domain offset scales with frequency
+            acc += vec3(fs_lsd_vnoise(pl + poff * fq), g,
+                        fs_lsd_vnoise(pl - poff * fq)) * w;
+        } else {
+            // fine rungs: the shift is sub-feature there, share one read
+            acc += vec3(g, g, g) * w;
+        }
+        norm += w;
     }
-    fieldv /= max(wsum, 0.1);
+    acc = acc / max(norm, 0.1);
 
     // drifting & breathing: read the source through the noise field's lens.
     // Less than one radial period fits the view and the phase is noised,
     // so the swell never reads as concentric rings
-    float breath = 1.0 + 0.045 * k * drift * sin(t * 0.9 - r * 1.2 + n1 * 2.0);
+    float breath = 1.0 + 0.045 * k * drift * sin(t * 1.3 - r * 1.2 + n1 * 2.0);
     vec2 flow = vec2(n1 - 0.5, n2 - 0.5) * 2.0;
     // displacement form: zero at the (wandering) center, so the frame sways
     // and breathes without translating wholesale
@@ -539,23 +540,24 @@ vec3 fs_lsd(vec2 uv, float trip, float time_s, float drift, float geometry, floa
               FS_SAMPLE(uvd + vec2(0.0, FS_TEXEL.y)) + FS_SAMPLE(uvd - vec2(0.0, FS_TEXEL.y));
     col += (col - (col + nb) * 0.2) * (0.5 * k);
     col = fs_color_transform(col, 0.0, 1.0 + 0.15 * k, 1.0 + 0.85 * k, 1.0);
-    col = fs_hue_rotate(col, 28.0 * k * sin(t * 0.19));
+    col = fs_hue_rotate(col, 28.0 * k * sin(t * 0.31));
 
-    // fractal masses from the field computed above: amorphous blobs at
-    // every scale, streaming outward, warped by their own values — no
-    // straight line, no right angle, no circle survives anywhere.
-    float chunk = mass;                                    // amorphous masses
-    // the shoreline hugs each mass edge — an organic contour, not a line,
-    // and never a wash over empty regions
-    float shore = smoothstep(0.06, 0.2, chunk) * (1.0 - smoothstep(0.2, 0.5, chunk));
-    // hallucinated geometry rides on weak retinal drive (shadow, flat wall)
-    float gate = clamp(geometry, 0.0, 1.5) * k * (0.2 + 0.8 * (1.0 - fs_luma(col)));
-    // hue: the nearest mass's own color; faint fieldv hue where nothing is
-    float ph = chunk > 0.05 ? mass_ph : fieldv * 6.3 + t * 0.4;
-    vec3 pcol = vec3(0.5 + 0.5 * cos(ph), 0.5 + 0.5 * cos(ph - 2.094),
-                     0.5 + 0.5 * cos(ph + 2.094));
-    col = col * (1.0 - 0.35 * gate * chunk) +
-          pcol * (gate * (0.5 * chunk + 0.45 * shore));
+    // organic <-> digital (the SIGN of `geometry`): digital quantizes the
+    // field into terraces and hardens every edge; organic leaves it smooth
+    vec3 f3 = acc;
+    if (digital > 0.5) {
+        f3 = floor(f3 * 7.0 + vec3(0.5)) * (1.0 / 7.0);
+    }
+    float lo = 0.5 - 0.04 * digital;
+    float hi = 0.68 - 0.12 * digital;
+    vec3 gm = vec3(smoothstep(lo, hi, f3.x), smoothstep(lo, hi, f3.y),
+                   smoothstep(lo, hi, f3.z));
+    // rides on weak retinal drive, densest at the fixed center
+    float gate = clamp(amt, 0.0, 1.5) * k * (0.25 + 0.75 * (1.0 - fs_luma(col)));
+    float focus = 0.65 + 0.45 * (1.0 - smoothstep(0.05, 0.95, r));
+    gm = gm * (gate * focus);
+    float cover = max(gm.x, max(gm.y, gm.z));
+    col = col * (1.0 - 0.45 * cover) + gm * 0.95;
     return col;
 }
 
