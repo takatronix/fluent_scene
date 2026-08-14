@@ -52,6 +52,7 @@ const int FS_MEDIAN = 27;
 // it as two 1-D passes. Radius is in logical units like every other length.
 const int FS_BLUR = 28;
 const int FS_RIPPLE = 29;
+const int FS_BEAUTY = 30;
 
 #ifdef FS_SAMPLE
 
@@ -216,6 +217,49 @@ vec3 fs_median(vec2 uv) {
     return p4;
 }
 
+// Beauty ("磨皮"): the gpupixel/FaceBetter smoothing core in a single pass.
+// Not a bilateral — a local Wiener filter: blend toward the neighborhood mean
+// only where the neighborhood is statistically flat (variance low) AND the
+// pixel passes a red-channel skin gate, so pores vanish while edges, hair,
+// and eyes survive untouched. No face detection involved. Mean and variance
+// come from one sparse 5x5 grid via E[x²]−E[x]²; the 50/0.1 pairing is
+// gpupixel's calibration (their delta=7.07 squared). `whiten` approximates
+// the original's baked LUT chain with a levels lift + gamma curve;
+// `sharpen` restores micro-contrast the blend absorbs (4-tap unsharp).
+vec3 fs_beauty(vec2 uv, float smoothing, float whiten, float radius, float sharpen_amount) {
+    vec3 c = FS_SAMPLE(uv);
+    float grid = max(radius, 1.0) * 0.5;
+    vec3 sum = vec3(0.0);
+    vec3 sum_sq = vec3(0.0);
+    for (int j = -2; j <= 2; ++j) {
+        for (int i = -2; i <= 2; ++i) {
+            vec3 s = FS_SAMPLE(uv + FS_TEXEL * vec2(float(i), float(j)) * grid);
+            sum += s;
+            sum_sq += s * s;
+        }
+    }
+    vec3 mean = sum * (1.0 / 25.0);
+    vec3 variance = max(sum_sq * (1.0 / 25.0) - mean * mean, vec3(0.0));
+    float mean_var = 50.0 * (variance.x + variance.y + variance.z) * (1.0 / 3.0);
+    float skin = clamp((min(c.x, mean.x - 0.1) - 0.2) * 4.0, 0.0, 1.0);
+    float k = (0.1 / (mean_var + 0.1)) * skin * clamp(smoothing, 0.0, 1.0);
+    vec3 result = mix(c, mean, clamp(k, 0.0, 1.0));
+    if (sharpen_amount > 0.0) {
+        vec3 neighbors = FS_SAMPLE(uv + vec2(FS_TEXEL.x, 0.0)) +
+                         FS_SAMPLE(uv - vec2(FS_TEXEL.x, 0.0)) +
+                         FS_SAMPLE(uv + vec2(0.0, FS_TEXEL.y)) +
+                         FS_SAMPLE(uv - vec2(0.0, FS_TEXEL.y));
+        result += (c - (c + neighbors) * 0.2) * (sharpen_amount * 2.0);
+    }
+    if (whiten > 0.0) {
+        vec3 lifted = clamp((result - vec3(0.0259)) * 1.02657, 0.0, 1.0);
+        vec3 bright = pow(lifted, vec3(0.72));
+        bright = mix(vec3(fs_luma(bright)), bright, 0.88);
+        result = mix(result, bright, clamp(whiten, 0.0, 1.0));
+    }
+    return result;
+}
+
 // ---- resampling filters (change where we read, then what we read) ----------
 
 vec3 fs_pixelate(vec2 uv, float block_size) {
@@ -314,6 +358,7 @@ vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p
     else if (mode == FS_COLOR_TRANSFORM) c = fs_color_transform(c, p0, p1, p2, p3);
     else if (mode == FS_BILATERAL)       c = fs_bilateral(uv, p0, p1);
     else if (mode == FS_MEDIAN)          c = fs_median(uv);
+    else if (mode == FS_BEAUTY)          c = fs_beauty(uv, p0, p1, p2, p3);
     else if (mode == FS_RIPPLE)          c = fs_ripple(uv, p0, p1, p2, p3, p4);
     return vec4(clamp(c, 0.0, 1.0), alpha);
 }

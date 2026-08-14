@@ -252,6 +252,22 @@ void sceneFilters(Renderer& r) {
     checkScene("filters", r.render(stage, 0.0f));
 }
 
+// Beauty is variance-driven (E[x²]−E[x]², 25 sparse taps), so it gets its
+// own cross-backend case: the gradient regions smooth hard, the checker
+// cells gate off, and whiten's curve stack exercises pow/mix parity.
+void sceneBeauty(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130});
+    stage.image(view).frame({170, 10, 150, 130}).filter(Beauty());
+    stage.image(view).frame({330, 10, 140, 130}).filter(Beauty().smoothing(1.0f).sharpen(0.0f));
+    stage.image(view).frame({10, 160, 150, 130}).filter(
+        Beauty().smoothing(0.0f).whiten(0.8f));
+    stage.image(view).frame({170, 160, 150, 130}).filter(Beauty().whiten(0.4f).radius(4.0f));
+    checkScene("beauty", r.render(stage, 0.0f));
+}
+
 void sceneAnimation(Renderer& r) {
     // §13-6: "the screen at t = 0.15 s" must be reproducible.
     Stage stage(320, 200);
@@ -387,6 +403,7 @@ int main(int argc, char** argv) {
     sceneAttributes(r);
     sceneTransforms(r);
     sceneFilters(r);
+    sceneBeauty(r);
     sceneAnimation(r);
     sceneImagePaste(r);
     sceneUi(r);

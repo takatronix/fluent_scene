@@ -112,6 +112,13 @@ FS_END(Bilateral)
 FS_FILTER(Median, median, FS_MEDIAN, "median 3x3 (salt-and-pepper denoise)")
 FS_END(Median)
 
+FS_FILTER(Beauty, beauty, FS_BEAUTY, "beauty (variance-gated skin smoothing + whitening)")
+FS_PARAM(0, smoothing, 0.7f, Scalar)
+FS_PARAM(1, whiten, 0.0f, Scalar)
+FS_PARAM(2, radius, 10.0f, Length)
+FS_PARAM(3, sharpen, 0.15f, Scalar)
+FS_END(Beauty)
+
 // ---- edges and stylize -----------------------------------------------------
 
 FS_FILTER(Sharpen, sharpen, FS_SHARPEN, "sharpen")

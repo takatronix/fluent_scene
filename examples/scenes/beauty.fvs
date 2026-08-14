@@ -1,0 +1,63 @@
+# 美顔フィルターのショーケース — gpupixel/FaceBetter の磨皮コアを GPU で。
+#   ./build/scene_web examples/scenes/beauty.fvs --webcam camera
+# ブラウザ(https)で開くとWebカメラが入力になる。本画面が美肌+美白、
+# 下段タイルで原画と各段(磨皮のみ/美白のみ/bilateral比較)を見比べる。
+# パラメータはこのファイルを編集して保存 = フレーム境界でアトミック反映。
+#
+# アルゴリズム: bilateral ではなく局所分散ゲート付き Wiener フィルター。
+# 平坦(分散小)かつ肌色(赤ch明度)の画素だけ局所平均へ寄せるので、毛穴は
+# 消えてエッジ・髪・目は残る。顔検出は不要。whiten は gpupixel の
+# LUT 連鎖の近似(レベル持ち上げ+ガンマ)。
+schema: fluent.scene/v1alpha2
+stage: { size: [1280, 720] }
+inputs:
+  camera: { type: image.rgba8, update: per_frame }
+layers:
+  - id: main
+    content: { image: { source: $inputs.camera, fit: cover } }
+    filters: [ { beauty: { smoothing: 0.8, whiten: 0.25, radius: 10, sharpen: 0.15 } } ]
+  - id: hud
+    position: [24, 24]
+    opacity: 0.92
+    shadow: {}
+    sublayers:
+      - content: { rect: { size: [500, 64], corner_radius: 14, color: [0, 0, 0, 0.45] } }
+      - content: { text: { text: "BEAUTY — 磨皮+美白 (gpupixel core)", position: [18, 16], size: 26 } }
+  - id: tiles
+    position: [0, 566]
+    sublayers:
+      - content: { rect: { rect: [0, 0, 1280, 154], color: [0, 0, 0, 0.35] } }
+      - id: t1
+        frame: [12, 10, 240, 134]
+        content: { image: { source: $inputs.camera, fit: cover } }
+        corner_radius: 10
+        masks_to_bounds: true
+      - content: { text: { text: "original", position: [20, 118], size: 13, color: [1, 1, 1, 0.75] } }
+      - id: t2
+        frame: [264, 10, 240, 134]
+        content: { image: { source: $inputs.camera, fit: cover } }
+        corner_radius: 10
+        masks_to_bounds: true
+        filters: [ { beauty: { smoothing: 1.0, whiten: 0, sharpen: 0 } } ]
+      - content: { text: { text: "smoothing 1.0", position: [272, 118], size: 13, color: [1, 1, 1, 0.75] } }
+      - id: t3
+        frame: [516, 10, 240, 134]
+        content: { image: { source: $inputs.camera, fit: cover } }
+        corner_radius: 10
+        masks_to_bounds: true
+        filters: [ { beauty: { smoothing: 0, whiten: 0.8, sharpen: 0 } } ]
+      - content: { text: { text: "whiten 0.8", position: [524, 118], size: 13, color: [1, 1, 1, 0.75] } }
+      - id: t4
+        frame: [768, 10, 240, 134]
+        content: { image: { source: $inputs.camera, fit: cover } }
+        corner_radius: 10
+        masks_to_bounds: true
+        filters: [ { bilateral: {} } ]
+      - content: { text: { text: "bilateral (比較)", position: [776, 118], size: 13, color: [1, 1, 1, 0.75] } }
+      - id: t5
+        frame: [1020, 10, 240, 134]
+        content: { image: { source: $inputs.camera, fit: cover } }
+        corner_radius: 10
+        masks_to_bounds: true
+        filters: [ { beauty: { smoothing: 1.0, whiten: 0.5, radius: 16, sharpen: 0.3 } } ]
+      - content: { text: { text: "全部盛り", position: [1028, 118], size: 13, color: [1, 1, 1, 0.75] } }

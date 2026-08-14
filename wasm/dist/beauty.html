@@ -1,0 +1,206 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fluent scene — beauty filter</title>
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; align-items: center;
+         justify-content: center; gap: 12px;
+         background: radial-gradient(120% 120% at 50% 0%, #1a141b 0%, #0a070b 70%);
+         color: #e8dfe6; font: 14px/1.5 system-ui, sans-serif; }
+  #v { display: block; max-width: 96vw; max-height: 78vh; aspect-ratio: 16 / 9;
+       background: #000; border-radius: 14px;
+       box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.5);
+       touch-action: none; user-select: none; cursor: ew-resize; }
+  #panel { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center;
+           padding: 10px 22px; border-radius: 12px; background: rgba(255,255,255,0.05); }
+  #panel label { display: flex; flex-direction: column; align-items: center; gap: 2px;
+                 font-size: 12px; color: #b9a8b5; }
+  #panel output { font-family: ui-monospace, monospace; font-size: 11px; color: #7c6a78; }
+  input[type=range] { width: 130px; accent-color: #d98d9e; }
+  #bar { font-family: ui-monospace, monospace; color: #8a7886; font-size: 12px;
+         white-space: pre-wrap; text-align: center; }
+</style>
+<canvas id="v" width="1280" height="720"></canvas>
+<div id="panel">
+  <label>美肌 <input id="smoothing" type="range" min="0" max="1" step="0.01" value="0.8"><output>0.80</output></label>
+  <label>美白 <input id="whiten" type="range" min="0" max="1" step="0.01" value="0.25"><output>0.25</output></label>
+  <label>シャープ <input id="sharpen" type="range" min="0" max="1" step="0.01" value="0.15"><output>0.15</output></label>
+  <label>半径 <input id="radius" type="range" min="2" max="24" step="1" value="10"><output>10</output></label>
+</div>
+<div id="bar">loading wasm…</div>
+<script type="module">
+// Beauty filter demo — the gpupixel/FaceBetter smoothing core (variance-gated
+// local Wiener filter + red-channel skin gate) as a fluent_scene filter,
+// running entirely in this tab. Drag the divider to wipe original vs beauty;
+// the sliders drive the filter parameters live through fs_layer_set_filter.
+import createFluentScene from './fluent_scene.mjs';
+
+const SCENE = `
+schema: fluent.scene/v1alpha2
+stage: { size: [1280, 720] }
+inputs:
+  camera: { type: image.rgba8, update: per_frame }
+params:
+  wipe_win: { type: vec2, default: [0, 360], runtime_mutable: true,
+              animate: { duration: 0.1, ease: ease_out } }
+  wipe_inv: { type: vec2, default: [1280, 360], runtime_mutable: true,
+              animate: { duration: 0.1, ease: ease_out } }
+  divider: { type: vec2, default: [640, 360], runtime_mutable: true,
+             animate: { duration: 0.1, ease: ease_out } }
+layers:
+  - id: after
+    content: { image: { source: $inputs.camera, fit: cover } }
+    filters: [ { beauty: { smoothing: 0.8, whiten: 0.25, radius: 10, sharpen: 0.15 } } ]
+  - id: before_win
+    bounds: [0, 0, 1280, 720]
+    masks_to_bounds: true
+    position: $params.wipe_win
+    sublayers:
+      - bounds: [0, 0, 1280, 720]
+        position: $params.wipe_inv
+        content: { image: { source: $inputs.camera, fit: cover } }
+  - id: divider_line
+    position: $params.divider
+    content: { rect: { size: [3, 720], color: [1, 1, 1, 0.55] } }
+  - id: hud
+    position: [28, 24]
+    opacity: 0.94
+    shadow: {}
+    sublayers:
+      - content: { rect: { size: [420, 64], corner_radius: 16, color: [0, 0, 0, 0.42] } }
+      - content: { text: { text: "BEAUTY FILTER", position: [20, 8], size: 30 } }
+      - content: { text: { text: "gpupixel algorithm on fluent_scene, in wasm", position: [20, 40],
+                           size: 15, color: [1, 1, 1, 0.55] } }
+  - content: { text: { text: "original", position: [24, 682], size: 15,
+                       color: [1, 1, 1, 0.65] } }
+  - content: { text: { text: "beauty", position: [1190, 682], size: 15,
+                       color: [1, 1, 1, 0.65] } }
+`;
+
+const bar = document.getElementById('bar');
+const canvas = document.getElementById('v');
+const ctx = canvas.getContext('2d');
+
+const mod = await createFluentScene();
+const fs = {
+  create: mod.cwrap('fs_create', 'number', ['number']),
+  error: mod.cwrap('fs_error', 'string', []),
+  stageW: mod.cwrap('fs_stage_width', 'number', ['number']),
+  stageH: mod.cwrap('fs_stage_height', 'number', ['number']),
+  imageBuffer: mod.cwrap('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
+  commitImage: mod.cwrap('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
+  render: mod.cwrap('fs_render', 'number', ['number', 'number', 'number', 'number']),
+  renderW: mod.cwrap('fs_render_width', 'number', ['number']),
+  renderH: mod.cwrap('fs_render_height', 'number', ['number']),
+  renderStride: mod.cwrap('fs_render_stride', 'number', ['number']),
+  setParamVec2: mod.cwrap('fs_set_param_vec2', 'number', ['number', 'string', 'number', 'number']),
+  layerSetFilter: mod.cwrap('fs_layer_set_filter', 'number',
+      ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
+};
+
+const yamlPtr = mod.stringToNewUTF8(SCENE);
+const inst = fs.create(yamlPtr);
+if (!inst) {
+  bar.textContent = 'scene rejected:\n' + fs.error();
+  throw new Error(fs.error());
+}
+const stageW = fs.stageW(inst), stageH = fs.stageH(inst);
+
+// ---- the wipe: original on the left of the divider, beauty on the right ----
+// before_win is a full-stage masked window slid left so it covers [s-1280, s];
+// the inner camera image is counter-shifted so its pixels stay aligned with
+// the filtered layer beneath. Positions are layer centers.
+function setWipe(s) {
+  s = Math.max(0, Math.min(stageW, s));
+  fs.setParamVec2(inst, 'wipe_win', s - 640, 360);
+  fs.setParamVec2(inst, 'wipe_inv', 1920 - s, 360);
+  fs.setParamVec2(inst, 'divider', s, 360);
+}
+
+let dragging = false;
+canvas.addEventListener('pointerdown', e => {
+  dragging = true; canvas.setPointerCapture(e.pointerId);
+  const r = canvas.getBoundingClientRect();
+  setWipe((e.clientX - r.left) / r.width * stageW);
+  e.preventDefault();
+});
+canvas.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const r = canvas.getBoundingClientRect();
+  setWipe((e.clientX - r.left) / r.width * stageW);
+});
+canvas.addEventListener('pointerup', () => { dragging = false; });
+
+// ---- sliders → live filter parameters --------------------------------------
+const sliders = ['smoothing', 'whiten', 'sharpen', 'radius']
+    .map(id => document.getElementById(id));
+function pushFilter() {
+  const [sm, wh, sh, ra] = sliders.map(s => Number(s.value));
+  for (const s of sliders) {
+    s.nextElementSibling.textContent = s.id === 'radius' ? s.value : Number(s.value).toFixed(2);
+  }
+  // filters_def.h slot order: smoothing, whiten, radius, sharpen
+  fs.layerSetFilter(inst, 'after', 'beauty', sm, wh, ra, sh, 0);
+}
+for (const s of sliders) s.addEventListener('input', pushFilter);
+
+// ---- webcam → wasm heap ----------------------------------------------------
+const res = new URLSearchParams(location.search).get('res');
+if (res && /^\d+x\d+$/.test(res)) {
+  const [rw, rh] = res.split('x').map(Number);
+  canvas.width = rw; canvas.height = rh;
+}
+const CAM_W = 640, CAM_H = 480;
+const grab = document.createElement('canvas');
+grab.width = CAM_W; grab.height = CAM_H;
+const grabCtx = grab.getContext('2d', { willReadFrequently: true });
+let video = null;
+try {
+  const stream = await navigator.mediaDevices.getUserMedia(
+      { video: { width: CAM_W, height: CAM_H }, audio: false });
+  video = document.createElement('video');
+  video.srcObject = stream; video.muted = true;
+  await video.play();
+} catch (e) {
+  bar.textContent = 'webcam: ' + e + ' (needs https or localhost)';
+}
+
+// ---- the loop, with the adaptive resolution ladder -------------------------
+let last = performance.now(), frames = 0, fpsShown = 0;
+const LADDER = [[1280, 720], [1024, 576], [854, 480], [640, 360]];
+let rung = 0;
+setInterval(() => {
+  fpsShown = frames; frames = 0;
+  if (res) return;
+  if (fpsShown < 24 && rung < LADDER.length - 1) ++rung;
+  else if (fpsShown > 50 && rung > 0) --rung;
+  const [w, h] = LADDER[rung];
+  if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
+}, 1000);
+
+function tick() {
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+
+  if (video && video.readyState >= 2) {
+    grabCtx.drawImage(video, 0, 0, CAM_W, CAM_H);
+    const data = grabCtx.getImageData(0, 0, CAM_W, CAM_H).data;
+    const ptr = fs.imageBuffer(inst, 'camera', CAM_W, CAM_H);
+    mod.HEAPU8.set(data, ptr);
+    fs.commitImage(inst, 'camera', CAM_W, CAM_H);
+  }
+
+  const px = fs.render(inst, dt, canvas.width, canvas.height);
+  const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
+  if (w === canvas.width && stride === w * 4) {
+    const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
+    ctx.putImageData(new ImageData(view, w, h), 0, 0);
+  }
+  ++frames;
+  bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · ドラッグで境界を動かす — 左が原画、右が美肌`;
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
