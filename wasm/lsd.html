@@ -326,7 +326,7 @@ let blinkPulse = 0, wasBlink = false, blinkJump = false;
 // 閉眼リセット: まばたきは素通し、目を閉じ続けるほど世界が初期状態へ
 // 洗い流される(長い閉眼=完全リセット)
 let eyeState = 'open', eyesClosedAt = 0, closedLevel = 0, cevArmed = false;
-let blinkSnap = false;
+let blinkSnap = false, blinkReset = false;
 let tripT0 = 0;  // when the come-up (re)started — the trip builds from here
 let gbias = { yaw: 0, pitch: 0 }, gcalib = [];
 try {
@@ -390,9 +390,13 @@ setInterval(() => {
         eyesClosedAt = performance.now();
       }
     } else {
-      if (eyeState === 'closed' && performance.now() - eyesClosedAt < 500 &&
-          Math.random() < 0.25) {
-        blinkSnap = true;  // 1/4 of light blinks flip the world; 3/4 pass
+      if (eyeState === 'closed' && performance.now() - eyesClosedAt < 500) {
+        const roll = Math.random();
+        if (roll < 0.25) {
+          blinkSnap = true;    // 1/4: the world flips — 「パッ」
+        } else if (roll < 0.5) {
+          blinkReset = true;   // 1/4: the world starts over
+        }                      // 2/4: the blink passes unnoticed
       }
       eyeState = 'open';
     }
@@ -519,6 +523,20 @@ function tick() {
   const lift = 0.3 + 0.7 * rise;
   for (const d in DIMS) {
     eff[d] *= lift;
+  }
+  if (blinkReset) {
+    // a blink that ended the world: same as the held-closure reset
+    blinkReset = false;
+    tripT0 = t;
+    for (const d in DIMS) {
+      conductor.from[d] = 0;
+      conductor.to[d] = 0;
+      sl[d].value = DEFAULTS[d];
+    }
+    labels();
+    conductor.next = t + 3;
+    prevCtx.clearRect(0, 0, CAM_W, CAM_H);
+    hasPrev = false;
   }
   if (blinkSnap) {
     // a blink the world noticed: one fast metastable jump — 「パッ」
