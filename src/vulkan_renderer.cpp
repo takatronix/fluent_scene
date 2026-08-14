@@ -439,7 +439,25 @@ struct VulkanRenderer::Impl {
                     "vkCreateDescriptorSetLayout");
             return layout;
         };
-        set_layout_tex = makeSetLayout(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        {
+            // Separated image + sampler (matches the shaders; WebGPU cannot
+            // express the combined form, Vulkan is fine with either).
+            VkDescriptorSetLayoutBinding bindings[2]{};
+            bindings[0].binding = 0;
+            bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            bindings[0].descriptorCount = 1;
+            bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            bindings[1].binding = 1;
+            bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+            bindings[1].descriptorCount = 1;
+            bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            VkDescriptorSetLayoutCreateInfo li{
+                VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            li.bindingCount = 2;
+            li.pBindings = bindings;
+            vkCheck(vkCreateDescriptorSetLayout(device, &li, nullptr, &set_layout_tex),
+                    "vkCreateDescriptorSetLayout");
+        }
         set_layout_ssbo = makeSetLayout(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
         const auto makePipeLayout = [&](VkDescriptorSetLayout set) {
@@ -458,13 +476,14 @@ struct VulkanRenderer::Impl {
         layout_tex = makePipeLayout(set_layout_tex);
         layout_ssbo = makePipeLayout(set_layout_ssbo);
 
-        VkDescriptorPoolSize sizes[2] = {
-            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8192},
+        VkDescriptorPoolSize sizes[3] = {
+            {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 8192},
+            {VK_DESCRIPTOR_TYPE_SAMPLER, 8192},
             {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 512},
         };
         VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         dpi.maxSets = 8704;
-        dpi.poolSizeCount = 2;
+        dpi.poolSizeCount = 3;
         dpi.pPoolSizes = sizes;
         vkCheck(vkCreateDescriptorPool(device, &dpi, nullptr, &desc_pool),
                 "vkCreateDescriptorPool");
@@ -765,14 +784,23 @@ struct VulkanRenderer::Impl {
 
     VkDescriptorSet texSet(VkImageView view, VkSampler sampler) {
         VkDescriptorSet set = allocSet(set_layout_tex);
-        VkDescriptorImageInfo info{sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        w.dstSet = set;
-        w.dstBinding = 0;
-        w.descriptorCount = 1;
-        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        w.pImageInfo = &info;
-        vkUpdateDescriptorSets(device, 1, &w, 0, nullptr);
+        VkDescriptorImageInfo image_info{VK_NULL_HANDLE, view,
+                                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo sampler_info{sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+        VkWriteDescriptorSet w[2]{};
+        w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w[0].dstSet = set;
+        w[0].dstBinding = 0;
+        w[0].descriptorCount = 1;
+        w[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        w[0].pImageInfo = &image_info;
+        w[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w[1].dstSet = set;
+        w[1].dstBinding = 1;
+        w[1].descriptorCount = 1;
+        w[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        w[1].pImageInfo = &sampler_info;
+        vkUpdateDescriptorSets(device, 2, w, 0, nullptr);
         return set;
     }
 
