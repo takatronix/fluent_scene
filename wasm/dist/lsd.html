@@ -513,9 +513,9 @@ function tick() {
   }
   // ---- カムアップ ------------------------------------------------------------
   // The trip builds: effect strength eases from a whisper (30%) toward the
-  // sliders' full values over a couple of minutes. Closing the eyes drains
+  // sliders' full values in about thirty seconds. Closing the eyes drains
   // it in proportion, and a committed reset starts the climb from zero.
-  const rise = (1 - Math.exp(-(t - tripT0) / 30)) * (1 - closedLevel);
+  const rise = (1 - Math.exp(-(t - tripT0) / 10)) * (1 - closedLevel);
   const lift = 0.3 + 0.7 * rise;
   for (const d in DIMS) {
     eff[d] *= lift;
