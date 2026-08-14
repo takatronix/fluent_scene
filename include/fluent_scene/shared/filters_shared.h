@@ -62,6 +62,7 @@ const int FS_RIPPLE = 29;
 const int FS_BEAUTY = 30;
 const int FS_LSD = 31;
 const int FS_LUT = 32;
+const int FS_FACE = 33;
 
 #ifdef FS_SAMPLE
 
