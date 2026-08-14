@@ -1,0 +1,215 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fluent scene — webgpu backend</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+         align-items: center; justify-content: center; gap: 14px; padding: 18px;
+         box-sizing: border-box;
+         background: radial-gradient(120% 120% at 50% 0%, #101722 0%, #070a0f 70%);
+         color: #dbe4ee; font: 14px/1.5 system-ui, sans-serif; }
+  canvas { background: #000; border-radius: 12px; max-width: 94vw;
+           box-shadow: 0 18px 60px rgba(0,0,0,0.55); }
+  #gpu { width: min(94vw, 960px); aspect-ratio: 16 / 9; }
+  #row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  #row figure { margin: 0; text-align: center; }
+  #row figcaption { font-size: 12px; color: #8b98a8; margin-top: 4px; }
+  #row canvas { width: 280px; }
+  #verdict { font-family: ui-monospace, monospace; font-size: 13px;
+             white-space: pre-wrap; text-align: center; }
+  .pass { color: #7fd8a4; } .fail { color: #f08a8a; }
+</style>
+<canvas id="gpu" width="1280" height="720"></canvas>
+<div id="verdict">loading wasm…</div>
+<div id="row">
+  <figure><canvas id="cpu_c" width="480" height="270"></canvas><figcaption>CPU reference</figcaption></figure>
+  <figure><canvas id="gpu_c" width="480" height="270"></canvas><figcaption>WebGPU readback</figcaption></figure>
+  <figure><canvas id="diff_c" width="480" height="270"></canvas><figcaption>diff ×8</figcaption></figure>
+</div>
+<script type="module">
+// WebGPU backend verification: the same compiled scene renders once on the
+// CPU reference and once on the WebGPU backend (offscreen + async readback),
+// pixels are compared with the golden-test tolerance, and the verdict lands
+// in document.title so a headless browser can report it. The big canvas then
+// runs the live present path (fs_render_webgpu — zero readback).
+import createFluentScene from './fluent_scene.mjs';
+
+const W = 480, H = 270;
+const SCENE = `
+schema: fluent.scene/v1alpha2
+stage: { size: [480, 270] }
+inputs:
+  camera: { type: image.rgba8, update: per_frame }
+layers:
+  - content: { grid: { spacing: 40, color: [1, 1, 1, 0.12] } }
+  - id: img1
+    frame: [12, 12, 150, 110]
+    content: { image: { source: $inputs.camera, fit: cover } }
+    corner_radius: 10
+    masks_to_bounds: true
+  - id: img2
+    frame: [174, 12, 150, 110]
+    content: { image: { source: $inputs.camera, fit: cover } }
+    filters: [ { beauty: { smoothing: 0.9, whiten: 0.3 } } ]
+  - id: img3
+    frame: [336, 12, 132, 110]
+    content: { image: { source: $inputs.camera, fit: cover } }
+    filters: [ { grayscale: {} }, { blur: { radius: 3 } } ]
+  - content: { rect: { rect: [12, 140, 120, 60], corner_radius: 12, color: [0, 0.6, 0.7, 0.8] } }
+    shadow: {}
+  - content: { circle: { center: [200, 170], radius: 34, color: [1, 0.55, 0.1, 1] } }
+    opacity: 0.85
+  - content: { circle: { center: [232, 170], radius: 34, color: [0.2, 0.4, 1, 1] } }
+    blend: screen
+  - content: { line: { from: [300, 145], to: [460, 200], thickness: 5, dash: 12,
+                       color: [1, 1, 0.4, 1] } }
+  - content: { text: { text: "webgpu = cpu?", position: [16, 220], size: 26 } }
+  - id: spun
+    frame: [330, 205, 120, 50]
+    rotation: -8
+    opacity: 0.9
+    sublayers:
+      - content: { rect: { rect: [0, 0, 120, 50], corner_radius: 10, color: [1, 1, 1, 0.2] } }
+      - content: { text: { text: "offscreen", position: [14, 14], size: 18 } }
+`;
+
+const verdict = document.getElementById('verdict');
+const mod = await createFluentScene();
+const c = (n, r, a) => mod.cwrap(n, r, a);
+const fs = {
+  create: c('fs_create', 'number', ['number']),
+  error: c('fs_error', 'string', []),
+  backend: c('fs_backend', 'string', []),
+  imageBuffer: c('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
+  commitImage: c('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
+  render: c('fs_render', 'number', ['number', 'number', 'number', 'number']),
+  gInit: c('fs_webgpu_init', null, ['string']),
+  gStatus: c('fs_webgpu_status', 'number', []),
+  gError: c('fs_webgpu_error', 'string', []),
+  gRender: c('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']),
+  gReadBegin: c('fs_webgpu_read_begin', 'number', ['number', 'number', 'number', 'number']),
+  gReadPixels: c('fs_webgpu_read_pixels', 'number', []),
+};
+
+const inst = fs.create(mod.stringToNewUTF8(SCENE));
+if (!inst) { verdict.textContent = 'scene rejected:\n' + fs.error(); throw new Error(fs.error()); }
+
+// Synthetic camera frame: gradients + checker + noise, all deterministic.
+const IW = 160, IH = 120;
+const buf = fs.imageBuffer(inst, 'camera', IW, IH);
+for (let y = 0; y < IH; ++y) {
+  for (let x = 0; x < IW; ++x) {
+    const p = buf + (y * IW + x) * 4;
+    mod.HEAPU8[p] = (x * 255 / IW) | 0;
+    mod.HEAPU8[p + 1] = (y * 255 / IH) | 0;
+    mod.HEAPU8[p + 2] = (((x / 16) | 0) + ((y / 16) | 0)) % 2 ? 200 : 60;
+    mod.HEAPU8[p + 3] = 255;
+  }
+}
+fs.commitImage(inst, 'camera', IW, IH);
+
+const paint = (id, pix) => {
+  const ctx = document.getElementById(id).getContext('2d');
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(pix), W, H), 0, 0);
+};
+
+// 1) CPU reference (dt=0: no animation state consumed).
+const cpuPtr = fs.render(inst, 0, W, H);
+const cpu = mod.HEAPU8.slice(cpuPtr, cpuPtr + W * H * 4);
+paint('cpu_c', cpu);
+
+// 2) WebGPU init (presents into #gpu; readback works alongside).
+fs.gInit('#gpu');
+verdict.textContent = 'waiting for WebGPU device…';
+await new Promise((ok, bad) => {
+  const poll = () => {
+    const s = fs.gStatus();
+    if (s === 1) return ok();
+    if (s === -1) return bad(new Error(fs.gError()));
+    requestAnimationFrame(poll);
+  };
+  poll();
+}).catch(e => { report(null, e.message); throw e; });
+
+// 3) Offscreen render + async readback of the very same tree.
+if (!fs.gReadBegin(inst, 0, W, H)) { report(null, 'read_begin failed: ' + fs.gError()); throw 0; }
+const gpuPtr = await new Promise((ok, bad) => {
+  const t0 = performance.now();
+  const poll = () => {
+    const p = fs.gReadPixels();
+    if (p) return ok(p);
+    if (fs.gStatus() === -1) return bad(new Error(fs.gError()));
+    if (performance.now() - t0 > 8000) return bad(new Error('readback timeout'));
+    requestAnimationFrame(poll);
+  };
+  poll();
+}).catch(e => { report(null, e.message); throw e; });
+const gpu = mod.HEAPU8.slice(gpuPtr, gpuPtr + W * H * 4);
+paint('gpu_c', gpu);
+
+// 4) Compare with the golden-test yardstick (per-channel tolerance + ratio).
+// Same yardstick as the golden tests: composite both over mid-gray first
+// (straight color at alpha≈0 is ill-defined — CPU keeps the color, the GPU
+// unpremultiply collapses it — but what the viewer sees is the composite).
+const TOL = 16, RATIO = 0.002;
+const overGray = (px, i, k) => px[i + k] * (px[i + 3] / 255) + 64 * (1 - px[i + 3] / 255);
+let maxd = 0, over = 0;
+const diff = new Uint8ClampedArray(W * H * 4);
+for (let i = 0; i < cpu.length; i += 4) {
+  let d = 0;
+  for (let k = 0; k < 3; ++k) {
+    const dk = Math.abs(overGray(cpu, i, k) - overGray(gpu, i, k));
+    diff[i + k] = Math.min(255, dk * 8);
+    d = Math.max(d, dk);
+  }
+  diff[i + 3] = 255;
+  maxd = Math.max(maxd, Math.round(d));
+  if (d > TOL) {
+    ++over;
+    if (over <= 8) {
+      const px = (i / 4) | 0;
+      console.log(`diff ${d.toFixed(0)} at (${px % W}, ${(px / W) | 0})`);
+    }
+  }
+}
+const ratio = over / (W * H);
+paint('diff_c', diff);
+report({ maxd, over, ratio: +ratio.toFixed(5), pass: ratio <= RATIO }, null);
+
+function report(r, err) {
+  let tag;
+  if (err) {
+    verdict.textContent = 'FAIL: ' + err;
+    verdict.className = 'fail';
+    tag = 'FAIL ' + err;
+  } else {
+    const line = `backend=${fs.backend()}  max|Δ|=${r.maxd}  over${16}=${r.over}px (${(r.ratio * 100).toFixed(2)}%)  → ${r.pass ? 'PASS' : 'FAIL'}`;
+    verdict.textContent = line;
+    verdict.className = r.pass ? 'pass' : 'fail';
+    tag = (r.pass ? 'PASS ' : 'FAIL ') + JSON.stringify(r);
+  }
+  document.title = 'WEBGPU:' + tag;
+  // Headless verification: the 404 line in the server log carries the
+  // verdict, and (when the dump server is up) the three canvases land as
+  // PNG files next to it.
+  fetch('/webgpu_verdict?' + encodeURIComponent(tag)).catch(() => {});
+  for (const id of ['cpu_c', 'gpu_c', 'diff_c']) {
+    document.getElementById(id).toBlob(b =>
+      fetch('/dump/' + id + '.png', { method: 'POST', body: b }).catch(() => {}));
+  }
+}
+
+// 5) Live present path on the big canvas — the actual W3 hot path.
+let last = performance.now(), frames = 0;
+setInterval(() => {
+  verdict.textContent = verdict.textContent.replace(/ \| \d+fps$/, '') + ` | ${frames}fps`;
+  frames = 0;
+}, 1000);
+(function tick() {
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+  if (fs.gRender(inst, dt, 1280, 720)) ++frames;
+  requestAnimationFrame(tick);
+})();
+</script>

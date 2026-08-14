@@ -22,6 +22,9 @@
 #include <fluent_scene/fluent_scene.hpp>
 #include <fluent_scene/fvs/compiler.hpp>
 #include <fluent_scene/fvs/document.hpp>
+#ifdef FS_HAVE_WEBGPU
+#include <fluent_scene/webgpu_renderer.hpp>
+#endif
 
 using namespace fluent_scene;
 namespace fvs = fluent_scene::fvs;
@@ -29,6 +32,10 @@ namespace fvs = fluent_scene::fvs;
 namespace {
 
 std::string g_error;
+
+#ifdef FS_HAVE_WEBGPU
+std::unique_ptr<WebGPURenderer> g_webgpu;
+#endif
 
 struct FsInstance {
     std::unique_ptr<fvs::CompiledScene> scene;
@@ -79,10 +86,85 @@ FsInstance* fs_create(const char* yaml_utf8) {
 EMSCRIPTEN_KEEPALIVE
 const char* fs_error() { return g_error.c_str(); }
 
-/// The renderer behind fs_render — "cpu" today; "webgpu" when W3 lands.
-/// Shown in HUDs so nobody has to wonder what is drawing.
+/// The renderer behind the frame — "cpu", or "webgpu" once fs_webgpu_init
+/// succeeded. Shown in HUDs so nobody has to wonder what is drawing.
 EMSCRIPTEN_KEEPALIVE
-const char* fs_backend() { return "cpu"; }
+const char* fs_backend() {
+#ifdef FS_HAVE_WEBGPU
+    if (g_webgpu && g_webgpu->status() == WebGPURenderer::Status::Ready) {
+        return "webgpu";
+    }
+#endif
+    return "cpu";
+}
+
+#ifdef FS_HAVE_WEBGPU
+
+/// Starts the async WebGPU init presenting into `canvas_selector`
+/// (e.g. "#view"). Poll fs_webgpu_status() from rAF until it leaves 0.
+EMSCRIPTEN_KEEPALIVE
+void fs_webgpu_init(const char* canvas_selector) {
+    WebGPURenderer::Options opts;
+    opts.canvas_selector = canvas_selector != nullptr ? canvas_selector : "";
+    g_webgpu = std::make_unique<WebGPURenderer>(std::move(opts));
+}
+
+/// 0 = initializing, 1 = ready, -1 = error (fs_webgpu_error says why).
+EMSCRIPTEN_KEEPALIVE
+int fs_webgpu_status() {
+    if (!g_webgpu) {
+        return -1;
+    }
+    switch (g_webgpu->status()) {
+        case WebGPURenderer::Status::Ready: return 1;
+        case WebGPURenderer::Status::Error: return -1;
+        default: return 0;
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+const char* fs_webgpu_error() {
+    static std::string out;
+    out = g_webgpu ? g_webgpu->error() : "fs_webgpu_init not called";
+    return out.c_str();
+}
+
+/// Renders one frame straight into the canvas — no readback, no
+/// putImageData; this is the W3 hot path.
+EMSCRIPTEN_KEEPALIVE
+int fs_render_webgpu(FsInstance* inst, float dt, int out_w, int out_h) {
+    if (!g_webgpu) {
+        return 0;
+    }
+    if (inst->ripple) {
+        inst->ripple->tick(dt);
+    }
+    return g_webgpu->renderToCanvas(inst->scene->stage(), static_cast<uint32_t>(out_w),
+                                    static_cast<uint32_t>(out_h), dt)
+               ? 1
+               : 0;
+}
+
+/// Async pixel readback pair for CPU-vs-GPU comparison: begin renders the
+/// frame offscreen and starts the map; pixels returns the tight RGBA8
+/// buffer once it lands (nullptr while pending).
+EMSCRIPTEN_KEEPALIVE
+int fs_webgpu_read_begin(FsInstance* inst, float dt, int out_w, int out_h) {
+    if (!g_webgpu) {
+        return 0;
+    }
+    return g_webgpu->readbackBegin(inst->scene->stage(), static_cast<uint32_t>(out_w),
+                                   static_cast<uint32_t>(out_h), dt)
+               ? 1
+               : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+const uint8_t* fs_webgpu_read_pixels() {
+    return g_webgpu ? g_webgpu->readbackPixels() : nullptr;
+}
+
+#endif  // FS_HAVE_WEBGPU
 
 /// The document's canonical digest.
 EMSCRIPTEN_KEEPALIVE

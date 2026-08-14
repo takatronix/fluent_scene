@@ -20,8 +20,9 @@
 <script type="module">
 // Everything happens in this tab: webcam capture, the Scene document, the
 // water simulation, filters, compositing — the same C++ that runs on the
-// robot, compiled to WebAssembly. No server round trip: touch feedback is
-// as fast as the CPU renders.
+// robot, compiled to WebAssembly. The GPU draws when the browser has
+// WebGPU (Phase W3); otherwise the CPU renderer paints via putImageData.
+// No server round trip: touch feedback is local either way.
 import createFluentScene from './fluent_scene.mjs';
 
 const SCENE = `
@@ -66,7 +67,7 @@ layers:
     sublayers:
       - content: { rect: { size: [420, 64], corner_radius: 16, color: [0, 0, 0, 0.42] } }
       - content: { text: { text: "FLUENT SCENE", position: [20, 8], size: 30 } }
-      - content: { text: { text: "wasm / cpu renderer - in your browser", position: [20, 40],
+      - content: { text: { text: "wasm / __BACKEND__ renderer - in your browser", position: [20, 40],
                            size: 15, color: [1, 1, 1, 0.55] } }
   - id: meter
     content: { gauge: { center: [1204, 74], radius: 46, value: $params.load } }
@@ -119,13 +120,15 @@ layers:
 `;
 
 const bar = document.getElementById('bar');
-const canvas = document.getElementById('v');
-const ctx = canvas.getContext('2d');
+let canvas = document.getElementById('v');
+let ctx = null;  // 2d context, acquired only if the CPU path draws — a
+                 // canvas that ever had a 2d context can never host WebGPU.
 
 const mod = await createFluentScene();
 const fs = {
   create: mod.cwrap('fs_create', 'number', ['number']),
   error: mod.cwrap('fs_error', 'string', []),
+  backend: mod.cwrap('fs_backend', 'string', []),
   stageW: mod.cwrap('fs_stage_width', 'number', ['number']),
   stageH: mod.cwrap('fs_stage_height', 'number', ['number']),
   imageBuffer: mod.cwrap('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
@@ -140,6 +143,50 @@ const fs = {
   setParamBool: mod.cwrap('fs_set_param_bool', 'number', ['number', 'string', 'number']),
   drainEvents: mod.cwrap('fs_drain_events', 'string', ['number']),
 };
+
+// ---- backend choice: WebGPU when the browser has it, CPU otherwise --------
+// The wasm module always exports the fs_webgpu_* surface when built with
+// --webgpu; a CPU-only module simply lacks it, so everything is probed.
+let gpu = false;
+try {
+  if (navigator.gpu) {
+    const gInit = mod.cwrap('fs_webgpu_init', null, ['string']);
+    const gStatus = mod.cwrap('fs_webgpu_status', 'number', []);
+    const gError = mod.cwrap('fs_webgpu_error', 'string', []);
+    fs.gRender = mod.cwrap('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']);
+    gInit('#v');
+    bar.textContent = 'waiting for WebGPU device…';
+    gpu = await new Promise(resolve => {
+      const t0 = performance.now();
+      (function poll() {
+        const s = gStatus();
+        if (s === 1) return resolve(true);
+        if (s === -1) { console.error('fluent_scene: WebGPU init failed:', gError()); return resolve(false); }
+        if (performance.now() - t0 > 5000) { console.error('fluent_scene: WebGPU init timeout'); return resolve(false); }
+        requestAnimationFrame(poll);
+      })();
+    });
+  }
+} catch (e) {
+  console.error('fluent_scene: WebGPU unavailable, using CPU renderer:', e);
+  gpu = false;
+}
+if (!gpu) ctx = canvas.getContext('2d');
+fs.gStatus = gpu ? mod.cwrap('fs_webgpu_status', 'number', []) : () => -1;
+
+// GPU rendering can die mid-run (device lost, tab GPU reset). The page must
+// never blackscreen: swap in a fresh canvas (the old one is married to its
+// webgpu context) and continue on the CPU renderer.
+function fallbackToCpu(why) {
+  if (!gpu) return;
+  gpu = false;
+  console.error('fluent_scene: falling back to CPU renderer:', why);
+  const fresh = canvas.cloneNode(false);
+  canvas.replaceWith(fresh);
+  canvas = fresh;
+  hook(canvas);
+  ctx = canvas.getContext('2d');
+}
 
 // Portrait spotlight: the circular sharp window over the blurred camera.
 // Its center is a document param, so anything can drive it — the browser's
@@ -158,7 +205,7 @@ function setFace(x, y) {
 const setParamVec2 = mod.cwrap('fs_set_param_vec2', 'number', ['number', 'string', 'number', 'number']);
 function fsSetVec2(name, x, y) { setParamVec2(inst, name, x, y); }
 
-const yamlPtr = mod.stringToNewUTF8(SCENE);
+const yamlPtr = mod.stringToNewUTF8(SCENE.replace('__BACKEND__', gpu ? 'webgpu' : 'cpu'));
 const inst = fs.create(yamlPtr);
 if (!inst) {
   bar.textContent = 'scene rejected:\n' + fs.error();
@@ -247,11 +294,20 @@ function tick() {
     fs.commitImage(inst, 'camera', CAM_W, CAM_H);
   }
 
-  const px = fs.render(inst, dt, canvas.width, canvas.height);
-  const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
-  if (w === canvas.width && stride === w * 4) {
-    const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
-    ctx.putImageData(new ImageData(view, w, h), 0, 0);
+  if (gpu) {
+    if (fs.gStatus() !== 1) {
+      fallbackToCpu('device left ready state');
+    } else if (!fs.gRender(inst, dt, canvas.width, canvas.height)) {
+      fallbackToCpu('fs_render_webgpu failed');
+    }
+  }
+  if (!gpu) {
+    const px = fs.render(inst, dt, canvas.width, canvas.height);
+    const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
+    if (w === canvas.width && stride === w * 4) {
+      const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
+      ctx.putImageData(new ImageData(view, w, h), 0, 0);
+    }
   }
   // UI events out of the document (the portrait switch lives in the scene).
   for (const line of fs.drainEvents(inst).split('\n')) {
@@ -266,7 +322,7 @@ function tick() {
   }
   ++frames;
   fs.setParamF32(inst, 'load', Math.min(fpsShown / 60, 1));
-  bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · wasm/CPU renderer (WebGPU backend in progress) — touch the water`;
+  bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · wasm/${fs.backend()} renderer — touch the water`;
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
