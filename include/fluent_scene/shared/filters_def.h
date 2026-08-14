@@ -99,6 +99,7 @@ FS_END(Haze)
 // the renderer derives the grid geometry from the atlas width.
 FS_FILTER_IMG(Lut, lut, FS_LUT, source, "3D LUT color grade from a tiled atlas image")
 FS_PARAM(0, amount, 1.0f, Scalar)
+FS_PARAM(1, skin, 0.0f, Scalar)
 FS_END(Lut)
 
 FS_FILTER(ColorTransform, color_transform, FS_COLOR_TRANSFORM,
@@ -137,6 +138,7 @@ FS_PARAM(0, smoothing, 0.7f, Scalar)
 FS_PARAM(1, whiten, 0.0f, Scalar)
 FS_PARAM(2, radius, 10.0f, Length)
 FS_PARAM(3, sharpen, 0.15f, Scalar)
+FS_PARAM(4, denoise, 0.0f, Scalar)
 FS_END(Beauty)
 
 // ---- edges and stylize -----------------------------------------------------

@@ -150,7 +150,7 @@ inline const std::vector<FilterSpec>& filterTable() {
 
 /// Derives the tiled-atlas grid of a `lut` image parameter: a square atlas
 /// whose width = tiles³ (512 → 8×8 tiles of 64). Every renderer feeds the
-/// result into parameter slots 1 (tiles) and 2 (tile_n) before dispatching
+/// result into parameter slots 2 (tiles) and 3 (tile_n) before dispatching
 /// FS_LUT — this is the one place the layout rule lives. Returns false for
 /// an empty or misshapen view: the documented pass-through, not an error.
 inline bool lutAtlasGrid(const ImageView& image, float* tiles, float* tile_n) {

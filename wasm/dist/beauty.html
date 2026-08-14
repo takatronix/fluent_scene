@@ -27,6 +27,7 @@
   <label>美肌 <input id="smoothing" type="range" min="0" max="1" step="0.01" value="0.8"><output>0.80</output></label>
   <label>美白 <input id="whiten" type="range" min="0" max="1" step="0.01" value="0.25"><output>0.25</output></label>
   <label>シャープ <input id="sharpen" type="range" min="0" max="1" step="0.01" value="0.15"><output>0.15</output></label>
+  <label>ノイズ低減 <input id="denoise" type="range" min="0" max="1" step="0.01" value="0.35"><output>0.35</output></label>
   <label>半径 <input id="radius" type="range" min="2" max="24" step="1" value="10"><output>10</output></label>
 </div>
 <div id="bar">loading wasm…</div>
@@ -53,8 +54,8 @@ params:
 layers:
   - id: after
     content: { image: { source: $inputs.camera, fit: cover } }
-    filters: [ { beauty: { smoothing: 0.8, whiten: 0, radius: 10, sharpen: 0.15 } },
-               { lut: { source: $inputs.grade, amount: 1 } } ]
+    filters: [ { beauty: { smoothing: 0.8, whiten: 0, radius: 10, sharpen: 0.15, denoise: 0.35 } },
+               { lut: { source: $inputs.grade, amount: 1, skin: 1 } } ]
   - id: before_win
     bounds: [0, 0, 1280, 720]
     masks_to_bounds: true
@@ -197,7 +198,7 @@ const [lutBase, lutFull] = await Promise.all(
 
 function pushWhiten(w) {
   if (w <= 0) {
-    fs.layerSetFilter(inst, 'after', 'lut', 0, 0, 0, 0, 0);  // amount 0 = identity
+    fs.layerSetFilter(inst, 'after', 'lut', 0, 1, 0, 0, 0);  // amount 0 = identity
     return;
   }
   const ptr = fs.imageBuffer(inst, 'grade', LUT_W, LUT_W);
@@ -206,21 +207,23 @@ function pushWhiten(w) {
     heap[ptr + i] = lutBase[i] + (lutFull[i] - lutBase[i]) * w;
   }
   fs.commitImage(inst, 'grade', LUT_W, LUT_W);
-  fs.layerSetFilter(inst, 'after', 'lut', 1, 0, 0, 0, 0);
+  // amount 1, skin 1: gpupixel's real chain, but scoped to skin chroma —
+  // shirts and background keep their color (the original whitens everything).
+  fs.layerSetFilter(inst, 'after', 'lut', 1, 1, 0, 0, 0);
 }
 pushWhiten(0.25);
 
 // ---- sliders → live filter parameters --------------------------------------
-const sliders = ['smoothing', 'whiten', 'sharpen', 'radius']
+const sliders = ['smoothing', 'whiten', 'sharpen', 'denoise', 'radius']
     .map(id => document.getElementById(id));
 function pushFilter() {
-  const [sm, wh, sh, ra] = sliders.map(s => Number(s.value));
+  const [sm, wh, sh, dn, ra] = sliders.map(s => Number(s.value));
   for (const s of sliders) {
     s.nextElementSibling.textContent = s.id === 'radius' ? s.value : Number(s.value).toFixed(2);
   }
-  // filters_def.h slot order: smoothing, whiten, radius, sharpen — the
-  // procedural whiten stays 0; the real LUT chain carries whitening now.
-  fs.layerSetFilter(inst, 'after', 'beauty', sm, 0, ra, sh, 0);
+  // filters_def.h slot order: smoothing, whiten, radius, sharpen, denoise —
+  // the procedural whiten stays 0; the real LUT chain carries whitening now.
+  fs.layerSetFilter(inst, 'after', 'beauty', sm, 0, ra, sh, dn);
   pushWhiten(wh);
 }
 for (const s of sliders) s.addEventListener('input', pushFilter);

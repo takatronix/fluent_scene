@@ -334,7 +334,7 @@ void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext) {
     if (f.mode == FS_LUT) {
         // An unfed or malformed atlas leaves the layer ungraded — the
         // documented pass-through, not an error.
-        if (!lutAtlasGrid(f.image, &values[1], &values[2])) {
+        if (!lutAtlasGrid(f.image, &values[2], &values[3])) {
             return;
         }
         g_filter_image = &f.image;

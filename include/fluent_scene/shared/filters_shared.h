@@ -67,6 +67,17 @@ const int FS_LUT = 32;
 
 float fs_luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
+// Soft skin-chroma mask in normalized YCbCr: the skin cluster sits near
+// (Cb 0.41, Cr 0.60) across skin tones, while neutral fabric and foliage
+// fall well outside — this is what keeps whitening off shirts and walls
+// without any face detection. The wide falloff keeps boundaries invisible.
+float fs_skin_chroma(vec3 c) {
+    float cb = 0.5 - 0.168736 * c.x - 0.331264 * c.y + 0.5 * c.z;
+    float cr = 0.5 + 0.5 * c.x - 0.418688 * c.y - 0.081312 * c.z;
+    vec2 d = vec2((cb - 0.41) / 0.07, (cr - 0.60) / 0.06);
+    return clamp(1.8 - length(d), 0.0, 1.0);
+}
+
 float fs_sobel_magnitude(vec2 uv) {
     float tl = fs_luma(FS_SAMPLE(uv + vec2(-FS_TEXEL.x, -FS_TEXEL.y)));
     float tc = fs_luma(FS_SAMPLE(uv + vec2(0.0, -FS_TEXEL.y)));
@@ -232,10 +243,16 @@ vec3 fs_median(vec2 uv) {
 // pixel passes a red-channel skin gate, so pores vanish while edges, hair,
 // and eyes survive untouched. No face detection involved. Mean and variance
 // come from one sparse 5x5 grid via E[x²]−E[x]²; the 50/0.1 pairing is
-// gpupixel's calibration (their delta=7.07 squared). `whiten` approximates
-// the original's baked LUT chain with a levels lift + gamma curve;
+// gpupixel's calibration (their delta=7.07 squared).
+//
+// Where this deliberately goes past gpupixel: `denoise` reuses the same
+// local statistics as a frame-wide variance-gated denoiser (no skin gate —
+// grain fades everywhere, edges still survive on the variance term), and
+// `whiten` is gated by the skin-chroma mask so brightening stays off
+// clothing and background — the original applies it to every pixel.
 // `sharpen` restores micro-contrast the blend absorbs (4-tap unsharp).
-vec3 fs_beauty(vec2 uv, float smoothing, float whiten, float radius, float sharpen_amount) {
+vec3 fs_beauty(vec2 uv, float smoothing, float whiten, float radius, float sharpen_amount,
+               float denoise) {
     vec3 c = FS_SAMPLE(uv);
     float grid = max(radius, 1.0) * 0.5;
     vec3 sum = vec3(0.0);
@@ -250,8 +267,10 @@ vec3 fs_beauty(vec2 uv, float smoothing, float whiten, float radius, float sharp
     vec3 mean = sum * (1.0 / 25.0);
     vec3 variance = max(sum_sq * (1.0 / 25.0) - mean * mean, vec3(0.0));
     float mean_var = 50.0 * (variance.x + variance.y + variance.z) * (1.0 / 3.0);
+    float flatness = 0.1 / (mean_var + 0.1);
     float skin = clamp((min(c.x, mean.x - 0.1) - 0.2) * 4.0, 0.0, 1.0);
-    float k = (0.1 / (mean_var + 0.1)) * skin * clamp(smoothing, 0.0, 1.0);
+    float k = flatness * skin * clamp(smoothing, 0.0, 1.0);
+    k = max(k, flatness * 0.7 * clamp(denoise, 0.0, 1.0));
     vec3 result = mix(c, mean, clamp(k, 0.0, 1.0));
     if (sharpen_amount > 0.0) {
         vec3 neighbors = FS_SAMPLE(uv + vec2(FS_TEXEL.x, 0.0)) +
@@ -264,7 +283,7 @@ vec3 fs_beauty(vec2 uv, float smoothing, float whiten, float radius, float sharp
         vec3 lifted = clamp((result - vec3(0.0259)) * 1.02657, 0.0, 1.0);
         vec3 bright = pow(lifted, vec3(0.72));
         bright = mix(vec3(fs_luma(bright)), bright, 0.88);
-        result = mix(result, bright, clamp(whiten, 0.0, 1.0));
+        result = mix(result, bright, clamp(whiten, 0.0, 1.0) * fs_skin_chroma(c));
     }
     return result;
 }
@@ -276,8 +295,10 @@ vec3 fs_beauty(vec2 uv, float smoothing, float whiten, float radius, float sharp
 // `tiles` and `tile_n` are derived by the renderer from the atlas width
 // (width = tiles³, so 512 → 8×8 tiles of 64), never authored. Slice blend
 // is manual; in-slice r/g interpolation rides on the LUT sampler. `amount`
-// mixes the graded color over the source.
-vec3 fs_lut(vec2 uv, float amount, float tiles, float tile_n) {
+// mixes the graded color over the source; `skin` scopes it to the
+// skin-chroma mask (1 = grade skin only — the whitening use; 0 = the whole
+// frame — the film-look use).
+vec3 fs_lut(vec2 uv, float amount, float skin, float tiles, float tile_n) {
     vec3 c = clamp(FS_SAMPLE(uv), 0.0, 1.0);
     float atlas = tiles * tile_n;
     float slice = c.z * (tile_n - 1.0);
@@ -287,7 +308,8 @@ vec3 fs_lut(vec2 uv, float amount, float tiles, float tile_n) {
     vec2 uv0 = (vec2(s0 - floor(s0 / tiles) * tiles, floor(s0 / tiles)) * tile_n + inner) / atlas;
     vec2 uv1 = (vec2(s1 - floor(s1 / tiles) * tiles, floor(s1 / tiles)) * tile_n + inner) / atlas;
     vec3 graded = mix(FS_SAMPLE_LUT(uv0), FS_SAMPLE_LUT(uv1), slice - s0);
-    return mix(c, graded, clamp(amount, 0.0, 1.0));
+    float gate = mix(1.0, fs_skin_chroma(c), clamp(skin, 0.0, 1.0));
+    return mix(c, graded, clamp(amount, 0.0, 1.0) * gate);
 }
 #endif  // FS_SAMPLE_LUT
 
@@ -545,9 +567,9 @@ vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p
     else if (mode == FS_COLOR_TRANSFORM) c = fs_color_transform(c, p0, p1, p2, p3);
     else if (mode == FS_BILATERAL)       c = fs_bilateral(uv, p0, p1);
     else if (mode == FS_MEDIAN)          c = fs_median(uv);
-    else if (mode == FS_BEAUTY)          c = fs_beauty(uv, p0, p1, p2, p3);
+    else if (mode == FS_BEAUTY)          c = fs_beauty(uv, p0, p1, p2, p3, p4);
 #ifdef FS_SAMPLE_LUT
-    else if (mode == FS_LUT)             c = fs_lut(uv, p0, p1, p2);
+    else if (mode == FS_LUT)             c = fs_lut(uv, p0, p1, p2, p3);
 #endif
     else if (mode == FS_RIPPLE)          c = fs_ripple(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_LSD)             c = fs_lsd(uv, p0, p1, p2, p3, p4);

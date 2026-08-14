@@ -1402,7 +1402,7 @@ struct WebGPURenderer::Impl {
                 // Unfed or malformed atlas: the documented pass-through
                 // (identical to the CPU reference).
                 auto it = image_cache.find(f.image.pixels);
-                if (!lutAtlasGrid(f.image, &values[1], &values[2]) ||
+                if (!lutAtlasGrid(f.image, &values[2], &values[3]) ||
                     it == image_cache.end()) {
                     continue;
                 }
