@@ -51,6 +51,20 @@ params:
 layers:
   - id: camera_bg
     content: { image: { source: $inputs.camera, fit: cover } }
+  - id: defocus
+    hidden: $params.focus_off
+    content: { image: { source: $inputs.camera, fit: cover } }
+    filters: [ { blur: { radius: 9 } } ]
+  - id: focus_win
+    hidden: $params.focus_off
+    bounds: [0, 0, 320, 320]
+    corner_radius: 160
+    masks_to_bounds: true
+    position: $params.gaze
+    sublayers:
+      - bounds: [0, 0, 1280, 720]
+        position: $params.gaze_inv
+        content: { image: { source: $inputs.camera, fit: cover } }
   - id: dot
     hidden: $params.focus_off
     position: $params.gaze
@@ -214,15 +228,23 @@ const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
 try {
   const vision = await import(`${MP}/vision_bundle.mjs`);
   const files = await vision.FilesetResolver.forVisionTasks(`${MP}/wasm`);
-  landmarker = await vision.FaceLandmarker.createFromOptions(files, {
+  const makeLandmarker = delegate => vision.FaceLandmarker.createFromOptions(files, {
     baseOptions: {
       modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-      delegate: 'GPU',
+      delegate,
     },
     outputFacialTransformationMatrixes: true,
     runningMode: 'VIDEO',
     numFaces: 1,
   });
+  // The GPU delegate needs WebGL; environments without it (some headless /
+  // remote setups) still run fine on the CPU delegate at 10 Hz.
+  try {
+    landmarker = await makeLandmarker('GPU');
+  } catch (e) {
+    console.error('MediaPipe GPU delegate failed, retrying on CPU:', e);
+    landmarker = await makeLandmarker('CPU');
+  }
   mode = 'iris';
 } catch (e) {
   console.error('MediaPipe unavailable:', e);
