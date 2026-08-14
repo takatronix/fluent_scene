@@ -257,19 +257,26 @@ vec3 fs_beauty(vec2 uv, float smoothing, float whiten, float radius, float sharp
                float denoise) {
     vec3 c = FS_SAMPLE(uv);
     if (denoise > 0.0) {
-        vec3 fsum = vec3(0.0);
-        vec3 fsum_sq = vec3(0.0);
+        // Small bilateral (9 taps, 2-texel pitch, range σ ≈ 0.1): every tap
+        // is weighted by color similarity to the center, so an edge crossing
+        // the window is excluded from the average instead of averaged away.
+        // (The earlier box-mean + variance gate softened boundaries: right
+        // on an edge the gate saw only moderate variance and half-opened.)
+        vec3 accum = c;
+        float wsum = 1.0;
         for (int j = -1; j <= 1; ++j) {
             for (int i = -1; i <= 1; ++i) {
+                if (i == 0 && j == 0) {
+                    continue;
+                }
                 vec3 s = FS_SAMPLE(uv + FS_TEXEL * vec2(float(i), float(j)) * 2.0);
-                fsum += s;
-                fsum_sq += s * s;
+                vec3 d = s - c;
+                float w = exp(-dot(d, d) * 50.0);
+                accum += s * w;
+                wsum += w;
             }
         }
-        vec3 fmean = fsum * (1.0 / 9.0);
-        vec3 fvar = max(fsum_sq * (1.0 / 9.0) - fmean * fmean, vec3(0.0));
-        float fv = 50.0 * (fvar.x + fvar.y + fvar.z) * (1.0 / 3.0);
-        c = mix(c, fmean, (0.15 / (fv + 0.15)) * clamp(denoise, 0.0, 1.0));
+        c = mix(c, accum * (1.0 / wsum), clamp(denoise, 0.0, 1.0));
     }
     float grid = max(radius, 1.0) * 0.5;
     vec3 sum = vec3(0.0);
