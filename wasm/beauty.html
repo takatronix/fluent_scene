@@ -82,8 +82,8 @@ layers:
 `;
 
 const bar = document.getElementById('bar');
-const canvas = document.getElementById('v');
-const ctx = canvas.getContext('2d');
+let canvas = document.getElementById('v');
+let ctx = null;  // 2d context only on the CPU path (a webgpu canvas can't have one)
 
 const mod = await createFluentScene();
 const fs = {
@@ -110,6 +110,47 @@ if (!inst) {
 }
 const stageW = fs.stageW(inst), stageH = fs.stageH(inst);
 
+// ---- backend choice: WebGPU when the browser has it, CPU otherwise --------
+// (the demo.html pattern: probe, init against the canvas, fall back on any
+// failure — the page never blackscreens)
+let gpu = false;
+try {
+  if (navigator.gpu) {
+    const gInit = mod.cwrap('fs_webgpu_init', null, ['string']);
+    const gStatus = mod.cwrap('fs_webgpu_status', 'number', []);
+    const gError = mod.cwrap('fs_webgpu_error', 'string', []);
+    fs.gRender = mod.cwrap('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']);
+    gInit('#v');
+    bar.textContent = 'waiting for WebGPU device…';
+    gpu = await new Promise(resolve => {
+      const t0 = performance.now();
+      (function poll() {
+        const s = gStatus();
+        if (s === 1) return resolve(true);
+        if (s === -1) { console.error('beauty: WebGPU init failed:', gError()); return resolve(false); }
+        if (performance.now() - t0 > 5000) { console.error('beauty: WebGPU init timeout'); return resolve(false); }
+        requestAnimationFrame(poll);
+      })();
+    });
+  }
+} catch (e) {
+  console.error('beauty: WebGPU unavailable, using CPU renderer:', e);
+  gpu = false;
+}
+if (!gpu) ctx = canvas.getContext('2d');
+fs.gStatus = gpu ? mod.cwrap('fs_webgpu_status', 'number', []) : () => -1;
+
+function fallbackToCpu(why) {
+  if (!gpu) return;
+  gpu = false;
+  console.error('beauty: falling back to CPU renderer:', why);
+  const fresh = canvas.cloneNode(false);
+  canvas.replaceWith(fresh);
+  canvas = fresh;
+  hookWipe(canvas);
+  ctx = canvas.getContext('2d');
+}
+
 // ---- the wipe: original on the left of the divider, beauty on the right ----
 // before_win is a full-stage masked window slid left so it covers [s-1280, s];
 // the inner camera image is counter-shifted so its pixels stay aligned with
@@ -122,18 +163,21 @@ function setWipe(s) {
 }
 
 let dragging = false;
-canvas.addEventListener('pointerdown', e => {
-  dragging = true; canvas.setPointerCapture(e.pointerId);
-  const r = canvas.getBoundingClientRect();
-  setWipe((e.clientX - r.left) / r.width * stageW);
-  e.preventDefault();
-});
-canvas.addEventListener('pointermove', e => {
-  if (!dragging) return;
-  const r = canvas.getBoundingClientRect();
-  setWipe((e.clientX - r.left) / r.width * stageW);
-});
-canvas.addEventListener('pointerup', () => { dragging = false; });
+function hookWipe(el) {
+  el.addEventListener('pointerdown', e => {
+    dragging = true; el.setPointerCapture(e.pointerId);
+    const r = el.getBoundingClientRect();
+    setWipe((e.clientX - r.left) / r.width * stageW);
+    e.preventDefault();
+  });
+  el.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const r = el.getBoundingClientRect();
+    setWipe((e.clientX - r.left) / r.width * stageW);
+  });
+  el.addEventListener('pointerup', () => { dragging = false; });
+}
+hookWipe(canvas);
 
 // ---- the whiten grade: gpupixel's real LUT chain, baked ---------------------
 // base = the chain at strength 0, full = at strength 1; the original's
@@ -228,14 +272,23 @@ function tick() {
     fs.commitImage(inst, 'camera', CAM_W, CAM_H);
   }
 
-  const px = fs.render(inst, dt, canvas.width, canvas.height);
-  const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
-  if (w === canvas.width && stride === w * 4) {
-    const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
-    ctx.putImageData(new ImageData(view, w, h), 0, 0);
+  if (gpu) {
+    if (fs.gStatus() !== 1) {
+      fallbackToCpu('device left ready state');
+    } else if (!fs.gRender(inst, dt, canvas.width, canvas.height)) {
+      fallbackToCpu('fs_render_webgpu failed');
+    }
+  }
+  if (!gpu) {
+    const px = fs.render(inst, dt, canvas.width, canvas.height);
+    const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
+    if (w === canvas.width && stride === w * 4) {
+      const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
+      ctx.putImageData(new ImageData(view, w, h), 0, 0);
+    }
   }
   ++frames;
-  bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · ドラッグで境界を動かす — 左が原画、右が美肌`;
+  bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · wasm/${gpu ? 'webgpu' : 'cpu'} — ドラッグで境界を動かす。左が原画、右が美肌`;
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
