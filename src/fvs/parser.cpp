@@ -860,6 +860,17 @@ private:
                     continue;
                 }
                 for (const YamlMapEntry& p : f.value.entries) {
+                    if (spec->image_param != nullptr && p.key == spec->image_param) {
+                        if (!p.value.isPlainScalar() ||
+                            p.value.scalar.rfind("$inputs.", 0) != 0) {
+                            error("validate.reference", p.value.span,
+                                  std::string(spec->name) + " " + spec->image_param +
+                                      " expects an input reference '$inputs.<name>'");
+                            continue;
+                        }
+                        decl.image_input = p.value.scalar.substr(8);
+                        continue;
+                    }
                     int slot = -1;
                     for (size_t i = 0; i < spec->params.size(); ++i) {
                         if (p.key == spec->params[i].name) {
@@ -869,6 +880,9 @@ private:
                     }
                     if (slot < 0) {
                         std::string valid;
+                        if (spec->image_param != nullptr) {
+                            valid = spec->image_param;
+                        }
                         for (const FilterParamSpec& ps : spec->params) {
                             valid += valid.empty() ? ps.name : (std::string(", ") + ps.name);
                         }

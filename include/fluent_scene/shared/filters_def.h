@@ -26,6 +26,19 @@
 //   FS_FILTER(TypeName, method, MODE, summary_utf8)
 //   FS_PARAM(slot, name, default, unit)
 //   FS_END(TypeName)
+//
+// Filters that read a second image (`lut`) open with FS_FILTER_IMG instead,
+// naming the image parameter as it appears in Scene YAML; FS_PARAM/FS_END
+// are shared with the plain form. Includers that don't care about the image
+// parameter get the plain expansion for free:
+//
+//   FS_FILTER_IMG(TypeName, method, MODE, image_name, summary_utf8)
+
+#ifndef FS_FILTER_IMG
+#define FS_FILTER_IMG(TypeName, method, MODE, image_name, summary) \
+    FS_FILTER(TypeName, method, MODE, summary)
+#define FS_FILTER_IMG_DEFAULTED
+#endif
 
 // ---- color and tone --------------------------------------------------------
 
@@ -80,6 +93,13 @@ FS_FILTER(Haze, haze, FS_HAZE, "haze removal / addition")
 FS_PARAM(0, distance, 0.15f, Scalar)
 FS_PARAM(1, slope, 0.0f, Scalar)
 FS_END(Haze)
+
+// The LUT atlas comes through the layer's filter-image binding
+// (`source: $inputs.<name>` in Scene YAML, `Lut().source(view)` in C++);
+// the renderer derives the grid geometry from the atlas width.
+FS_FILTER_IMG(Lut, lut, FS_LUT, source, "3D LUT color grade from a tiled atlas image")
+FS_PARAM(0, amount, 1.0f, Scalar)
+FS_END(Lut)
 
 FS_FILTER(ColorTransform, color_transform, FS_COLOR_TRANSFORM,
           "brightness, contrast, saturation, gamma")
@@ -184,3 +204,8 @@ FS_PARAM(2, drift, 1.0f, Scalar)
 FS_PARAM(3, geometry, 0.5f, Scalar)
 FS_PARAM(4, chroma, 1.0f, Scalar)
 FS_END(Lsd)
+
+#ifdef FS_FILTER_IMG_DEFAULTED
+#undef FS_FILTER_IMG
+#undef FS_FILTER_IMG_DEFAULTED
+#endif

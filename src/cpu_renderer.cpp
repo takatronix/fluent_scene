@@ -235,13 +235,42 @@ vec3 filterSample(vec2 uv) {
 
 vec2 filterTexel() { return {1.0f / g_filter_src->w, 1.0f / g_filter_src->h}; }
 
+// The filter-image parameter (`lut` grade atlas): borrowed RGBA8 straight
+// from the ImageView, sampled bilinearly — the LUT body aligns its reads to
+// texel centers and rides the sampler for in-slice interpolation, exactly
+// like the GPU's linear sampler will.
+thread_local const ImageView* g_filter_image = nullptr;
+
+vec3 filterImageSample(vec2 uv) {
+    const ImageView& v = *g_filter_image;
+    const float fx = std::clamp(uv.x, 0.0f, 1.0f) * v.width - 0.5f;
+    const float fy = std::clamp(uv.y, 0.0f, 1.0f) * v.height - 0.5f;
+    const int x0 = std::clamp(static_cast<int>(std::floor(fx)), 0,
+                              static_cast<int>(v.width) - 1);
+    const int y0 = std::clamp(static_cast<int>(std::floor(fy)), 0,
+                              static_cast<int>(v.height) - 1);
+    const int x1 = std::min(x0 + 1, static_cast<int>(v.width) - 1);
+    const int y1 = std::min(y0 + 1, static_cast<int>(v.height) - 1);
+    const float tx = std::clamp(fx - x0, 0.0f, 1.0f);
+    const float ty = std::clamp(fy - y0, 0.0f, 1.0f);
+    auto texel = [&v](int x, int y) {
+        const uint8_t* p = v.pixels + static_cast<size_t>(y) * v.stride() + x * 4;
+        return vec3{p[0] / 255.0f, p[1] / 255.0f, p[2] / 255.0f};
+    };
+    const vec3 top = texel(x0, y0) * (1 - tx) + texel(x1, y0) * tx;
+    const vec3 bottom = texel(x0, y1) * (1 - tx) + texel(x1, y1) * tx;
+    return top * (1 - ty) + bottom * ty;
+}
+
 namespace filter_bodies {
 using namespace glsl;
 #define FS_SAMPLE(uv) filterSample(uv)
 #define FS_TEXEL filterTexel()
+#define FS_SAMPLE_LUT(uv) filterImageSample(uv)
 #include "fluent_scene/shared/filters_shared.h"
 #undef FS_SAMPLE
 #undef FS_TEXEL
+#undef FS_SAMPLE_LUT
 }  // namespace filter_bodies
 
 // Separable gaussian blur on the premultiplied buffer (radius in buffer px).
@@ -302,6 +331,23 @@ void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext) {
         gaussianBlur(buf, values[0]);
         return;
     }
+    if (f.mode == FS_LUT) {
+        // Grid geometry from the atlas: width = tiles³ (512 → 8×8 tiles of
+        // 64). An unfed or malformed atlas leaves the layer ungraded — the
+        // documented pass-through, not an error.
+        if (!f.image.valid()) {
+            return;
+        }
+        const int tiles =
+            static_cast<int>(std::lround(std::cbrt(static_cast<double>(f.image.width))));
+        if (tiles < 2 || static_cast<uint32_t>(tiles * tiles * tiles) != f.image.width ||
+            f.image.height != f.image.width) {
+            return;
+        }
+        values[1] = static_cast<float>(tiles);
+        values[2] = static_cast<float>(f.image.width / static_cast<uint32_t>(tiles));
+        g_filter_image = &f.image;
+    }
     Buf src = buf;  // filters read the unmodified source
     g_filter_src = &src;
     for (int y = 0; y < buf.h; ++y) {
@@ -322,6 +368,7 @@ void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext) {
         }
     }
     g_filter_src = nullptr;
+    g_filter_image = nullptr;
 }
 
 // Signed distance to a polygon (negative inside, any winding; per-edge math

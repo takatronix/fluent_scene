@@ -22,15 +22,23 @@
 #include <vector>
 
 #include "fluent_scene/shared/filters_shared.h"  // FS_* mode ids (no bodies without FS_SAMPLE)
+#include "fluent_scene/types.hpp"                // ImageView (the filter image slot)
 
 namespace fluent_scene {
 
 /// A filter instance ready to attach to a layer: a stable mode id from
 /// filters_shared.h plus its parameter slots in table order. Users normally
 /// construct these through the typed structs below rather than directly.
+///
+/// Filters whose spec names an image parameter (`lut`) also carry a borrowed
+/// ImageView, under the same lifetime contract as image content: the pixels
+/// must stay valid until the next render. An invalid view leaves the filter
+/// a pass-through, so an unfed `$inputs` grade shows the ungraded picture
+/// rather than garbage.
 struct Filter {
     int mode = 0;           ///< FS_* id (see shared/filters_shared.h).
     float values[5] = {};   ///< Parameter slots, in filters_def.h order.
+    ImageView image{};      ///< Borrowed image parameter; ignored by most filters.
 };
 
 /// How a filter parameter is measured (drives logical-unit scaling, §5-3).
@@ -56,6 +64,9 @@ struct FilterSpec {
     int mode;              ///< FS_* id.
     const char* summary;   ///< One-line description (English; docs carry
                            ///< translations, code carries one language).
+    const char* image_param;  ///< YAML name of the image parameter
+                              ///< (`source` for `lut`); nullptr when the
+                              ///< filter takes no image.
     std::vector<FilterParamSpec> params;  ///< In slot order p0..p4.
 };
 
@@ -92,6 +103,12 @@ namespace detail {
 #define FS_FILTER(TypeName, method, MODE, summary) \
     struct TypeName {                              \
         Filter f_ = detail::filterDefaults_##TypeName();
+#define FS_FILTER_IMG(TypeName, method, MODE, image_name, summary) \
+    FS_FILTER(TypeName, method, MODE, summary)                     \
+        auto& image_name(const ImageView& v) {                     \
+            f_.image = v;                                          \
+            return *this;                                          \
+        }
 #define FS_PARAM(slot, name, default_value, unit)  \
         auto& name(float v) {                      \
             f_.values[slot] = v;                   \
@@ -104,6 +121,7 @@ namespace detail {
 #include "fluent_scene/shared/filters_def.h"
 
 #undef FS_FILTER
+#undef FS_FILTER_IMG
 #undef FS_PARAM
 #undef FS_END
 
@@ -114,13 +132,16 @@ namespace detail {
 /// All filters with their names, parameters, defaults, and units, in
 /// filters_def.h order. The single machine-readable catalog.
 inline const std::vector<FilterSpec>& filterTable() {
-#define FS_FILTER(TypeName, method, MODE, summary) {#method, MODE, summary, {
+#define FS_FILTER(TypeName, method, MODE, summary) {#method, MODE, summary, nullptr, {
+#define FS_FILTER_IMG(TypeName, method, MODE, image_name, summary) \
+    {#method, MODE, summary, #image_name, {
 #define FS_PARAM(slot, name, default_value, unit) {#name, default_value, FilterUnit::unit},
 #define FS_END(TypeName) }},
     static const std::vector<FilterSpec> kTable = {
 #include "fluent_scene/shared/filters_def.h"
     };
 #undef FS_FILTER
+#undef FS_FILTER_IMG
 #undef FS_PARAM
 #undef FS_END
     return kTable;

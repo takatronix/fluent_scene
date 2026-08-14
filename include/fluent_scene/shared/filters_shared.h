@@ -18,6 +18,13 @@
 //   FS_TEXEL       -> vec2   1 / source size
 // Function bodies are only compiled when FS_SAMPLE is defined, so metadata
 // consumers can include this header without a sampler.
+//
+// Filters that read a second image (the `lut` grade atlas) additionally
+// need:
+//   FS_SAMPLE_LUT(uv) -> vec3   sample the filter's image parameter
+// Their bodies and dispatch lines compile only when that macro is defined,
+// so a backend without the extra sampler treats the mode as a pass-through
+// until it grows one.
 
 // ---- stable mode ids (shared by GLSL and C++) ------------------------------
 const int FS_GRAYSCALE = 1;
@@ -54,6 +61,7 @@ const int FS_BLUR = 28;
 const int FS_RIPPLE = 29;
 const int FS_BEAUTY = 30;
 const int FS_LSD = 31;
+const int FS_LUT = 32;
 
 #ifdef FS_SAMPLE
 
@@ -260,6 +268,28 @@ vec3 fs_beauty(vec2 uv, float smoothing, float whiten, float radius, float sharp
     }
     return result;
 }
+
+#ifdef FS_SAMPLE_LUT
+// 3D LUT color grade from a tiled atlas (the GPUImage layout gpupixel and
+// this library's baked grades use): an N³ cube stored as a tiles×tiles grid
+// of N×N slices, blue picking the slice pair, red/green the in-slice texel.
+// `tiles` and `tile_n` are derived by the renderer from the atlas width
+// (width = tiles³, so 512 → 8×8 tiles of 64), never authored. Slice blend
+// is manual; in-slice r/g interpolation rides on the LUT sampler. `amount`
+// mixes the graded color over the source.
+vec3 fs_lut(vec2 uv, float amount, float tiles, float tile_n) {
+    vec3 c = clamp(FS_SAMPLE(uv), 0.0, 1.0);
+    float atlas = tiles * tile_n;
+    float slice = c.z * (tile_n - 1.0);
+    float s0 = floor(slice);
+    float s1 = min(s0 + 1.0, tile_n - 1.0);
+    vec2 inner = vec2(c.x, c.y) * (tile_n - 1.0) + vec2(0.5, 0.5);
+    vec2 uv0 = (vec2(s0 - floor(s0 / tiles) * tiles, floor(s0 / tiles)) * tile_n + inner) / atlas;
+    vec2 uv1 = (vec2(s1 - floor(s1 / tiles) * tiles, floor(s1 / tiles)) * tile_n + inner) / atlas;
+    vec3 graded = mix(FS_SAMPLE_LUT(uv0), FS_SAMPLE_LUT(uv1), slice - s0);
+    return mix(c, graded, clamp(amount, 0.0, 1.0));
+}
+#endif  // FS_SAMPLE_LUT
 
 // ---- resampling filters (change where we read, then what we read) ----------
 
@@ -516,6 +546,9 @@ vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p
     else if (mode == FS_BILATERAL)       c = fs_bilateral(uv, p0, p1);
     else if (mode == FS_MEDIAN)          c = fs_median(uv);
     else if (mode == FS_BEAUTY)          c = fs_beauty(uv, p0, p1, p2, p3);
+#ifdef FS_SAMPLE_LUT
+    else if (mode == FS_LUT)             c = fs_lut(uv, p0, p1, p2);
+#endif
     else if (mode == FS_RIPPLE)          c = fs_ripple(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_LSD)             c = fs_lsd(uv, p0, p1, p2, p3, p4);
     return vec4(clamp(c, 0.0, 1.0), alpha);

@@ -667,6 +667,15 @@ Layer& Layer::setImage(const ImageView& view) {
     return *this;
 }
 
+Layer& Layer::setFilterImage(size_t index, const ImageView& view) {
+    if (index < filters_.size()) {
+        filters_[index].image = view;
+    } else {
+        warn("setFilterImage(): no filter at that index");
+    }
+    return *this;
+}
+
 Layer& Layer::setText(const std::string& utf8) {
     if (auto* c = std::get_if<TextContent>(&content_)) {
         c->utf8 = utf8;

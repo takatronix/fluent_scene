@@ -288,6 +288,9 @@ public:
 
     /// Replaces the image view (image content only).
     Layer& setImage(const ImageView& view);
+    /// Replaces the image parameter of the filter at `index` in the chain
+    /// (`lut` grades). Same borrowed-pixels contract as setImage.
+    Layer& setFilterImage(size_t index, const ImageView& view);
     /// Replaces the text (text content only).
     Layer& setText(const std::string& utf8);
     /// Replaces the points (polyline / polygon / circles content).

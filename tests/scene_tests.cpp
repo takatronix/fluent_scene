@@ -511,6 +511,86 @@ bindings:
                   "bind.converter"));
 }
 
+// -- lut: the image-parameter filter ----------------------------------------
+
+// A channel-swap grade (out = bgr) as a tiled atlas: `tiles`² slices of
+// N=tiles² levels — the smallest legal atlas is tiles=2 (8×8, 4³).
+std::vector<uint8_t> makeSwapLutAtlas(uint32_t tiles) {
+    const uint32_t n = tiles * tiles;
+    const uint32_t w = tiles * n;
+    std::vector<uint8_t> px(static_cast<size_t>(w) * w * 4);
+    for (uint32_t s = 0; s < n; ++s) {
+        const uint32_t ox = (s % tiles) * n;
+        const uint32_t oy = (s / tiles) * n;
+        for (uint32_t gy = 0; gy < n; ++gy) {
+            for (uint32_t gx = 0; gx < n; ++gx) {
+                uint8_t* p = &px[(static_cast<size_t>(oy + gy) * w + ox + gx) * 4];
+                const auto level = [n](uint32_t k) {
+                    return static_cast<uint8_t>(k * 255 / (n - 1));
+                };
+                p[0] = level(s);   // out.r = in.b
+                p[1] = level(gy);  // out.g = in.g
+                p[2] = level(gx);  // out.b = in.r
+                p[3] = 255;
+            }
+        }
+    }
+    return px;
+}
+
+void testLutFilter() {
+    const char* text = R"(schema: fluent.scene/v1alpha2
+stage: { size: [8, 8] }
+inputs:
+  grade: { type: image.rgba8 }
+layers:
+  - content: { rect: { rect: [0, 0, 8, 8], color: [0.8, 0.2, 0.4] } }
+    filters: [ { lut: { source: $inputs.grade, amount: 1 } } ]
+)";
+    const fs::ParseResult parsed = fs::parseScene(text);
+    CHECK(parsed.ok());
+    CHECK(parsed.doc.layers[0].filters[0].image_input == "grade");
+    // The canonical spelling round-trips (digest covers the source ref).
+    const std::string once = fs::format(parsed.doc);
+    CHECK(once.find("source: $inputs.grade") != std::string::npos);
+    const fs::ParseResult re = fs::parseScene(once);
+    CHECK(re.ok());
+    CHECK(fs::digest(re.doc) == fs::digest(parsed.doc));
+
+    fs::CompileResult compiled = fs::compile(parsed.doc);
+    CHECK(compiled.ok());
+    fs::CompiledScene& scene = *compiled.scene;
+
+    // Unfed grade: the filter is a pass-through, not garbage.
+    CpuRenderer r;
+    const Surface& plain = r.render(scene.stage(), 8, 8, 0.0f);
+    const uint8_t* center = plain.row(4) + 4 * 4;
+    CHECK(std::abs(center[0] - 204) <= 2 && std::abs(center[1] - 51) <= 2 &&
+          std::abs(center[2] - 102) <= 2);
+
+    // Fed with the channel-swap atlas: red and blue trade places. Trilinear
+    // reconstruction of a linear map is exact up to 8-bit quantization.
+    const auto atlas = makeSwapLutAtlas(2);
+    CHECK(scene.setImage("grade", ImageView{8, 8, atlas.data(), 0}));
+    const Surface& graded = r.render(scene.stage(), 8, 8, 0.0f);
+    center = graded.row(4) + 4 * 4;
+    CHECK(std::abs(center[0] - 102) <= 3 && std::abs(center[1] - 51) <= 3 &&
+          std::abs(center[2] - 204) <= 3);
+
+    // Rejections: a non-reference source, and an undeclared input.
+    CHECK(hasCode(fs::parseScene("schema: fluent.scene/v1alpha2\nlayers:\n"
+                                 "  - content: { rect: {} }\n"
+                                 "    filters: [ { lut: { source: 5 } } ]\n")
+                      .diagnostics,
+                  "validate.reference"));
+    const fs::ParseResult bad =
+        fs::parseScene("schema: fluent.scene/v1alpha2\nlayers:\n"
+                       "  - content: { rect: {} }\n"
+                       "    filters: [ { lut: { source: $inputs.nope } } ]\n");
+    CHECK(bad.ok());
+    CHECK(hasCode(fs::compile(bad.doc).diagnostics, "compile.reference"));
+}
+
 void testDescribe() {
     const std::string json = fs::describeJson();
     CHECK(json.find("\"contents\"") != std::string::npos);
@@ -537,6 +617,7 @@ int main() {
     testInspector();
     testSceneUiControls();
     testBindingDoc();
+    testLutFilter();
     testDescribe();
     if (g_failures == 0) {
         std::printf("scene_tests: all passed\n");

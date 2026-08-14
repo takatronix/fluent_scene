@@ -30,6 +30,7 @@ struct CompileAccess {
     static auto& nodes(CompiledScene& s) { return s.nodes_; }
     static auto& paramBindings(CompiledScene& s) { return s.param_bindings_; }
     static auto& inputBindings(CompiledScene& s) { return s.input_bindings_; }
+    static auto& filterImageBindings(CompiledScene& s) { return s.filter_image_bindings_; }
     static auto& controlBindings(CompiledScene& s) { return s.control_bindings_; }
     static auto& layerTransitions(CompiledScene& s) { return s.layer_transitions_; }
     static auto& buttons(CompiledScene& s) { return s.buttons_; }
@@ -240,8 +241,23 @@ private:
             }
         }
 
-        for (const FilterDecl& f : decl.filters) {
+        for (size_t i = 0; i < decl.filters.size(); ++i) {
+            const FilterDecl& f = decl.filters[i];
             layer->filter(f.value);
+            if (!f.image_input.empty()) {
+                const InputDecl* input = doc_.findInput(f.image_input);
+                if (input == nullptr || input->type != InputType::ImageRgba8) {
+                    error("compile.reference",
+                          std::string(f.spec->name) + " " + f.spec->image_param +
+                              ": " +
+                              (input == nullptr
+                                   ? "undeclared input '" + f.image_input + "'"
+                                   : "input '" + f.image_input + "' is not image.rgba8"));
+                    continue;
+                }
+                CompileAccess::filterImageBindings(scene_)[f.image_input].push_back(
+                    {layer, i});
+            }
         }
         if (decl.transition) {
             CompileAccess::layerTransitions(scene_)[layer] = *decl.transition;
@@ -559,6 +575,9 @@ bool CompiledScene::setImage(const std::string& input, const ImageView& view) {
     for (InputBinding& b : input_bindings_[input]) {
         clearFallback(b);
         b.layer->setImage(view);
+    }
+    for (const FilterImageBinding& b : filter_image_bindings_[input]) {
+        b.layer->setFilterImage(b.filter_index, view);
     }
     return true;
 }

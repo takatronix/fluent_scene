@@ -128,13 +128,18 @@ std::string flowFilters(const std::vector<FilterDecl>& filters) {
     for (size_t i = 0; i < filters.size(); ++i) {
         const FilterDecl& f = filters[i];
         out += (i != 0 ? ", " : "") + std::string("{ ") + f.spec->name + ": ";
-        if (f.set_params.empty()) {
+        if (f.set_params.empty() && f.image_input.empty()) {
             out += "{}";
         } else {
             out += "{ ";
+            // The image parameter leads, then the explicit slots in table
+            // order — one canonical spelling per document.
+            if (!f.image_input.empty()) {
+                out += std::string(f.spec->image_param) + ": $inputs." + f.image_input;
+            }
             for (size_t j = 0; j < f.set_params.size(); ++j) {
                 const auto& [slot, value] = f.set_params[j];
-                out += (j != 0 ? ", " : "") +
+                out += (j != 0 || !f.image_input.empty() ? ", " : "") +
                        std::string(f.spec->params[static_cast<size_t>(slot)].name) + ": " +
                        formatNumber(value);
             }

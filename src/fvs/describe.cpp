@@ -143,7 +143,11 @@ std::string describeJson() {
     for (size_t i = 0; i < filters.size(); ++i) {
         const FilterSpec& f = filters[i];
         out += "    {\"name\": \"" + std::string(f.name) + "\", \"summary\": \"" +
-               jsonEscape(f.summary) + "\", \"params\": [";
+               jsonEscape(f.summary) + "\", ";
+        if (f.image_param != nullptr) {
+            out += "\"image_param\": \"" + std::string(f.image_param) + "\", ";
+        }
+        out += "\"params\": [";
         for (size_t j = 0; j < f.params.size(); ++j) {
             const FilterParamSpec& p = f.params[j];
             const char* unit = p.unit == FilterUnit::Length   ? "length"
