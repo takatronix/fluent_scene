@@ -168,6 +168,9 @@ try {
   }
 } catch (e) { gpu = false; }
 if (!gpu) ctx = canvas.getContext('2d');
+// Retina-sharp on the GPU: render at device pixels (CPU keeps 1280x720).
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+if (gpu && DPR > 1 && !q.get('res')) { canvas.width = 1280 * DPR; canvas.height = 720 * DPR; }
 fs.gStatus = gpu ? mod.cwrap('fs_webgpu_status', 'number', []) : () => -1;
 
 function fallbackToCpu(why) {
@@ -175,6 +178,8 @@ function fallbackToCpu(why) {
   gpu = false;
   console.error('falling back to CPU renderer:', why);
   const fresh = canvas.cloneNode(false);
+  fresh.width = 1280;   // drop any retina-scaled backing — CPU can't afford it
+  fresh.height = 720;
   canvas.replaceWith(fresh);
   canvas = fresh;
   hookPointer(canvas);

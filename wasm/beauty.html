@@ -146,6 +146,8 @@ function fallbackToCpu(why) {
   gpu = false;
   console.error('beauty: falling back to CPU renderer:', why);
   const fresh = canvas.cloneNode(false);
+  fresh.width = 1280;   // drop any retina-scaled backing — CPU can't afford it
+  fresh.height = 720;
   canvas.replaceWith(fresh);
   canvas = fresh;
   hookWipe(canvas);
@@ -257,13 +259,19 @@ try {
   bar.textContent = 'webcam: ' + e + ' (needs https or localhost)';
 }
 
-// ---- the loop, with the adaptive resolution ladder -------------------------
+// ---- render resolution ------------------------------------------------------
+// On the GPU the canvas renders at device pixels (a 1280 CSS-px canvas on a
+// retina display needs 2560 backing pixels to look sharp — SDF rendering is
+// resolution-independent, so this is free crispness). The adaptive ladder
+// only exists for the CPU fallback.
 let last = performance.now(), frames = 0, fpsShown = 0;
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+if (!res && gpu && DPR > 1) { canvas.width = 1280 * DPR; canvas.height = 720 * DPR; }
 const LADDER = [[1280, 720], [1024, 576], [854, 480], [640, 360]];
 let rung = 0;
 setInterval(() => {
   fpsShown = frames; frames = 0;
-  if (res) return;
+  if (res || gpu) return;
   // Down only — see lsd.html: the up-step made the rung oscillate visibly.
   if (fpsShown > 0 && fpsShown < 24 && rung < LADDER.length - 1) ++rung;
   const [w, h] = LADDER[rung];
