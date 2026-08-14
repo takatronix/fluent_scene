@@ -12,6 +12,7 @@
 
 #include <emscripten.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <string>
@@ -249,11 +250,14 @@ int fs_set_param_vec2(FsInstance* inst, const char* name, float x, float y) {
     return inst->scene->setParam(name, Vec2{x, y}) ? 1 : 0;
 }
 
-/// Replaces a layer's filter chain with one filter, by public name, with all
-/// five parameter slots given in filters_def.h order (pass the defaults for
-/// slots the filter does not use). Filter parameters are compile-time
-/// literals in Scene YAML, so live tweaking — a demo slider driving
-/// `beauty.smoothing` — goes through this instead.
+/// Live filter tweaking by public name: updates the parameter slots of the
+/// layer's first filter of that kind, or appends one when the chain has
+/// none. All five slots are given in filters_def.h order (pass the defaults
+/// for slots the filter does not use); a filter's image parameter and the
+/// rest of the chain are left untouched, so a slider driving
+/// `beauty.smoothing` composes with a `lut` grade on the same layer.
+/// Filter parameters are compile-time literals in Scene YAML — this is the
+/// runtime path.
 EMSCRIPTEN_KEEPALIVE
 int fs_layer_set_filter(FsInstance* inst, const char* layer_id, const char* filter_name,
                         float p0, float p1, float p2, float p3, float p4) {
@@ -263,15 +267,25 @@ int fs_layer_set_filter(FsInstance* inst, const char* layer_id, const char* filt
     }
     for (const FilterSpec& spec : filterTable()) {
         if (spec.name == std::string(filter_name)) {
-            Filter f;
-            f.mode = spec.mode;
-            f.values[0] = p0;
-            f.values[1] = p1;
-            f.values[2] = p2;
-            f.values[3] = p3;
-            f.values[4] = p4;
+            const float values[5] = {p0, p1, p2, p3, p4};
+            std::vector<Filter> chain = target->filters();
+            bool replaced = false;
+            for (Filter& f : chain) {
+                if (f.mode == spec.mode && !replaced) {
+                    std::copy(values, values + 5, f.values);
+                    replaced = true;
+                }
+            }
+            if (!replaced) {
+                Filter f;
+                f.mode = spec.mode;
+                std::copy(values, values + 5, f.values);
+                chain.push_back(f);
+            }
             target->clearFilters();
-            target->filter(f);
+            for (const Filter& f : chain) {
+                target->filter(f);
+            }
             return 1;
         }
     }

@@ -40,6 +40,7 @@ schema: fluent.scene/v1alpha2
 stage: { size: [480, 270] }
 inputs:
   camera: { type: image.rgba8, update: per_frame }
+  grade: { type: image.rgba8 }
 layers:
   - content: { grid: { spacing: 40, color: [1, 1, 1, 0.12] } }
   - id: img1
@@ -64,6 +65,10 @@ layers:
   - content: { line: { from: [300, 145], to: [460, 200], thickness: 5, dash: 12,
                        color: [1, 1, 0.4, 1] } }
   - content: { text: { text: "webgpu = cpu?", position: [16, 220], size: 26 } }
+  - id: img4
+    frame: [336, 132, 132, 66]
+    content: { image: { source: $inputs.camera, fit: cover } }
+    filters: [ { lut: { source: $inputs.grade, amount: 0.85 } } ]
   - id: spun
     frame: [330, 205, 120, 50]
     rotation: -8
@@ -107,6 +112,25 @@ for (let y = 0; y < IH; ++y) {
   }
 }
 fs.commitImage(inst, 'camera', IW, IH);
+
+// Synthetic channel-rotate LUT atlas (4×4 tiles of 16 = a 16³ cube):
+// out.rgb = in.gbr — linear in every axis, so trilinear reconstruction is
+// exact and any backend mismatch shows as a hard color error.
+const T = 4, N = 16, LW = T * N;
+const gb = fs.imageBuffer(inst, 'grade', LW, LW);
+for (let s = 0; s < N; ++s) {
+  const ox = (s % T) * N, oy = ((s / T) | 0) * N;
+  for (let gy = 0; gy < N; ++gy) {
+    for (let gx = 0; gx < N; ++gx) {
+      const p = gb + ((oy + gy) * LW + ox + gx) * 4;
+      mod.HEAPU8[p] = (gy * 255 / (N - 1)) | 0;      // out.r = in.g
+      mod.HEAPU8[p + 1] = (s * 255 / (N - 1)) | 0;   // out.g = in.b
+      mod.HEAPU8[p + 2] = (gx * 255 / (N - 1)) | 0;  // out.b = in.r
+      mod.HEAPU8[p + 3] = 255;
+    }
+  }
+}
+fs.commitImage(inst, 'grade', LW, LW);
 
 const paint = (id, pix) => {
   const ctx = document.getElementById(id).getContext('2d');

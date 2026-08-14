@@ -332,20 +332,11 @@ void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext) {
         return;
     }
     if (f.mode == FS_LUT) {
-        // Grid geometry from the atlas: width = tiles³ (512 → 8×8 tiles of
-        // 64). An unfed or malformed atlas leaves the layer ungraded — the
+        // An unfed or malformed atlas leaves the layer ungraded — the
         // documented pass-through, not an error.
-        if (!f.image.valid()) {
+        if (!lutAtlasGrid(f.image, &values[1], &values[2])) {
             return;
         }
-        const int tiles =
-            static_cast<int>(std::lround(std::cbrt(static_cast<double>(f.image.width))));
-        if (tiles < 2 || static_cast<uint32_t>(tiles * tiles * tiles) != f.image.width ||
-            f.image.height != f.image.width) {
-            return;
-        }
-        values[1] = static_cast<float>(tiles);
-        values[2] = static_cast<float>(f.image.width / static_cast<uint32_t>(tiles));
         g_filter_image = &f.image;
     }
     Buf src = buf;  // filters read the unmodified source

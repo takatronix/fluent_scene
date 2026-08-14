@@ -42,6 +42,7 @@ schema: fluent.scene/v1alpha2
 stage: { size: [1280, 720] }
 inputs:
   camera: { type: image.rgba8, update: per_frame }
+  grade: { type: image.rgba8 }
 params:
   wipe_win: { type: vec2, default: [0, 360], runtime_mutable: true,
               animate: { duration: 0.1, ease: ease_out } }
@@ -52,7 +53,8 @@ params:
 layers:
   - id: after
     content: { image: { source: $inputs.camera, fit: cover } }
-    filters: [ { beauty: { smoothing: 0.8, whiten: 0.25, radius: 10, sharpen: 0.15 } } ]
+    filters: [ { beauty: { smoothing: 0.8, whiten: 0, radius: 10, sharpen: 0.15 } },
+               { lut: { source: $inputs.grade, amount: 1 } } ]
   - id: before_win
     bounds: [0, 0, 1280, 720]
     masks_to_bounds: true
@@ -133,6 +135,37 @@ canvas.addEventListener('pointermove', e => {
 });
 canvas.addEventListener('pointerup', () => { dragging = false; });
 
+// ---- the whiten grade: gpupixel's real LUT chain, baked ---------------------
+// base = the chain at strength 0, full = at strength 1; the original's
+// whiten w is exactly mix(base(c), full(c), w), which in LUT domain is a
+// per-texel blend of the two atlases. w = 0 bypasses the chain entirely
+// (identity), faithfully reproducing gpupixel's own 0→ε discontinuity.
+const LUT_W = 512;
+async function loadAtlas(url) {
+  const bmp = await createImageBitmap(await (await fetch(url)).blob());
+  const c = new OffscreenCanvas(LUT_W, LUT_W);
+  const cx = c.getContext('2d');
+  cx.drawImage(bmp, 0, 0);
+  return cx.getImageData(0, 0, LUT_W, LUT_W).data;
+}
+const [lutBase, lutFull] = await Promise.all(
+    [loadAtlas('./luts/whiten_base_64.png'), loadAtlas('./luts/whiten_full_64.png')]);
+
+function pushWhiten(w) {
+  if (w <= 0) {
+    fs.layerSetFilter(inst, 'after', 'lut', 0, 0, 0, 0, 0);  // amount 0 = identity
+    return;
+  }
+  const ptr = fs.imageBuffer(inst, 'grade', LUT_W, LUT_W);
+  const heap = mod.HEAPU8;
+  for (let i = 0; i < lutBase.length; ++i) {
+    heap[ptr + i] = lutBase[i] + (lutFull[i] - lutBase[i]) * w;
+  }
+  fs.commitImage(inst, 'grade', LUT_W, LUT_W);
+  fs.layerSetFilter(inst, 'after', 'lut', 1, 0, 0, 0, 0);
+}
+pushWhiten(0.25);
+
 // ---- sliders → live filter parameters --------------------------------------
 const sliders = ['smoothing', 'whiten', 'sharpen', 'radius']
     .map(id => document.getElementById(id));
@@ -141,8 +174,10 @@ function pushFilter() {
   for (const s of sliders) {
     s.nextElementSibling.textContent = s.id === 'radius' ? s.value : Number(s.value).toFixed(2);
   }
-  // filters_def.h slot order: smoothing, whiten, radius, sharpen
-  fs.layerSetFilter(inst, 'after', 'beauty', sm, wh, ra, sh, 0);
+  // filters_def.h slot order: smoothing, whiten, radius, sharpen — the
+  // procedural whiten stays 0; the real LUT chain carries whitening now.
+  fs.layerSetFilter(inst, 'after', 'beauty', sm, 0, ra, sh, 0);
+  pushWhiten(wh);
 }
 for (const s of sliders) s.addEventListener('input', pushFilter);
 

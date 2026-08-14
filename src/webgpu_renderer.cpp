@@ -382,17 +382,24 @@ struct WebGPURenderer::Impl {
         sampler_linear = makeSampler(WGPUFilterMode_Linear);
 
         {
-            WGPUBindGroupLayoutEntry entries[2] = {WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT,
-                                                   WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT};
-            entries[0].binding = 0;
-            entries[0].visibility = WGPUShaderStage_Fragment;
-            entries[0].texture.sampleType = WGPUTextureSampleType_Float;
-            entries[0].texture.viewDimension = WGPUTextureViewDimension_2D;
-            entries[1].binding = 1;
-            entries[1].visibility = WGPUShaderStage_Fragment;
-            entries[1].sampler.type = WGPUSamplerBindingType_Filtering;
+            // Bindings 2/3 carry a filter's image parameter (`lut` grade);
+            // shaders that never declare them just leave them unread, and
+            // texGroup self-binds the source there when no image is given.
+            WGPUBindGroupLayoutEntry entries[4] = {
+                WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT, WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT,
+                WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT, WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT};
+            for (uint32_t i = 0; i < 4; ++i) {
+                entries[i].binding = i;
+                entries[i].visibility = WGPUShaderStage_Fragment;
+                if (i % 2 == 0) {
+                    entries[i].texture.sampleType = WGPUTextureSampleType_Float;
+                    entries[i].texture.viewDimension = WGPUTextureViewDimension_2D;
+                } else {
+                    entries[i].sampler.type = WGPUSamplerBindingType_Filtering;
+                }
+            }
             WGPUBindGroupLayoutDescriptor ld = {};
-            ld.entryCount = 2;
+            ld.entryCount = 4;
             ld.entries = entries;
             bgl_tex = wgpuDeviceCreateBindGroupLayout(device, &ld);
         }
@@ -688,15 +695,28 @@ struct WebGPURenderer::Impl {
         pass = wgpuCommandEncoderBeginRenderPass(encoder, &rd);
     }
 
-    WGPUBindGroup texGroup(WGPUTextureView tex_view, WGPUSampler sampler) {
-        WGPUBindGroupEntry entries[2] = {WGPU_BIND_GROUP_ENTRY_INIT, WGPU_BIND_GROUP_ENTRY_INIT};
+    WGPUBindGroup texGroup(WGPUTextureView tex_view, WGPUSampler sampler,
+                           WGPUTextureView image_param_view = nullptr,
+                           WGPUSampler image_param_sampler = nullptr) {
+        // Bindings 2/3 carry a filter's image parameter; without one the
+        // source self-binds so the group is always complete.
+        if (image_param_view == nullptr) {
+            image_param_view = tex_view;
+            image_param_sampler = sampler;
+        }
+        WGPUBindGroupEntry entries[4] = {WGPU_BIND_GROUP_ENTRY_INIT, WGPU_BIND_GROUP_ENTRY_INIT,
+                                         WGPU_BIND_GROUP_ENTRY_INIT, WGPU_BIND_GROUP_ENTRY_INIT};
         entries[0].binding = 0;
         entries[0].textureView = tex_view;
         entries[1].binding = 1;
         entries[1].sampler = sampler;
+        entries[2].binding = 2;
+        entries[2].textureView = image_param_view;
+        entries[3].binding = 3;
+        entries[3].sampler = image_param_sampler;
         WGPUBindGroupDescriptor bd = {};
         bd.layout = bgl_tex;
-        bd.entryCount = 2;
+        bd.entryCount = 4;
         bd.entries = entries;
         WGPUBindGroup g = wgpuDeviceCreateBindGroup(device, &bd);
         frame_groups.push_back(g);
@@ -880,6 +900,14 @@ struct WebGPURenderer::Impl {
         } else if (const auto* img = std::get_if<ImageContent>(&content)) {
             if (img->view.valid()) {
                 uploadContentImage(img->view);
+            }
+        }
+        // Filter image parameters (`lut` grades) ride the same upload path
+        // and cache as image content; alpha is opaque, so the premultiply
+        // staging is a no-op for them.
+        for (const Filter& f : layer.filters()) {
+            if (f.mode == FS_LUT && f.image.valid()) {
+                uploadContentImage(f.image);
             }
         }
         for (const auto& child : layer.sublayers()) {
@@ -1369,6 +1397,17 @@ struct WebGPURenderer::Impl {
                 buf = gaussianBlur(buf, values[0]);
                 continue;
             }
+            WGPUTextureView lut_view = nullptr;
+            if (f.mode == FS_LUT) {
+                // Unfed or malformed atlas: the documented pass-through
+                // (identical to the CPU reference).
+                auto it = image_cache.find(f.image.pixels);
+                if (!lutAtlasGrid(f.image, &values[1], &values[2]) ||
+                    it == image_cache.end()) {
+                    continue;
+                }
+                lut_view = it->second.tex.view;
+            }
             endTarget();
             Tex* dst = acquireTransient(bw, bh, WGPUTextureFormat_RGBA16Float);
             ensureTarget(*dst);
@@ -1379,7 +1418,9 @@ struct WebGPURenderer::Impl {
             push.pa[2] = values[2];
             push.pa[3] = values[3];
             push.pb[0] = values[4];
-            drawFullscreen(pipe_filter, texGroup(buf->view, sampler_nearest), push);
+            drawFullscreen(pipe_filter,
+                           texGroup(buf->view, sampler_nearest, lut_view, sampler_linear),
+                           push);
             buf->in_use = false;
             buf = dst;
         }

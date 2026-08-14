@@ -442,18 +442,20 @@ struct VulkanRenderer::Impl {
         {
             // Separated image + sampler (matches the shaders; WebGPU cannot
             // express the combined form, Vulkan is fine with either).
-            VkDescriptorSetLayoutBinding bindings[2]{};
-            bindings[0].binding = 0;
-            bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            bindings[0].descriptorCount = 1;
-            bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-            bindings[1].binding = 1;
-            bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-            bindings[1].descriptorCount = 1;
-            bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            // Bindings 2/3 carry a filter's image parameter (`lut` grade);
+            // shaders that never declare them just leave them unread, and
+            // texSet self-binds the source there when no image is given.
+            VkDescriptorSetLayoutBinding bindings[4]{};
+            for (uint32_t i = 0; i < 4; ++i) {
+                bindings[i].binding = i;
+                bindings[i].descriptorType = (i % 2 == 0) ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+                                                          : VK_DESCRIPTOR_TYPE_SAMPLER;
+                bindings[i].descriptorCount = 1;
+                bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            }
             VkDescriptorSetLayoutCreateInfo li{
                 VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            li.bindingCount = 2;
+            li.bindingCount = 4;
             li.pBindings = bindings;
             vkCheck(vkCreateDescriptorSetLayout(device, &li, nullptr, &set_layout_tex),
                     "vkCreateDescriptorSetLayout");
@@ -477,8 +479,8 @@ struct VulkanRenderer::Impl {
         layout_ssbo = makePipeLayout(set_layout_ssbo);
 
         VkDescriptorPoolSize sizes[3] = {
-            {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 8192},
-            {VK_DESCRIPTOR_TYPE_SAMPLER, 8192},
+            {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 16384},
+            {VK_DESCRIPTOR_TYPE_SAMPLER, 16384},
             {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 512},
         };
         VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -782,25 +784,33 @@ struct VulkanRenderer::Impl {
         return set;
     }
 
-    VkDescriptorSet texSet(VkImageView view, VkSampler sampler) {
+    VkDescriptorSet texSet(VkImageView view, VkSampler sampler,
+                           VkImageView image_param_view = VK_NULL_HANDLE,
+                           VkSampler image_param_sampler = VK_NULL_HANDLE) {
+        // Bindings 2/3 carry a filter's image parameter; without one the
+        // source self-binds so the set is always complete.
+        if (image_param_view == VK_NULL_HANDLE) {
+            image_param_view = view;
+            image_param_sampler = sampler;
+        }
         VkDescriptorSet set = allocSet(set_layout_tex);
-        VkDescriptorImageInfo image_info{VK_NULL_HANDLE, view,
-                                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkDescriptorImageInfo sampler_info{sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
-        VkWriteDescriptorSet w[2]{};
-        w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        w[0].dstSet = set;
-        w[0].dstBinding = 0;
-        w[0].descriptorCount = 1;
-        w[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        w[0].pImageInfo = &image_info;
-        w[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        w[1].dstSet = set;
-        w[1].dstBinding = 1;
-        w[1].descriptorCount = 1;
-        w[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-        w[1].pImageInfo = &sampler_info;
-        vkUpdateDescriptorSets(device, 2, w, 0, nullptr);
+        const VkDescriptorImageInfo infos[4] = {
+            {VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED},
+            {VK_NULL_HANDLE, image_param_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {image_param_sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED},
+        };
+        VkWriteDescriptorSet w[4]{};
+        for (uint32_t i = 0; i < 4; ++i) {
+            w[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            w[i].dstSet = set;
+            w[i].dstBinding = i;
+            w[i].descriptorCount = 1;
+            w[i].descriptorType = (i % 2 == 0) ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+                                               : VK_DESCRIPTOR_TYPE_SAMPLER;
+            w[i].pImageInfo = &infos[i];
+        }
+        vkUpdateDescriptorSets(device, 4, w, 0, nullptr);
         return set;
     }
 
@@ -977,6 +987,14 @@ struct VulkanRenderer::Impl {
         } else if (const auto* img = std::get_if<ImageContent>(&content)) {
             if (img->view.valid()) {
                 uploadContentImage(img->view);
+            }
+        }
+        // Filter image parameters (`lut` grades) ride the same upload path
+        // and cache as image content; alpha is opaque, so the premultiply
+        // staging is a no-op for them.
+        for (const Filter& f : layer.filters()) {
+            if (f.mode == FS_LUT && f.image.valid()) {
+                uploadContentImage(f.image);
             }
         }
         for (const auto& child : layer.sublayers()) {
@@ -1487,6 +1505,18 @@ struct VulkanRenderer::Impl {
                 buf = gaussianBlur(buf, values[0]);
                 continue;
             }
+            VkImageView lut_view = VK_NULL_HANDLE;
+            if (f.mode == FS_LUT) {
+                // Unfed or malformed atlas: the documented pass-through
+                // (identical to the CPU reference and the shader's own
+                // fallback for backends without the sampler).
+                auto it = image_cache.find(f.image.pixels);
+                if (!lutAtlasGrid(f.image, &values[1], &values[2]) ||
+                    it == image_cache.end()) {
+                    continue;
+                }
+                lut_view = it->second.image.view;
+            }
             endTarget();
             toSampled(*buf);
             Image* dst = acquireTransient(bw, bh, VK_FORMAT_R32G32B32A32_SFLOAT);
@@ -1498,7 +1528,9 @@ struct VulkanRenderer::Impl {
             push.pa[2] = values[2];
             push.pa[3] = values[3];
             push.pb[0] = values[4];
-            drawFullscreen(pipe_filter, texSet(buf->view, sampler_nearest), push);
+            drawFullscreen(pipe_filter,
+                           texSet(buf->view, sampler_nearest, lut_view, sampler_linear_edge),
+                           push);
             buf->in_use = false;
             buf = dst;
         }

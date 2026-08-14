@@ -19,6 +19,7 @@
 /// Stage's logical units: `blur(4)` looks the same whether the layer's
 /// source is 640×480 or 4K.
 
+#include <cmath>
 #include <vector>
 
 #include "fluent_scene/shared/filters_shared.h"  // FS_* mode ids (no bodies without FS_SAMPLE)
@@ -145,6 +146,24 @@ inline const std::vector<FilterSpec>& filterTable() {
 #undef FS_PARAM
 #undef FS_END
     return kTable;
+}
+
+/// Derives the tiled-atlas grid of a `lut` image parameter: a square atlas
+/// whose width = tiles³ (512 → 8×8 tiles of 64). Every renderer feeds the
+/// result into parameter slots 1 (tiles) and 2 (tile_n) before dispatching
+/// FS_LUT — this is the one place the layout rule lives. Returns false for
+/// an empty or misshapen view: the documented pass-through, not an error.
+inline bool lutAtlasGrid(const ImageView& image, float* tiles, float* tile_n) {
+    if (!image.valid() || image.height != image.width) {
+        return false;
+    }
+    const int t = static_cast<int>(std::lround(std::cbrt(static_cast<double>(image.width))));
+    if (t < 2 || static_cast<uint32_t>(t) * t * t != image.width) {
+        return false;
+    }
+    *tiles = static_cast<float>(t);
+    *tile_n = static_cast<float>(image.width / static_cast<uint32_t>(t));
+    return true;
 }
 
 /// Looks up a filter's metadata by mode id; nullptr when unknown.

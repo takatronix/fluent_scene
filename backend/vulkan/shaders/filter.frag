@@ -14,6 +14,14 @@ layout(set = 0, binding = 0) uniform texture2D src_tex_t;
 layout(set = 0, binding = 1) uniform sampler src_tex_s;
 #define src_tex sampler2D(src_tex_t, src_tex_s)
 
+// The filter-image parameter (`lut` grade atlas). The recorder binds the
+// source itself here when the filter carries no image, so the set is always
+// complete; only FS_LUT reads it. textureLod keeps WGSL uniformity happy
+// (single mip everywhere, so the picture is identical).
+layout(set = 0, binding = 2) uniform texture2D lut_tex_t;
+layout(set = 0, binding = 3) uniform sampler lut_tex_s;
+#define FS_SAMPLE_LUT(uv) (textureLod(sampler2D(lut_tex_t, lut_tex_s), uv, 0.0).rgb)
+
 layout(location = 0) in vec2 v_uv;
 layout(location = 0) out vec4 o_color;
 
