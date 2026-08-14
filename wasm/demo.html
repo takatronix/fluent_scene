@@ -230,19 +230,9 @@ if ('FaceDetector' in window) {
 
 // ---- the loop: everything local -------------------------------------------
 let last = performance.now(), frames = 0, fpsShown = 0;
-// Adaptive resolution: SDF rendering is resolution-independent, so when the
-// CPU falls behind we shrink the output (crisp, just fewer pixels) and grow
-// it back when there is headroom.
-const LADDER = [[1280, 720], [1024, 576], [854, 480], [640, 360]];
-let rung = 0;
-setInterval(() => {
-  fpsShown = frames; frames = 0;
-  if (res) return;  // explicit ?res= pins the resolution
-  if (fpsShown < 24 && rung < LADDER.length - 1) ++rung;
-  else if (fpsShown > 50 && rung > 0) --rung;
-  const [w, h] = LADDER[rung];
-  if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
-}, 1000);
+// Fixed resolution: a picture that keeps changing sharpness feels broken
+// (field-tested). 1280x720 by default; ?res=WxH picks another, once.
+setInterval(() => { fpsShown = frames; frames = 0; }, 1000);
 
 function tick() {
   const now = performance.now();
