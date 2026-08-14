@@ -229,7 +229,7 @@
 
 <section class="panel intro">
   <h2 class="flush">What fluent_scene is</h2>
-  <p>A declarative 2D scene and video-effect engine in C++17. <strong>Fast on the GPU</strong> (Vulkan/WebGPU, 5.6 ms at 1080p), <strong>easy to write</strong> (a screen is a few lines of YAML — this article's hallucination is one line: <code>{ lsd: { trip: 0.8 } }</code>), and <strong>safe for an AI to write</strong> (everything is type-checked before execution; no broken frame reaches the glass). The math itself is a single GLSL∩C++ function (here, <code>fs_lsd()</code>) that CPU, Vulkan, and WebGPU all execute identically — golden tests hold them to the same output. Robots to browsers, one picture. <a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">GitHub</a> (MIT)</p>
+  <p>A homegrown engine for drawing pictures and effects on live video, in real time. A screen is a few lines of config, an effect is one line, and it runs on the GPU, so it's fast. The same code runs on robots and in browsers — this article's LSD effect is one of its filters. It's also built so an AI can author screens without breaking anything. Open source (MIT) on <a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">GitHub</a>. The technical details come later in the article.</p>
 </section>
 
 

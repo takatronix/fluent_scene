@@ -229,7 +229,7 @@
 
 <section class="panel intro">
   <h2 class="flush">fluent_scene とは</h2>
-  <p>C++17製の宣言的2Dシーン/映像エフェクトエンジン。<strong>GPUで速く</strong>(Vulkan/WebGPU、1080pで5.6ms)、<strong>書くのが簡単</strong>(画面はYAML数行、この記事の幻覚も <code>{ lsd: { trip: 0.8 } }</code> の1行)、<strong>AIが安全に書ける</strong>(実行前に全て型検査され、壊れたフレームは表に出ない)。数式の本体は GLSL∩C++ で一度だけ書かれた1関数(本稿では <code>fs_lsd()</code>)で、CPU・Vulkan・WebGPU が同一コードを実行し、出力一致はゴールデンテストが保証します。ロボットからブラウザまで、同じ絵。<a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">GitHub</a> (MIT)</p>
+  <p>カメラ映像や画面に、リアルタイムで絵やエフェクトを描くための自作エンジンです。画面は数行の設定ファイル、エフェクトは1行で書けて、GPUで動くので速い。同じコードがロボットでもブラウザでも動き、この記事のLSDエフェクトもその1つです。AIに画面を作らせても壊れない設計になっています。<a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">GitHub</a> で公開中(MIT)。技術的な中身は記事の後半で。</p>
 </section>
 
 
