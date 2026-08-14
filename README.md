@@ -1,10 +1,37 @@
 # fluent_scene
 
-![hud_basic — 実際のレンダリング出力](docs/images/hud_basic.png)
+English | **[日本語](README.ja.md)**
 
-**ロボットの画面を、人間は1行で、AIは安全に。** fluent_scene は CALayer 型の
-保持レイヤーツリーと SDF レンダリングによる 2D 合成ライブラリです。
-カメラ映像・検出結果・経路・HUD を、論理座標系でリアルタイムに描きます。
+![hud_basic — actual rendered output](docs/images/hud_basic.png)
+
+**Write a screen once — get the same pixels on robots, in browsers, in apps.**
+
+fluent_scene is a 2D compositing engine built on a CALayer-style retained
+layer tree and SDF rendering. Declare camera feeds, detections, HUDs, and UI
+in logical coordinates; three backends — CPU, Vulkan, and WebGPU — render
+them **pixel-identically** (a golden-image contract; measured max|Δ|=1).
+
+```
+Scene (declarative .fvs/YAML) → Stage (runtime tree, C++) → Surface (pixels)
+```
+
+## Live demos — in your browser, right now
+
+Everything below runs as a wasm build on
+[GitHub Pages](https://takatronix.github.io/fluent_scene/). There is no
+server-side processing; video never leaves your tab.
+
+| Demo | What it shows |
+|---|---|
+| [Playground](https://takatronix.github.io/fluent_scene/) | The whole library running locally in a tab (CPU wasm, portrait effects) |
+| [beauty](https://takatronix.github.io/fluent_scene/beauty.html) | Beauty filter — variance-gated skin smoothing, skin-scoped whitening, 3D LUT; webcam wipe comparison |
+| [lsd](https://takatronix.github.io/fluent_scene/lsd.html) | The LSD filter — time-driven psychedelia |
+| [gaze](https://takatronix.github.io/fluent_scene/gaze.html) | Gaze focus — a MediaPipe landmarker driving Scene parameters |
+| [webgpu](https://takatronix.github.io/fluent_scene/webgpu.html) | Backend verification — one scene rendered by CPU and WebGPU, compared per pixel |
+
+## Three ways to write it, one picture
+
+**C++ (Stage API)** — robots, desktops, embedded:
 
 ```cpp
 Stage stage(1920, 1080);
@@ -12,12 +39,12 @@ stage.image(camera);
 stage.boxes(detections).color(Color::Teal).smoothing(0.2f);
 stage.group("hud").position(24, 24).shadow()
      .rect({0, 0, 340, 96}).cornerRadius(12).color({0, 0, 0, 0.45f});
+renderer->render(stage, dt);   // same pixels on CPU and Vulkan
 ```
 
-同じ画面は宣言文書（Scene / YAML）でも書けます — 型検査・参照解決・digest
-が実行前に全て走るため、**AI が実行中の画面を安全に生成・編集**できます。
-検証と描画は `fvsc` CLI 一本（`validate` / `preview` / `fmt` / `digest` /
-`describe --json`）:
+**YAML (Scene documents)** — editable by humans and by AI. Type checking,
+reference resolution, and digests all run before execution, so **an AI can
+safely generate and edit a live screen**:
 
 ```yaml
 layers:
@@ -31,114 +58,123 @@ layers:
                            color: [0, 0, 0, 0.45] } }
 ```
 
-## ブラウザで触る
+**JavaScript (wasm)** — one ES module for web apps:
 
-```bash
-./build/stage_web            # → http://<robot>:8790/ を開く
+```js
+import createFluentScene from './fluent_scene.mjs';
+const mod = await createFluentScene();
+const inst = mod.cwrap('fs_create', 'number', ['number'])(
+    mod.stringToNewUTF8(sceneYaml));
+// per frame: fs_commit_image → fs_render (CPU) or
+// fs_render_webgpu (straight into the canvas, zero readback).
+// The API surface is flat: numbers, strings, buffers.
 ```
 
-Stage の映像を MJPEG でブラウザに配信し、マウス/タッチを §10-3 のポインタ
-注入へ逆流させる自己完結アプリ（`tools/stage_web.cpp`、依存は libjpeg のみ）。
-ボタン・スイッチ・スライダー・プルダウン・波紋がブラウザから実際に操作
-できます。ページ側に UI ロジックはゼロ — 絵も状態遷移も全部ロボット側です。
+## Where it runs
 
-Scene 文書はライブ編集できます:
+| Platform | Entry point | Status |
+|---|---|---|
+| **Robots (ROS 2)** | `scene_node` (.fvs+.fvb → topics → render → Image publish), `scene_web` live editing, `fvsc` CLI | in production |
+| **Web apps** | `fluent_scene.mjs` + `.wasm` (self-contained ES module), CPU or WebGPU | live (demos above) |
+| **Desktop** | C++17 library + `stage_web` / `scene_web` / `fvsc` | in production |
+| **Mobile** | the same portable C++17 core + the flat C ABI (the wasm/api.cpp surface); iOS / Android bindings | on the roadmap |
 
-```bash
-./build/scene_web hud.fvs    # → http://<robot>:8791/ を開いて .fvs を編集・保存
-```
+Core dependencies: freetype + harfbuzz. Without a GPU, the CPU reference
+renderer is itself production quality.
 
-保存のたびに validate → compile を通り、**フレーム境界で原子的に差し替え**。
-壊れた編集は旧画面のまま赤バナーでエラー行が出ます — 壊れたフレームが
-表に出る経路はありません。`--image camera=/topic` で ROS 2 カメラを
-`$inputs.camera` に接続できます。
+## The "same pixels" contract across backends
 
-## 5分で始める
+| Backend | Role | Measured |
+|---|---|---|
+| `CpuRenderer` | reference; runs everywhere including wasm | defines the goldens |
+| `VulkanRenderer` | robots and desktops; zero runtime shader compilation | 5.6 ms/frame at 1080p (~17× CPU, readback included) |
+| `WebGPURenderer` | browser GPU; renders straight into the canvas (zero readback) | max|Δ|=1 vs CPU, zero pixels over tolerance |
+
+Identity is machinery, not aspiration: all three walk the shared plan layer
+([render_shared.hpp](src/render_shared.hpp)) in the same order, and every
+shape and filter body is a **single GLSL∩C++ source**
+([filters_shared.h](include/fluent_scene/shared/filters_shared.h)) —
+compiled as C++ on the CPU, as GLSL→SPIR-V for Vulkan, and machine-translated
+SPIR-V→WGSL (naga) for WebGPU. Nothing is hand-ported. Golden tests hold all
+three backends to the same reference images.
+
+## What you get
+
+- **13 content types** — image (with source crop) / text (CJK, HarfBuzz) /
+  line / polyline / polygon / rect / circle / circles / arc / arrow /
+  crosshair / grid / boxes (labels + temporal smoothing). All SDF,
+  antialiased, vector-crisp at any output resolution
+- **CALayer-style attributes** — frame / position / anchor / rotation /
+  scale / opacity / shadow / border / background / cornerRadius /
+  masksToBounds / blend. One coordinate system: top-left origin, +y down
+- **32 filters** — blur / bilateral / color_transform / toon / halftone /
+  ripple / beauty (smoothing + whitening + NR) / lut (3D LUT) / lsd … —
+  applicable to any layer or to a group's composited result
+
+  ![Filter catalog (filters_tour output)](docs/images/filters_tour.png)
+
+- **Implicit animation** — change an attribute and it animates
+  (`Transaction t(0.3f, Ease::InOut)`). Time only advances through
+  `render(stage, dt)`, so **the screen at t = 0.15 s is byte-reproducible**
+- **Retained mode** — per frame you only swap changed data
+  (`setImage / setText / setBoxes / opacity()`)
+- **UI controls** — `ui::Button` / `ui::Switch` / `ui::Slider` /
+  `ui::Segmented` / `ui::Gauge` / `ui::Dropdown`. Input is three calls —
+  `stage.pointerDown/Move/Up` — and web clicks, touches, and VR rays all
+  normalize into them
+
+  ![UI control catalog](docs/images/ui_catalog.png)
+
+## Designed for AI co-authorship
+
+Scene documents carry the contract an AI author needs: type checking that
+rejects everything before execution, order-invariant digests, GPU budget
+gates, capability self-description via `describe --json`, and a design
+linter that warns about contrast and occlusion. Broken edits are rejected
+at frame boundaries — there is no code path that shows a broken frame.
+Details: [design doc §13](docs/design/fluent_scene.ja.md).
+
+## Five-minute start
 
 ```bash
 sudo apt install libfreetype-dev libharfbuzz-dev
 cmake -S . -B build && cmake --build build -j
-ctest --test-dir build          # 単体 + golden画像 + 全example
-./build/hud_basic               # 冒頭の画像を実際に描く
+ctest --test-dir build          # unit + golden images + every example
+./build/hud_basic               # draws the image at the top of this page
+./build/scene_web examples/scenes/webcam_water.fvs   # live-edit server
 ```
 
-チュートリアル: [docs/getting-started.ja.md](docs/getting-started.ja.md) /
-やりたいこと別: [docs/cookbook.ja.md](docs/cookbook.ja.md)
+Building the wasm yourself (artifacts land in `wasm/dist/`, identical to
+what Pages serves):
 
-## なにができるか
+```bash
+source ~/emsdk/emsdk_env.sh
+./wasm/build.sh --webgpu        # also regenerates GLSL→SPIR-V→naga→WGSL
+```
 
-- **content 13種** — image(部分切り出し対応) / text(日本語・HarfBuzz) /
-  line / polyline / polygon / rect / circle / circles / arc / arrow /
-  crosshair / grid / boxes(ラベル+時間平滑化)。全て SDF、AA付き、
-  どの出力解像度でもベクタ品質
-- **CALayer 準拠の属性** — frame / position / anchor / rotation / scale /
-  opacity / shadow / border / background / cornerRadius / masksToBounds /
-  blend。左上原点・+y下の**1座標系のみ**（反転スイッチは存在しない）
-- **フィルタ 30種** — blur / bilateral / color_transform / toon / halftone / ripple …
-  任意のレイヤーにもグループ（合成後の1枚）にも掛かる。本体は GLSL∩C++ の
-  単一ソース（[filters_shared.h](include/fluent_scene/shared/filters_shared.h) +
-  [filters_def.h](include/fluent_scene/shared/filters_def.h)）で、
-  CPU / GPU / 型付きAPI / カタログが一箇所から導出される
+## Phases
 
-  ![フィルタカタログ（filters_tourの出力）](docs/images/filters_tour.png)
-
-- **implicit animation** — 属性を変えるだけで滑らかに動く
-  （`Transaction t(0.3f, Ease::InOut)`）。時間は `render(stage, dt)` の
-  dt でしか進まないため、**t=0.15s の画面をバイト単位で再現**できる
-- **保持型** — 毎フレームは変更データの差し替えだけ
-  （`setImage / setText / setBoxes / opacity()`）
-- **UIコントロール** — `ui::Button` / `ui::Switch` / `ui::Slider` /
-  `ui::Segmented` / `ui::Gauge` / `ui::Dropdown`（すべてプレハブ+状態=
-  属性上書き。新しい描画機構はゼロ）。入力は `stage.pointerDown/Move/Up`
-  への注入だけ — Webビューアのクリックもタッチも VR レイも同じ3呼び出しに
-  正規化される
-
-  ![UIコントロールカタログ](docs/images/ui_catalog.png)
-
-## AI と作る前提の設計
-
-Scene 文書（L2）は AI が書き手になるための契約を持ちます: 実行前に全て拒否
-する型検査、並べ替え不変 digest、GPU 予算ゲート、`describe --json` による
-能力の自己記述、コントラスト比などを警告するデザインリンター。詳細は
-[設計書 §13](../../docs/design/fluent_scene.ja.md)。
-
-## 位置づけとフェーズ
-
-fluent_vision の実行層です。**Scene（宣言/.fvs）→ Stage（実行時ツリー/本
-ライブラリ）→ Surface（ピクセル）**。
-
-| Phase | 範囲 | 状態 |
+| Phase | Scope | Status |
 |---|---|---|
-| L0 | Stage API + CPUリファレンス + Transaction + golden | **完了** |
-| L1 | Vulkan バックエンド（CPU と同一出力） | **完了** — 全goldenをGPUで通過、1080pで 5.6ms/frame（CPU比 ~17倍、読み戻し込み） |
-| L2 | Scene v1alpha2（YAML→Stage）+ describe --json + リンター | **完了** — YAML↔C++ ピクセル一致 golden、並べ替え不変 digest、`fvsc` CLI |
-| L3 | ROS binding / インスペクター | **完了** — binding文書(fluent.binding/v1alpha1)+scene_node(実機E2E済)+`/inspect`・`/at` |
-| L4 | UI コントロール（ポインタ注入 + 6コントロール先行実装済） | ほぼ完了 |
+| L0 | Stage API + CPU reference + Transaction + goldens | **done** |
+| L1 | Vulkan backend (identical output to CPU) | **done** |
+| L2 | Scene v1alpha2 (YAML→Stage) + describe --json + linter | **done** |
+| L3 | ROS binding + scene_node + inspector | **done** (on-robot E2E) |
+| L4 | UI controls (pointer injection + 6 controls) | **done** |
+| W1 | wasm (CPU renderer in the browser, 1 LSB from native) | **done** |
+| W3 | WebGPU backend (browser GPU, straight to canvas) | **done** |
+| next | Python binding / public C ABI / mobile bindings | planned |
 
-バックエンドは差し替え式です — `CpuRenderer`（リファレンス・どこでも動く）と
-`VulkanRenderer`（本番。シェーダーはビルド時に SPIR-V 化され実行時コンパイル
-ゼロ）。同一ツリーから同一の絵が出ることを golden テストが両方に対して
-保証します:
+Known limitations are listed honestly at the
+[end of the cookbook](docs/cookbook.ja.md#既知の-l0-制限正直リスト).
 
-```cpp
-std::unique_ptr<Renderer> renderer;
-try {
-    renderer = std::make_unique<VulkanRenderer>();
-} catch (const std::exception&) {
-    renderer = std::make_unique<CpuRenderer>();   // GPUが無い環境へのフォールバック
-}
-```
+## Documentation
 
-既知の L0 制限は [cookbook 末尾](docs/cookbook.ja.md#既知の-l0-制限正直リスト)に
-明記しています。
+Documentation is currently in Japanese (English versions planned):
 
-## ドキュメント
-
-- [getting-started.ja.md](docs/getting-started.ja.md) — 5分チュートリアル
-- [cookbook.ja.md](docs/cookbook.ja.md) — レシピ集
-- [docs/api/README.ja.md](docs/api/README.ja.md) — API リファレンス（ヘッダが
-  一次ソース、全公開APIに Doxygen コメント）
-- [設計書（なぜこうなっているか）](../../docs/design/fluent_scene.ja.md)
+- [Getting started](docs/getting-started.ja.md) — 5-minute tutorial
+- [Cookbook](docs/cookbook.ja.md) — task-oriented recipes
+- [API reference](docs/api/README.ja.md) — headers are the primary source;
+  every public API carries Doxygen comments
+- [Design document (the why)](docs/design/fluent_scene.ja.md)
 - [CHANGELOG.md](CHANGELOG.md)
-
-開発中の正文は日本語です。OSS 公開時に英語 README を正面にします（§12-4）。
