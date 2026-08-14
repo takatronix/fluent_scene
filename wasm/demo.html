@@ -3,14 +3,19 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>fluent scene — WASM local</title>
 <style>
-  body { margin: 0; background: #0b0d10; color: #dfe5ec;
-         font: 14px/1.5 system-ui, sans-serif; }
-  #v { display: block; width: 100vw; height: auto; background: #000;
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; align-items: center;
+         justify-content: center; gap: 10px;
+         background: radial-gradient(120% 120% at 50% 0%, #131822 0%, #07090d 70%);
+         color: #dfe5ec; font: 14px/1.5 system-ui, sans-serif; }
+  #v { display: block; max-width: 96vw; max-height: 86vh; aspect-ratio: 16 / 9;
+       background: #000; border-radius: 14px;
+       box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.5);
        touch-action: none; user-select: none; }
-  #bar { padding: 8px 14px; font-family: ui-monospace, monospace; color: #9aa7b4;
-         white-space: pre-wrap; }
+  #bar { font-family: ui-monospace, monospace; color: #7c8a99; font-size: 12px;
+         white-space: pre-wrap; text-align: center; }
 </style>
-<canvas id="v" width="854" height="480"></canvas>
+<canvas id="v" width="1280" height="720"></canvas>
 <div id="bar">loading wasm…</div>
 <script type="module">
 // Everything happens in this tab: webcam capture, the Scene document, the
@@ -21,53 +26,70 @@ import createFluentScene from './fluent_scene.mjs';
 
 const SCENE = `
 schema: fluent.scene/v1alpha2
-stage: { size: [854, 480] }
+stage: { size: [1280, 720] }
 inputs:
   camera: { type: image.rgba8, update: per_frame }
+params:
+  load: { type: f32, default: 0, runtime_mutable: true,
+          animate: { duration: 0.25, ease: ease_out } }
 layers:
   - id: water
     content: { image: { source: $inputs.camera, fit: cover } }
   - id: hud
-    position: [18, 16]
-    opacity: 0.92
+    position: [28, 24]
+    opacity: 0.94
     shadow: {}
     sublayers:
-      - content: { rect: { size: [330, 46], corner_radius: 12, color: [0, 0, 0, 0.45] } }
-      - content: { text: { text: "FLUENT SCENE - WASM local", position: [14, 10], size: 20 } }
+      - content: { rect: { size: [420, 64], corner_radius: 16, color: [0, 0, 0, 0.42] } }
+      - content: { text: { text: "FLUENT SCENE", position: [20, 8], size: 30 } }
+      - content: { text: { text: "wasm - rendered in your browser", position: [20, 40],
+                           size: 15, color: [1, 1, 1, 0.55] } }
+  - id: meter
+    content: { gauge: { center: [1204, 74], radius: 46, value: $params.load } }
   - id: tiles
-    position: [0, 378]
+    position: [0, 566]
     sublayers:
-      - content: { rect: { rect: [0, 0, 854, 102], color: [0, 0, 0, 0.35] } }
+      - content: { rect: { rect: [0, 0, 1280, 154], color: [0, 0, 0, 0.38] } }
       - id: t1
-        frame: [8, 6, 160, 90]
+        frame: [14, 10, 236, 118]
         content: { image: { source: $inputs.camera, fit: cover } }
-        corner_radius: 8
+        corner_radius: 12
         masks_to_bounds: true
         filters: [ { toon: {} } ]
+      - content: { text: { text: "toon", position: [22, 130], size: 14,
+                           color: [1, 1, 1, 0.6] } }
       - id: t2
-        frame: [176, 6, 160, 90]
+        frame: [266, 10, 236, 118]
         content: { image: { source: $inputs.camera, fit: cover } }
-        corner_radius: 8
+        corner_radius: 12
         masks_to_bounds: true
         filters: [ { sketch: {} } ]
+      - content: { text: { text: "sketch", position: [274, 130], size: 14,
+                           color: [1, 1, 1, 0.6] } }
       - id: t3
-        frame: [344, 6, 160, 90]
+        frame: [518, 10, 236, 118]
         content: { image: { source: $inputs.camera, fit: cover } }
-        corner_radius: 8
+        corner_radius: 12
         masks_to_bounds: true
         filters: [ { halftone: {} } ]
+      - content: { text: { text: "halftone", position: [526, 130], size: 14,
+                           color: [1, 1, 1, 0.6] } }
       - id: t4
-        frame: [512, 6, 160, 90]
+        frame: [770, 10, 236, 118]
         content: { image: { source: $inputs.camera, fit: cover } }
-        corner_radius: 8
+        corner_radius: 12
         masks_to_bounds: true
         filters: [ { hue: { angle: 150 } } ]
+      - content: { text: { text: "hue", position: [778, 130], size: 14,
+                           color: [1, 1, 1, 0.6] } }
       - id: t5
-        frame: [680, 6, 160, 90]
+        frame: [1022, 10, 236, 118]
         content: { image: { source: $inputs.camera, fit: cover } }
-        corner_radius: 8
+        corner_radius: 12
         masks_to_bounds: true
         filters: [ { pixelate: {} } ]
+      - content: { text: { text: "pixelate", position: [1030, 130], size: 14,
+                           color: [1, 1, 1, 0.6] } }
 `;
 
 const bar = document.getElementById('bar');
@@ -88,6 +110,7 @@ const fs = {
   renderW: mod.cwrap('fs_render_width', 'number', ['number']),
   renderH: mod.cwrap('fs_render_height', 'number', ['number']),
   renderStride: mod.cwrap('fs_render_stride', 'number', ['number']),
+  setParamF32: mod.cwrap('fs_set_param_f32', 'number', ['number', 'string', 'number']),
 };
 
 const yamlPtr = mod.stringToNewUTF8(SCENE);
@@ -115,6 +138,12 @@ function hook(el) {
 hook(canvas);
 
 // ---- webcam → wasm heap ----------------------------------------------------
+// ?res=854x480 drops the render resolution for slower machines.
+const res = new URLSearchParams(location.search).get('res');
+if (res && /^\d+x\d+$/.test(res)) {
+  const [rw, rh] = res.split('x').map(Number);
+  canvas.width = rw; canvas.height = rh;
+}
 const CAM_W = 640, CAM_H = 480;
 const grab = document.createElement('canvas');
 grab.width = CAM_W; grab.height = CAM_H;
@@ -154,7 +183,8 @@ function tick() {
     ctx.putImageData(new ImageData(view, w, h), 0, 0);
   }
   ++frames;
-  bar.textContent = `wasm local  ${fpsShown} fps  —  touch the water (zero round trip)`;
+  fs.setParamF32(inst, 'load', Math.min(fpsShown / 60, 1));
+  bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · rendered locally in WebAssembly — touch the water`;
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
