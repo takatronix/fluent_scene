@@ -46,6 +46,17 @@
          font-size: 11px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
          max-width: 80vw; }
   #drawer.open ~ #bar { display: none; }
+  #title { position: fixed; z-index: 1; pointer-events: none;
+           top: max(14px, env(safe-area-inset-top));
+           left: max(14px, env(safe-area-inset-left));
+           display: flex; flex-direction: column; gap: 1px;
+           text-shadow: 0 1px 6px rgba(0, 0, 0, 0.75);
+           transition: opacity 1.2s ease; }
+  #title b { font-size: 25px; letter-spacing: 0.06em; color: rgba(255,255,255,0.92); }
+  #title span { font-size: 11.5px; color: rgba(255,255,255,0.6); max-width: 60vw; }
+  #title.gone { opacity: 0; }
+  #drawer.open ~ #title { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { #title { transition: none; } }
 </style>
 <canvas id="v" width="1280" height="720"></canvas>
 <button id="fsbtn" class="corner" title="全画面" aria-label="全画面">⛶</button>
@@ -75,6 +86,7 @@
   <label>視線追従 <input id="gazechk" type="checkbox" checked style="width:20px;height:20px;accent-color:#9d8dd9"></label>
 </div>
 </div>
+<div id="title"><b>LSD</b><span>serotonergic visual phenomenology on fluent_scene</span></div>
 <div id="bar">loading wasm…</div>
 <a href="https://x.com/takatronix" target="_blank" rel="noopener" style="position:fixed;right:12px;bottom:10px;z-index:9;font:11px ui-monospace,monospace;color:rgba(255,255,255,0.6);text-decoration:none;background:rgba(0,0,0,0.35);padding:4px 10px;border-radius:999px;backdrop-filter:blur(4px)">fluent_scene · by <b style="color:rgba(255,255,255,0.85)">@takatronix</b></a>
 <script type="module">
@@ -96,16 +108,11 @@ layers:
   - id: live
     content: { image: { source: $inputs.camera, fit: cover } }
     filters: [ { lsd: { trip: 0.8, time: 0, drift: 1, geometry: 0.5, chroma: 1 } } ]
-  - id: hud
-    position: [28, 24]
-    opacity: 0.94
-    shadow: {}
-    sublayers:
-      - content: { rect: { size: [520, 64], corner_radius: 16, color: [0, 0, 0, 0.42] } }
-      - content: { text: { text: "LSD", position: [20, 8], size: 30 } }
-      - content: { text: { text: "serotonergic visual phenomenology on fluent_scene",
-                           position: [86, 22], size: 15, color: [1, 1, 1, 0.55] } }
 `;
+// The title lives in HTML, not in the scene: the canvas is cover-cropped to
+// the viewport, so anything drawn at stage coordinates walks off the edge on
+// a non-16:9 window — and a burned-in HUD would also re-enter the feedback
+// loop and smear.
 
 const bar = document.getElementById('bar');
 const canvas = document.getElementById('v');
@@ -169,7 +176,10 @@ canvas.addEventListener('pointerup', () => {
   }
   lastTap = now;
 });
-// the drawer starts closed everywhere — the picture is the interface
+// the drawer starts closed everywhere — the picture is the interface, so
+// the title introduces itself once and then gets out of the way
+const titleEl = document.getElementById('title');
+setTimeout(() => titleEl.classList.add('gone'), 5000);
 
 // ---- the trip conductor ----------------------------------------------------
 // LSD visuals are non-stationary: the brain's dynamical-state repertoire

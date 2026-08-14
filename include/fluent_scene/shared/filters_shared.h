@@ -497,7 +497,6 @@ vec3 fs_lsd(vec2 uv, float trip, float time_s, float drift, float geometry, floa
     float digital = geometry < 0.0 ? 1.0 : 0.0;            // sign picks texture
     vec3 acc = vec3(0.0, 0.0, 0.0);
     float norm = 0.0;
-    float casc = 0.0;   // each rung bends the next finer one — free complexity
     for (int n = 0; n < 6; ++n) {
         float en = float(n) - zf;                          // ladder position
         float sc = exp2(en);
@@ -506,12 +505,8 @@ vec3 fs_lsd(vec2 uv, float trip, float time_s, float drift, float geometry, floa
                          fs_lsd_hash(vec2(mm, 9.2)) * 47.7);
         float w = 0.5 - 0.5 * cos(6.2831853 * (en + 1.0) / 7.0);
         float fq = 2.6 * sc;
-        // cascaded domain warp: the coarse structure displaces the fine
-        // structure, which displaces the finer still — detail that follows
-        // the shape it hangs off, the way real intricacy does
-        vec2 pl = pc * fq + warp * (1.8 * sc) + offn + vec2(casc, casc * 0.83) * 2.1;
+        vec2 pl = pc * fq + warp * (1.8 * sc) + offn;
         float g = fs_lsd_vnoise(pl);
-        casc = g - 0.5;
         if (n < 3) {
             // screen-space prism shift: domain offset scales with frequency
             acc += vec3(fs_lsd_vnoise(pl + poff * fq), g,
@@ -554,28 +549,16 @@ vec3 fs_lsd(vec2 uv, float trip, float time_s, float drift, float geometry, floa
     col = fs_color_transform(col, 0.0, 1.0 + 0.15 * k, 1.0 + 0.85 * k, 1.0);
     col = fs_hue_rotate(col, 28.0 * k * sin(t * 0.31));
 
-    // INFORMATION DENSITY — the thing that separates a real trip from a
-    // lava lamp. Slicing one fractal field at many levels turns it into a
-    // nest of closed contours: every mass is ringed by its own shrinking
-    // copies, all the way down, at the price of one multiply. Organic and
-    // digital differ in exactly this — how much information the same field
-    // is asked to carry: digital slices finer and cuts harder.
+    // organic <-> digital (the SIGN of `geometry`): digital quantizes the
+    // field into terraces and hardens every edge; organic leaves it smooth
     vec3 f3 = acc;
+    if (digital > 0.5) {
+        f3 = floor(f3 * 7.0 + vec3(0.5)) * (1.0 / 7.0);
+    }
     float lo = 0.5 - 0.04 * digital;
     float hi = 0.68 - 0.12 * digital;
     vec3 gm = vec3(smoothstep(lo, hi, f3.x), smoothstep(lo, hi, f3.y),
                    smoothstep(lo, hi, f3.z));
-    float lv = 6.0 + 7.0 * digital;                        // contour levels
-    vec3 bd = f3 * lv;
-    vec3 bf = bd - floor(bd);
-    vec3 ridge = vec3(1.0 - abs(2.0 * bf.x - 1.0), 1.0 - abs(2.0 * bf.y - 1.0),
-                      1.0 - abs(2.0 * bf.z - 1.0));
-    float e0 = 0.55 + 0.3 * digital;                        // organic soft, digital hard
-    vec3 lines = vec3(smoothstep(e0, 0.99, ridge.x), smoothstep(e0, 0.99, ridge.y),
-                      smoothstep(e0, 0.99, ridge.z));
-    // contours live inside and around the masses, never as a full-frame wash
-    float near_mass = smoothstep(0.12, 0.55, max(f3.x, max(f3.y, f3.z)));
-    gm = clamp(gm * 0.5 + lines * (0.85 * near_mass), 0.0, 1.0);
     // rides on weak retinal drive, densest at the fixed center
     float gate = clamp(amt, 0.0, 1.5) * k * (0.25 + 0.75 * (1.0 - fs_luma(col)));
     float focus = 0.65 + 0.45 * (1.0 - smoothstep(0.05, 0.95, r));
