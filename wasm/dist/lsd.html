@@ -326,6 +326,7 @@ let blinkPulse = 0, wasBlink = false, blinkJump = false;
 // 閉眼リセット: まばたきは素通し、目を閉じ続けるほど世界が初期状態へ
 // 洗い流される(長い閉眼=完全リセット)
 let eyeState = 'open', eyesClosedAt = 0, closedLevel = 0, cevArmed = false;
+let blinkSnap = false;
 let gbias = { yaw: 0, pitch: 0 }, gcalib = [];
 try {
   const b = JSON.parse(localStorage.getItem('lsd_gaze_bias'));
@@ -388,6 +389,10 @@ setInterval(() => {
         eyesClosedAt = performance.now();
       }
     } else {
+      if (eyeState === 'closed' && performance.now() - eyesClosedAt < 500 &&
+          Math.random() < 0.25) {
+        blinkSnap = true;  // 1/4 of light blinks flip the world; 3/4 pass
+      }
       eyeState = 'open';
     }
     if (!blink) {
@@ -479,13 +484,13 @@ function tick() {
   // Holding the eyes closed (not a blink) washes the trip away: the longer
   // they stay shut, the closer the world eases back to its freshly-loaded
   // state — parameters toward defaults, trail history fading out. A full
-  // hold (~2 s) commits the reset: sliders return to defaults and the
+  // hold (~1.5 s) commits the reset: sliders return to defaults and the
   // conductor forgets where it was.
   const nowMs = performance.now();
   const closedHeld = gazechk.checked && eyeState === 'closed' &&
       nowMs - eyesClosedAt > 250 && nowMs - faceSeen < 1200;
   closedLevel = Math.min(1, Math.max(0,
-      closedLevel + (closedHeld ? dt / 2.0 : -dt / 0.4)));
+      closedLevel + (closedHeld ? dt / 1.25 : -dt / 0.4)));
   if (closedLevel > 0) {
     for (const d in DIMS) {
       eff[d] += (DEFAULTS[d] - eff[d]) * closedLevel;
@@ -506,6 +511,17 @@ function tick() {
     }
   } else if (cevArmed) {
     cevArmed = false;
+  }
+  if (blinkSnap) {
+    // a blink the world noticed: one fast metastable jump — 「パッ」
+    blinkSnap = false;
+    for (const d in DIMS) {
+      conductor.from[d] = currentOffset(d, t);
+      conductor.to[d] = (Math.random() * 2 - 1) * DIMS[d].span;
+    }
+    conductor.t0 = t;
+    conductor.dur = 0.25 + 0.35 * Math.random();
+    conductor.next = t + 3 + 17 * -Math.log(1 - Math.random());
   }
   // show WHERE the conductor currently is: each readout becomes 基準→実効
   if (++uiTick % 10 === 0) {
