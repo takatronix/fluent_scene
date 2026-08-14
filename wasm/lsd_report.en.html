@@ -229,15 +229,7 @@
 
 <section class="panel intro">
   <h2 class="flush">What fluent_scene is</h2>
-  <p><strong>fluent_scene</strong> is a declarative 2D scene and video-effect engine in C++17. The pitch is three things: <strong>fast on the GPU</strong>, <strong>easy to write</strong> — and <strong>safe for an AI to write</strong>. <a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">github.com/takatronix/fluent_scene</a> — open source (MIT).</p>
-  <ul>
-    <li><strong>Fast on the GPU</strong> — drawn by Vulkan (zero runtime shader compilation) and WebGPU: 5.6 ms/frame at 1080p (~17× the CPU). Without a GPU, the CPU reference produces the same picture</li>
-    <li><strong>Easy</strong> — a screen is a few lines of YAML, an effect is one line: <code>filters: [ { lsd: { trip: 0.8 } } ]</code> puts this article's hallucination on any layer. At runtime only parameters change, and UI controls are part of the scene graph</li>
-    <li><strong>AI-writable</strong> — scene documents pass type checking, reference resolution, digests, and a design linter <em>before execution</em>. An AI can generate or edit a live screen and no broken frame has a code path to the glass — that contract is the design</li>
-    <li><strong>One filter body, worldwide</strong> — YAML says <em>which</em> filter, <em>how strong</em>, and <em>where</em>; it contains no math. The math is a single function (here, <code>fs_lsd()</code>) written once in the GLSL∩C++ subset and executed identically by the CPU reference, Vulkan, and WebGPU (WGSL machine-translated from the same SPIR-V). No hand-ported variants exist, and golden-image tests continuously hold all three to the same output</li>
-    <li><strong>Complexity, bought cheaply</strong> — as the <code>lsd</code> geometry shows, folding one field through a sliding octave ladder multiplies apparent structure for almost no extra arithmetic</li>
-    <li><strong>Runs anywhere</strong> — robots (Jetson/Vulkan), browsers (wasm + WebGPU), headless CI. The animation on this page is that same engine, in wasm</li>
-  </ul>
+  <p>A declarative 2D scene and video-effect engine in C++17. <strong>Fast on the GPU</strong> (Vulkan/WebGPU, 5.6 ms at 1080p), <strong>easy to write</strong> (a screen is a few lines of YAML — this article's hallucination is one line: <code>{ lsd: { trip: 0.8 } }</code>), and <strong>safe for an AI to write</strong> (everything is type-checked before execution; no broken frame reaches the glass). The math itself is a single GLSL∩C++ function (here, <code>fs_lsd()</code>) that CPU, Vulkan, and WebGPU all execute identically — golden tests hold them to the same output. Robots to browsers, one picture. <a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">GitHub</a> (MIT)</p>
 </section>
 
 

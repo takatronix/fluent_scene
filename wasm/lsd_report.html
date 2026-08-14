@@ -229,19 +229,7 @@
 
 <section class="panel intro">
   <h2 class="flush">fluent_scene とは</h2>
-  <p><strong>fluent_scene</strong> は C++17製の宣言的2Dシーン/映像エフェクトエンジンです。
-  売りは3つ — <strong>GPUで速い</strong>・<strong>書くのが簡単</strong>・
-  <strong>AIが安全に書ける</strong>。
-  <a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">github.com/takatronix/fluent_scene</a>
-  でOSS(MIT)として公開しています。</p>
-  <ul>
-    <li><strong>GPUで高速</strong> — Vulkan(実行時シェーダーコンパイルゼロ)と WebGPU で描画し、1080pで5.6ms/frame(CPU比~17倍)。GPUの無い環境ではCPUリファレンスが同じ絵をそのまま出します</li>
-    <li><strong>簡単</strong> — 画面はYAML数行の宣言、エフェクトはパラメータ1行。この記事の幻覚も、任意のレイヤーに <code>filters: [ { lsd: { trip: 0.8 } } ]</code> と書くだけで掛かります。実行時はパラメータを差し替えるだけで、UIコントロールもシーングラフの一部です</li>
-    <li><strong>AIが書ける</strong> — シーン文書は型検査・参照解決・digest・デザインリンターを<em>実行前に</em>全部通ります。AIが画面を生成・編集しても、壊れたフレームが表に出る経路が存在しない — これを契約にした設計です</li>
-    <li><strong>フィルタ本体は世界に1つだけ</strong> — YAMLが書くのは「どのフィルタを・どの強さで・どこに掛けるか」であって、数式ではありません。数式の本体は GLSL∩C++ の共通サブセットで<em>一度だけ</em>書かれた1関数(この記事なら <code>fs_lsd()</code>)で、CPUリファレンス・Vulkan・WebGPU(SPIR-V→WGSL自動変換)の3バックエンドが<strong>同一のコード</strong>を実行します。手作業の移植版は存在せず、ゴールデン画像テストが3者の出力一致を継続的に検証します</li>
-    <li><strong>情報量を安く買う</strong> — <code>lsd</code>の幾何が示す通り、1つの場を多段で切り、段ごとに前段で歪めるだけで、計算量をほぼ増やさずに複雑さが跳ね上がります</li>
-    <li><strong>どこでも動く</strong> — ロボット実機(Jetson/Vulkan)からブラウザ(wasm+WebGPU)、ヘッドレスCIまで。このページのデモはブラウザ内のwasmで完結し、映像はサーバーに送られません</li>
-  </ul>
+  <p>C++17製の宣言的2Dシーン/映像エフェクトエンジン。<strong>GPUで速く</strong>(Vulkan/WebGPU、1080pで5.6ms)、<strong>書くのが簡単</strong>(画面はYAML数行、この記事の幻覚も <code>{ lsd: { trip: 0.8 } }</code> の1行)、<strong>AIが安全に書ける</strong>(実行前に全て型検査され、壊れたフレームは表に出ない)。数式の本体は GLSL∩C++ で一度だけ書かれた1関数(本稿では <code>fs_lsd()</code>)で、CPU・Vulkan・WebGPU が同一コードを実行し、出力一致はゴールデンテストが保証します。ロボットからブラウザまで、同じ絵。<a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">GitHub</a> (MIT)</p>
 </section>
 
 
