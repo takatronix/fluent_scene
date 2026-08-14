@@ -235,10 +235,12 @@ if (res && /^\d+x\d+$/.test(res)) {
   canvas.width = rw; canvas.height = rh;
 }
 // 720p capture: the 640x480 feed upscaled 2x was half the softness — the
-// filter can only keep detail the camera delivered.
-const CAM_W = 1280, CAM_H = 720;
+// filter can only keep detail the camera delivered. `ideal` is a request,
+// not a promise: the grab canvas takes the ACTUAL video size afterwards,
+// so a camera that answers 4:3 is never stretched to 16:9 (the scene's
+// cover fit does the aspect-correct crop instead).
+let CAM_W = 1280, CAM_H = 720;
 const grab = document.createElement('canvas');
-grab.width = CAM_W; grab.height = CAM_H;
 const grabCtx = grab.getContext('2d', { willReadFrequently: true });
 let video = null;
 try {
@@ -247,6 +249,10 @@ try {
   video = document.createElement('video');
   video.srcObject = stream; video.muted = true;
   await video.play();
+  CAM_W = video.videoWidth || CAM_W;
+  CAM_H = video.videoHeight || CAM_H;
+  grab.width = CAM_W;
+  grab.height = CAM_H;
 } catch (e) {
   bar.textContent = 'webcam: ' + e + ' (needs https or localhost)';
 }
