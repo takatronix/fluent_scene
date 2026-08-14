@@ -2,8 +2,18 @@
 // pipeline shares (128 bytes, the spec minimum). The C++ recorder fills the
 // same struct (VulkanRenderer::Push); member meaning varies per pipeline
 // and is documented at each fill site.
+//
+// FS_WEBGPU: browser WGSL has no push constants, so the same block becomes
+// a uniform buffer at group 1 (group 0 stays texture/sampler/storage, same
+// as the Vulkan descriptor set). One draw = one dynamic-offset slice.
 
-layout(push_constant) uniform PushBlock {
+#ifdef FS_WEBGPU
+#define FS_PUSH_DECL layout(set = 1, binding = 0) uniform
+#else
+#define FS_PUSH_DECL layout(push_constant) uniform
+#endif
+
+FS_PUSH_DECL PushBlock {
     vec4 rect;   // quad in target pixels (x, y, w, h)
     vec4 meta;   // target w, target h, aa (local units per pixel), mode/flags
     vec4 inv0;   // inverse target→local transform: a, c, tx

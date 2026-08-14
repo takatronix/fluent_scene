@@ -22,5 +22,8 @@ void main() {
         return;
     }
     vec2 uv = u.pb.xy + f * (u.pb.zw - u.pb.xy);
-    o_cov = texture(atlas_tex, uv).r;
+    // textureLod, not texture: the early-out above is per-fragment control
+    // flow, and WGSL forbids implicit-derivative sampling there. The atlas
+    // has one mip, so lod 0 is the same picture on every backend.
+    o_cov = textureLod(atlas_tex, uv, 0.0).r;
 }

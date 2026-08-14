@@ -26,6 +26,15 @@ void main() {
     vec2 local = u_local(gl_FragCoord.xy);
     vec2 p = (local - u.pa.xy) * u.pa.z;
     vec4 smp = texture(buf_tex, p / vec2(textureSize(buf_tex, 0)));
+#ifdef FS_WEBGPU
+    // WebGPU has no clamp-to-border sampler; this pass samples clamp-to-edge
+    // there and reproduces the border arithmetic exactly: scale by the
+    // bilinear weight of the in-bounds taps (separable half-texel ramps
+    // against transparent black — identical to what the Vulkan sampler does).
+    vec2 bsz = vec2(textureSize(buf_tex, 0));
+    smp *= clamp(p.x + 0.5, 0.0, 1.0) * clamp(bsz.x + 0.5 - p.x, 0.0, 1.0) *
+           clamp(p.y + 0.5, 0.0, 1.0) * clamp(bsz.y + 0.5 - p.y, 0.0, 1.0);
+#endif
     int flags = u_mode();
     if ((flags & 2) != 0) {  // tint: shadow from the buffer's silhouette
         float a = u.color.a * u.pa.w * smp.a;
