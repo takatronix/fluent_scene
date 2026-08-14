@@ -5,7 +5,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "push_common.glsl"
-#include "fluent_stage/shared/shapes_shared.h"
+#include "fluent_scene/shared/shapes_shared.h"
 #include "shape_modes.h"
 
 layout(std430, set = 0, binding = 0) readonly buffer Points { vec2 pts[]; };

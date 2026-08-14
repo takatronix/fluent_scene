@@ -2,13 +2,13 @@
 // resolution, animation stepping, box smoothing, and hit-testing.
 // Rendering lives in cpu_renderer.cpp; this file never touches pixels.
 
-#include "fluent_stage/stage.hpp"
+#include "fluent_scene/stage.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
-namespace fluent_stage {
+namespace fluent_scene {
 
 namespace {
 
@@ -130,11 +130,11 @@ std::vector<std::string> Stage::drainDiagnostics() {
 
 void Stage::registerLayer(uint32_t depth) {
     if (layer_count_ >= limits_.max_layers) {
-        throw std::length_error("fluent_stage: max_layers (" +
+        throw std::length_error("fluent_scene: max_layers (" +
                                 std::to_string(limits_.max_layers) + ") exceeded");
     }
     if (depth > limits_.max_depth) {
-        throw std::length_error("fluent_stage: max_depth (" +
+        throw std::length_error("fluent_scene: max_depth (" +
                                 std::to_string(limits_.max_depth) + ") exceeded");
     }
     ++layer_count_;
@@ -838,4 +838,4 @@ void Layer::warn(const std::string& message) const {
     stage_->diagnose(id_ + ": " + message);
 }
 
-}  // namespace fluent_stage
+}  // namespace fluent_scene

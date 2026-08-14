@@ -1,4 +1,4 @@
-// push_common.glsl — the one push-constant layout every fluent_stage
+// push_common.glsl — the one push-constant layout every fluent_scene
 // pipeline shares (128 bytes, the spec minimum). The C++ recorder fills the
 // same struct (VulkanRenderer::Push); member meaning varies per pipeline
 // and is documented at each fill site.

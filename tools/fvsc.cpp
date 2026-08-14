@@ -15,13 +15,13 @@
 #include <sstream>
 #include <string>
 
-#include "fluent_stage/cpu_renderer.hpp"
-#include "fluent_stage/scene/compiler.hpp"
-#include "fluent_stage/scene/document.hpp"
-#include "fluent_stage/scene/linter.hpp"
+#include "fluent_scene/cpu_renderer.hpp"
+#include "fluent_scene/fvs/compiler.hpp"
+#include "fluent_scene/fvs/document.hpp"
+#include "fluent_scene/fvs/linter.hpp"
 
-using namespace fluent_stage;
-using namespace fluent_stage::scene;
+using namespace fluent_scene;
+using namespace fluent_scene::fvs;
 
 namespace {
 

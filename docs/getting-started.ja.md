@@ -1,10 +1,10 @@
 # はじめる — 5分で最初の絵を出す
 
-fluent_stage は、ロボットのカメラ映像と情報を**美しく・リアルタイムに・宣言的に**
+fluent_scene は、ロボットのカメラ映像と情報を**美しく・リアルタイムに・宣言的に**
 描くための 2D レイヤーライブラリです。iOS の CALayer と同じメンタルモデル
 （レイヤーツリー + 属性 + implicit animation）を、C++ で1行から書けます。
 
-概念の全体像は [設計書](../../../docs/design/fluent_stage.ja.md) を、
+概念の全体像は [設計書](../../../docs/design/fluent_scene.ja.md) を、
 やりたいこと別のコードは [cookbook](cookbook.ja.md) を見てください。
 
 ## 1. 依存とビルド
@@ -13,7 +13,7 @@ fluent_stage は、ロボットのカメラ映像と情報を**美しく・リ�
 （Ubuntu: `sudo apt install libfreetype-dev libharfbuzz-dev`）。
 
 ```bash
-cd core/fluent_stage
+cd core/fluent_scene
 cmake -S . -B build && cmake --build build -j
 ctest --test-dir build        # stage_tests + golden_tests + 全example
 ```
@@ -21,8 +21,8 @@ ctest --test-dir build        # stage_tests + golden_tests + 全example
 ## 2. 最初のプログラム
 
 ```cpp
-#include <fluent_stage/fluent_stage.hpp>
-using namespace fluent_stage;
+#include <fluent_scene/fluent_scene.hpp>
+using namespace fluent_scene;
 
 int main() {
     Stage stage(1280, 720);                       // 論理座標系を宣言
@@ -43,13 +43,13 @@ int main() {
 ビルド（ライブラリをビルド済みなら g++ 直リンクが最短）:
 
 ```bash
-g++ -std=c++17 first.cpp -Icore/fluent_stage/include \
-    core/fluent_stage/build/libfluent_stage.a \
+g++ -std=c++17 first.cpp -Icore/fluent_scene/include \
+    core/fluent_scene/build/libfluent_scene.a \
     $(pkg-config --libs freetype2 harfbuzz) -o first
 ```
 
-CMake プロジェクトなら `add_subdirectory(core/fluent_stage)` して
-`target_link_libraries(app PRIVATE fluent_stage)`。
+CMake プロジェクトなら `add_subdirectory(core/fluent_scene)` して
+`target_link_libraries(app PRIVATE fluent_scene)`。
 
 ## 3. 3つの約束ごと
 
@@ -118,9 +118,9 @@ C++ からは `parseScene` → `compile` で同じ Stage が得られ、宣言�
 `$inputs` / `$params` を型安全に流し込めます:
 
 ```cpp
-#include <fluent_stage/scene/compiler.hpp>
-#include <fluent_stage/scene/document.hpp>
-namespace fs = fluent_stage::scene;
+#include <fluent_scene/fvs/compiler.hpp>
+#include <fluent_scene/fvs/document.hpp>
+namespace fs = fluent_scene::fvs;
 
 auto parsed = fs::parseScene(yaml_text);      // 誤りは全部ここで拒否
 auto compiled = fs::compile(parsed.doc);       // → Stage（同じ描画コード）
@@ -135,6 +135,6 @@ renderer.render(compiled.scene->stage(), dt);
 
 - [cookbook.ja.md](cookbook.ja.md) — PiP、経路、HUD、ゲージ、フィルタ、検出枠…
 - [examples/](../examples/) — 全てビルド・実行可能（CIで常時実行）
-- [設計書 fluent_stage.ja.md](../../../docs/design/fluent_stage.ja.md) — なぜこうなっているか
+- [設計書 fluent_scene.ja.md](../../../docs/design/fluent_scene.ja.md) — なぜこうなっているか
 - API リファレンス — ヘッダが一次ソース（全公開APIに Doxygen コメント）。
   [docs/api/README.ja.md](api/README.ja.md) 参照

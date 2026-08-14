@@ -9,16 +9,16 @@
 #include <string>
 #include <vector>
 
-#include <fluent_stage/cpu_renderer.hpp>
-#include <fluent_stage/fluent_stage.hpp>
-#include <fluent_stage/scene/binding.hpp>
-#include <fluent_stage/scene/compiler.hpp>
-#include <fluent_stage/scene/document.hpp>
-#include <fluent_stage/scene/inspector.hpp>
-#include <fluent_stage/scene/linter.hpp>
+#include <fluent_scene/cpu_renderer.hpp>
+#include <fluent_scene/fluent_scene.hpp>
+#include <fluent_scene/fvs/binding.hpp>
+#include <fluent_scene/fvs/compiler.hpp>
+#include <fluent_scene/fvs/document.hpp>
+#include <fluent_scene/fvs/inspector.hpp>
+#include <fluent_scene/fvs/linter.hpp>
 
-using namespace fluent_stage;
-namespace fs = fluent_stage::scene;
+using namespace fluent_scene;
+namespace fs = fluent_scene::fvs;
 
 namespace {
 

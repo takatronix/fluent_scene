@@ -2,11 +2,11 @@
 // target layer; the wave math itself lives once in filters_shared.h and
 // runs on whichever backend renders the frame.
 
-#include "fluent_stage/effects.hpp"
+#include "fluent_scene/effects.hpp"
 
 #include <cmath>
 
-namespace fluent_stage {
+namespace fluent_scene {
 namespace fx {
 
 Ripple::Ripple(Layer& target, RippleStyle style)
@@ -79,4 +79,4 @@ void Ripple::applyFilters() {
 }
 
 }  // namespace fx
-}  // namespace fluent_stage
+}  // namespace fluent_scene

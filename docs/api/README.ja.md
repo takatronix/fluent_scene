@@ -12,23 +12,23 @@ doxygen docs/api/Doxyfile      # → build/docs/api/html/index.html
 
 | ヘッダ | 内容 |
 |---|---|
-| [fluent_stage.hpp](../../include/fluent_stage/fluent_stage.hpp) | 傘ヘッダ。これだけincludeすればよい |
-| [stage.hpp](../../include/fluent_stage/stage.hpp) | `Stage` — 論理座標系の宣言、ツリーの根、`advance(dt)`、`hitTest` |
-| [layer.hpp](../../include/fluent_stage/layer.hpp) | `Layer` — 描画呼び出し、幾何(bounds/anchor/position/frame)、属性、フィルタ、データ更新 |
-| [content.hpp](../../include/fluent_stage/content.hpp) | content 13種の定義（何を描くか） |
-| [types.hpp](../../include/fluent_stage/types.hpp) | Shadow / Border / ImageView / Box / 各enum / StageLimits |
-| [geometry.hpp](../../include/fluent_stage/geometry.hpp) | Vec2 / Rect / Mat23 / Color |
-| [filters.hpp](../../include/fluent_stage/filters.hpp) | `Filter` 値と型付き29種、`filterTable()` |
-| [transaction.hpp](../../include/fluent_stage/transaction.hpp) | `Transaction` — implicit animation のスコープ |
-| [animation.hpp](../../include/fluent_stage/animation.hpp) | `Animated<T>` とイージング（内部機構だが公開） |
-| [renderer.hpp](../../include/fluent_stage/renderer.hpp) | `Renderer` 契約（dt注入・Surface貸出） |
-| [cpu_renderer.hpp](../../include/fluent_stage/cpu_renderer.hpp) | リファレンスバックエンド |
-| [vulkan_renderer.hpp](../../include/fluent_stage/vulkan_renderer.hpp) | GPU本番バックエンド（CPUと同一出力・実行時シェーダーコンパイルゼロ） |
-| [surface.hpp](../../include/fluent_stage/surface.hpp) | `Surface` — RGBA8出力ビュー |
+| [fluent_scene.hpp](../../include/fluent_scene/fluent_scene.hpp) | 傘ヘッダ。これだけincludeすればよい |
+| [stage.hpp](../../include/fluent_scene/stage.hpp) | `Stage` — 論理座標系の宣言、ツリーの根、`advance(dt)`、`hitTest` |
+| [layer.hpp](../../include/fluent_scene/layer.hpp) | `Layer` — 描画呼び出し、幾何(bounds/anchor/position/frame)、属性、フィルタ、データ更新 |
+| [content.hpp](../../include/fluent_scene/content.hpp) | content 13種の定義（何を描くか） |
+| [types.hpp](../../include/fluent_scene/types.hpp) | Shadow / Border / ImageView / Box / 各enum / StageLimits |
+| [geometry.hpp](../../include/fluent_scene/geometry.hpp) | Vec2 / Rect / Mat23 / Color |
+| [filters.hpp](../../include/fluent_scene/filters.hpp) | `Filter` 値と型付き29種、`filterTable()` |
+| [transaction.hpp](../../include/fluent_scene/transaction.hpp) | `Transaction` — implicit animation のスコープ |
+| [animation.hpp](../../include/fluent_scene/animation.hpp) | `Animated<T>` とイージング（内部機構だが公開） |
+| [renderer.hpp](../../include/fluent_scene/renderer.hpp) | `Renderer` 契約（dt注入・Surface貸出） |
+| [cpu_renderer.hpp](../../include/fluent_scene/cpu_renderer.hpp) | リファレンスバックエンド |
+| [vulkan_renderer.hpp](../../include/fluent_scene/vulkan_renderer.hpp) | GPU本番バックエンド（CPUと同一出力・実行時シェーダーコンパイルゼロ） |
+| [surface.hpp](../../include/fluent_scene/surface.hpp) | `Surface` — RGBA8出力ビュー |
 
 ## 単一ソース（shared/）
 
-[shared/](../../include/fluent_stage/shared/) は GLSL∩C++ の共通部分集合で
+[shared/](../../include/fluent_scene/shared/) は GLSL∩C++ の共通部分集合で
 書かれた**定義の一次ソース**です。CPU も GPU（L1）も同じ本体をコンパイル
 します。
 

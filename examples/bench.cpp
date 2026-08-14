@@ -9,12 +9,12 @@
 #include <memory>
 #include <vector>
 
-#include <fluent_stage/fluent_stage.hpp>
+#include <fluent_scene/fluent_scene.hpp>
 #ifdef FS_HAVE_VULKAN
-#include <fluent_stage/vulkan_renderer.hpp>
+#include <fluent_scene/vulkan_renderer.hpp>
 #endif
 
-using namespace fluent_stage;
+using namespace fluent_scene;
 
 namespace {
 

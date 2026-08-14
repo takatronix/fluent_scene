@@ -6,9 +6,9 @@
 #include <cmath>
 #include <cstdio>
 
-#include <fluent_stage/fluent_stage.hpp>
+#include <fluent_scene/fluent_scene.hpp>
 
-using namespace fluent_stage;
+using namespace fluent_scene;
 
 namespace {
 

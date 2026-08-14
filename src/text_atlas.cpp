@@ -9,7 +9,7 @@
 #include <hb-ft.h>
 #include <hb.h>
 
-namespace fluent_stage {
+namespace fluent_scene {
 namespace detail {
 
 namespace {
@@ -254,7 +254,7 @@ bool initAtlasWithFallback(TextAtlas& atlas, const std::string& font_file,
         if (atlas.init(options, error)) {
             return true;
         }
-        std::fprintf(stderr, "fluent_stage: %s — text will not render\n", error.c_str());
+        std::fprintf(stderr, "fluent_scene: %s — text will not render\n", error.c_str());
         return false;
     }
     for (const char* path : kFontSearch) {
@@ -264,10 +264,10 @@ bool initAtlasWithFallback(TextAtlas& atlas, const std::string& font_file,
         }
     }
     std::fprintf(stderr,
-                 "fluent_stage: no usable font found — text will not render "
+                 "fluent_scene: no usable font found — text will not render "
                  "(set Options::font_file)\n");
     return false;
 }
 
 }  // namespace detail
-}  // namespace fluent_stage
+}  // namespace fluent_scene

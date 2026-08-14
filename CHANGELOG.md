@@ -63,7 +63,7 @@
 
 ## 0.8.0 — 2026-08-14 (Phase L2: Scene 宣言層)
 
-- **Scene v1alpha2**（`fluent_stage::scene`）: レイヤーツリー YAML（.fvs）
+- **Scene v1alpha2**（`fluent_scene::fvs`）: レイヤーツリー YAML（.fvs）
   → Stage 構築。§1.3 の契約を実装 — 型検査・未知キー拒否・`$inputs` /
   `$params` 参照解決・必須/排他フィールド検査を**実行前に全て**行う
   （`parseScene` が ok なら compile は資源上限以外で失敗しない）

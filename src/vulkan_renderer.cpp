@@ -12,7 +12,7 @@
 // Per frame: upload changed data (camera frames, new glyphs, polygon
 // points), record one command buffer, submit, read back.
 
-#include "fluent_stage/vulkan_renderer.hpp"
+#include "fluent_scene/vulkan_renderer.hpp"
 
 #include <vulkan/vulkan.h>
 
@@ -26,14 +26,14 @@
 #include <variant>
 #include <vector>
 
-#include "fluent_stage/stage.hpp"
+#include "fluent_scene/stage.hpp"
 #include "render_shared.hpp"
 #include "text_atlas.hpp"
 
 // Draw-mode ids shared with shape_mask.frag.
 #include "shape_modes.h"
 
-namespace fluent_stage {
+namespace fluent_scene {
 
 namespace {
 
@@ -87,7 +87,7 @@ const uint32_t kUnpremulFrag[] =
 
 void vkCheck(VkResult r, const char* what) {
     if (r != VK_SUCCESS) {
-        throw std::runtime_error(std::string("fluent_stage vulkan: ") + what + " failed (" +
+        throw std::runtime_error(std::string("fluent_scene vulkan: ") + what + " failed (" +
                                  std::to_string(static_cast<int>(r)) + ")");
     }
 }
@@ -247,7 +247,7 @@ struct VulkanRenderer::Impl {
 
     void createInstanceAndDevice() {
         VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-        app.pApplicationName = "fluent_stage";
+        app.pApplicationName = "fluent_scene";
         app.apiVersion = VK_API_VERSION_1_3;
         VkInstanceCreateInfo ii{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
         ii.pApplicationInfo = &app;
@@ -256,7 +256,7 @@ struct VulkanRenderer::Impl {
         uint32_t count = 0;
         vkEnumeratePhysicalDevices(instance, &count, nullptr);
         if (count == 0) {
-            throw std::runtime_error("fluent_stage vulkan: no devices");
+            throw std::runtime_error("fluent_scene vulkan: no devices");
         }
         std::vector<VkPhysicalDevice> devices(count);
         vkEnumeratePhysicalDevices(instance, &count, devices.data());
@@ -285,7 +285,7 @@ struct VulkanRenderer::Impl {
             }
         }
         if (!found) {
-            throw std::runtime_error("fluent_stage vulkan: no graphics queue");
+            throw std::runtime_error("fluent_scene vulkan: no graphics queue");
         }
 
         const float priority = 1.0f;
@@ -322,7 +322,7 @@ struct VulkanRenderer::Impl {
                 return i;
             }
         }
-        throw std::runtime_error("fluent_stage vulkan: no suitable memory type");
+        throw std::runtime_error("fluent_scene vulkan: no suitable memory type");
     }
 
     Buffer createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool host_visible) {
@@ -842,7 +842,7 @@ struct VulkanRenderer::Impl {
         if (staging_used + bytes > staging.size) {
             // Grow between frames: submit-safe because uploads happen
             // before rendering; a bigger arena next frame.
-            throw std::runtime_error("fluent_stage vulkan: staging arena exhausted");
+            throw std::runtime_error("fluent_scene vulkan: staging arena exhausted");
         }
         std::memcpy(static_cast<uint8_t*>(staging.mapped) + staging_used, data, bytes);
         const VkDeviceSize offset = staging_used;
@@ -1720,4 +1720,4 @@ const Surface& VulkanRenderer::render(Stage& stage, uint32_t out_width, uint32_t
     return impl_->renderFrame(stage, out_width, out_height, dt);
 }
 
-}  // namespace fluent_stage
+}  // namespace fluent_scene

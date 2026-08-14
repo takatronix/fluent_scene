@@ -42,16 +42,16 @@
 
 #include <jpeglib.h>
 
-#include <fluent_stage/fluent_stage.hpp>
+#include <fluent_scene/fluent_scene.hpp>
 #ifdef FS_HAVE_VULKAN
-#include <fluent_stage/vulkan_renderer.hpp>
+#include <fluent_scene/vulkan_renderer.hpp>
 #endif
 #ifdef FS_HAVE_ROS
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
 #endif
 
-using namespace fluent_stage;
+using namespace fluent_scene;
 
 namespace {
 
@@ -657,7 +657,7 @@ private:
 const char* kPage = R"HTML(<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>fluent_stage fx</title>
+<title>fluent_scene fx</title>
 <style>
   body { margin:0; background:#0d0f13; color:#dde; font:14px system-ui;
          display:flex; flex-direction:column; align-items:center; }

@@ -12,7 +12,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "push_common.glsl"
-#include "fluent_stage/shared/shapes_shared.h"
+#include "fluent_scene/shared/shapes_shared.h"
 
 layout(set = 0, binding = 0) uniform sampler2D buf_tex;
 

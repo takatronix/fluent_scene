@@ -48,15 +48,15 @@
 
 #include "wsvideo.hpp"
 
-#include <fluent_stage/cpu_renderer.hpp>
-#include <fluent_stage/effects.hpp>
-#include <fluent_stage/fluent_stage.hpp>
-#include <fluent_stage/scene/compiler.hpp>
-#include <fluent_stage/scene/document.hpp>
-#include <fluent_stage/scene/inspector.hpp>
-#include <fluent_stage/scene/linter.hpp>
+#include <fluent_scene/cpu_renderer.hpp>
+#include <fluent_scene/effects.hpp>
+#include <fluent_scene/fluent_scene.hpp>
+#include <fluent_scene/fvs/compiler.hpp>
+#include <fluent_scene/fvs/document.hpp>
+#include <fluent_scene/fvs/inspector.hpp>
+#include <fluent_scene/fvs/linter.hpp>
 #ifdef FS_HAVE_VULKAN
-#include <fluent_stage/vulkan_renderer.hpp>
+#include <fluent_scene/vulkan_renderer.hpp>
 #endif
 #ifdef FS_HAVE_ROS
 #include <rclcpp/rclcpp.hpp>
@@ -64,8 +64,8 @@
 #include <std_msgs/msg/string.hpp>
 #endif
 
-using namespace fluent_stage;
-namespace fsc = fluent_stage::scene;
+using namespace fluent_scene;
+namespace fsc = fluent_scene::fvs;
 
 namespace {
 
@@ -116,8 +116,8 @@ std::vector<std::string> g_event_json_queue;
 
 struct InspectEntry {
     std::string json;
-    fluent_stage::Mat23 to_stage;
-    fluent_stage::Rect bounds;
+    fluent_scene::Mat23 to_stage;
+    fluent_scene::Rect bounds;
     float eff_opacity = 1;
     int paint_index = 0;
 };

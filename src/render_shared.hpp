@@ -16,10 +16,10 @@
 #include <variant>
 #include <vector>
 
-#include "fluent_stage/filters.hpp"
-#include "fluent_stage/layer.hpp"
+#include "fluent_scene/filters.hpp"
+#include "fluent_scene/layer.hpp"
 
-namespace fluent_stage {
+namespace fluent_scene {
 namespace plan {
 
 // ---- transforms and rects --------------------------------------------------
@@ -260,4 +260,4 @@ inline void scaleFilterValues(const Filter& f, float scale, Rect ext, float buf_
 }
 
 }  // namespace plan
-}  // namespace fluent_stage
+}  // namespace fluent_scene

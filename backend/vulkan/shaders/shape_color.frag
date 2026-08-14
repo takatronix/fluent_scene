@@ -6,7 +6,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "push_common.glsl"
-#include "fluent_stage/shared/shapes_shared.h"
+#include "fluent_scene/shared/shapes_shared.h"
 
 layout(location = 0) out vec4 o_color;
 

@@ -25,7 +25,7 @@ vec3 fs_sample_straight(vec2 uv) {
 
 #define FS_SAMPLE(uv) fs_sample_straight(uv)
 #define FS_TEXEL (vec2(1.0) / vec2(textureSize(src_tex, 0)))
-#include "fluent_stage/shared/filters_shared.h"
+#include "fluent_scene/shared/filters_shared.h"
 
 void main() {
     int mode = u_mode();

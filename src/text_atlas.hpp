@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-namespace fluent_stage {
+namespace fluent_scene {
 namespace detail {
 
 class TextAtlas {
@@ -104,4 +104,4 @@ bool initAtlasWithFallback(TextAtlas& atlas, const std::string& font_file,
                            uint32_t pixel_size);
 
 }  // namespace detail
-}  // namespace fluent_stage
+}  // namespace fluent_scene

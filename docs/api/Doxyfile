@@ -1,14 +1,14 @@
-# Doxygen configuration for fluent_stage.
+# Doxygen configuration for fluent_scene.
 # Run from the package root:  doxygen docs/api/Doxyfile
 
-PROJECT_NAME           = fluent_stage
+PROJECT_NAME           = fluent_scene
 PROJECT_BRIEF          = "Runtime 2D layer tree + SDF compositing for robots"
 PROJECT_NUMBER         = 0.1.0
 OUTPUT_DIRECTORY       = build/docs/api
-INPUT                  = include/fluent_stage README.md
+INPUT                  = include/fluent_scene README.md
 USE_MDFILE_AS_MAINPAGE = README.md
 RECURSIVE              = YES
-EXCLUDE                = include/fluent_stage/shared
+EXCLUDE                = include/fluent_scene/shared
 FILE_PATTERNS          = *.hpp *.md
 EXTRACT_ALL            = NO
 WARN_IF_UNDOCUMENTED   = YES

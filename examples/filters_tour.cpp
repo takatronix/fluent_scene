@@ -9,9 +9,9 @@
 #include <cstdio>
 #include <vector>
 
-#include <fluent_stage/fluent_stage.hpp>
+#include <fluent_scene/fluent_scene.hpp>
 
-using namespace fluent_stage;
+using namespace fluent_scene;
 
 int main() {
     // Test card: gradients + checkers stress color and kernel filters alike.

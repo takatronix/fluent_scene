@@ -1,8 +1,8 @@
-# fluent_stage
+# fluent_scene
 
 ![hud_basic — 実際のレンダリング出力](docs/images/hud_basic.png)
 
-**ロボットの画面を、人間は1行で、AIは安全に。** fluent_stage は CALayer 型の
+**ロボットの画面を、人間は1行で、AIは安全に。** fluent_scene は CALayer 型の
 保持レイヤーツリーと SDF レンダリングによる 2D 合成ライブラリです。
 カメラ映像・検出結果・経路・HUD を、論理座標系でリアルタイムに描きます。
 
@@ -76,8 +76,8 @@ ctest --test-dir build          # 単体 + golden画像 + 全example
   blend。左上原点・+y下の**1座標系のみ**（反転スイッチは存在しない）
 - **フィルタ 30種** — blur / bilateral / color_transform / toon / halftone / ripple …
   任意のレイヤーにもグループ（合成後の1枚）にも掛かる。本体は GLSL∩C++ の
-  単一ソース（[filters_shared.h](include/fluent_stage/shared/filters_shared.h) +
-  [filters_def.h](include/fluent_stage/shared/filters_def.h)）で、
+  単一ソース（[filters_shared.h](include/fluent_scene/shared/filters_shared.h) +
+  [filters_def.h](include/fluent_scene/shared/filters_def.h)）で、
   CPU / GPU / 型付きAPI / カタログが一箇所から導出される
 
   ![フィルタカタログ（filters_tourの出力）](docs/images/filters_tour.png)
@@ -100,7 +100,7 @@ ctest --test-dir build          # 単体 + golden画像 + 全example
 Scene 文書（L2）は AI が書き手になるための契約を持ちます: 実行前に全て拒否
 する型検査、並べ替え不変 digest、GPU 予算ゲート、`describe --json` による
 能力の自己記述、コントラスト比などを警告するデザインリンター。詳細は
-[設計書 §13](../../docs/design/fluent_stage.ja.md)。
+[設計書 §13](../../docs/design/fluent_scene.ja.md)。
 
 ## 位置づけとフェーズ
 
@@ -138,7 +138,7 @@ try {
 - [cookbook.ja.md](docs/cookbook.ja.md) — レシピ集
 - [docs/api/README.ja.md](docs/api/README.ja.md) — API リファレンス（ヘッダが
   一次ソース、全公開APIに Doxygen コメント）
-- [設計書（なぜこうなっているか）](../../docs/design/fluent_stage.ja.md)
+- [設計書（なぜこうなっているか）](../../docs/design/fluent_scene.ja.md)
 - [CHANGELOG.md](CHANGELOG.md)
 
 開発中の正文は日本語です。OSS 公開時に英語 README を正面にします（§12-4）。

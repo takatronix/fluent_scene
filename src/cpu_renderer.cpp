@@ -18,7 +18,7 @@
 // library's look is calibrated against). Surface output converts to
 // straight-alpha RGBA8.
 
-#include "fluent_stage/cpu_renderer.hpp"
+#include "fluent_scene/cpu_renderer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -28,20 +28,20 @@
 #include <variant>
 #include <vector>
 
-#include "fluent_stage/shared/glsl_compat.hpp"
+#include "fluent_scene/shared/glsl_compat.hpp"
 
-namespace fluent_stage {
+namespace fluent_scene {
 namespace shapes {
 using namespace glsl;
-#include "fluent_stage/shared/shapes_shared.h"
+#include "fluent_scene/shared/shapes_shared.h"
 }  // namespace shapes
-}  // namespace fluent_stage
+}  // namespace fluent_scene
 
-#include "fluent_stage/stage.hpp"
+#include "fluent_scene/stage.hpp"
 #include "render_shared.hpp"
 #include "text_atlas.hpp"
 
-namespace fluent_stage {
+namespace fluent_scene {
 
 namespace {
 
@@ -239,7 +239,7 @@ namespace filter_bodies {
 using namespace glsl;
 #define FS_SAMPLE(uv) filterSample(uv)
 #define FS_TEXEL filterTexel()
-#include "fluent_stage/shared/filters_shared.h"
+#include "fluent_scene/shared/filters_shared.h"
 #undef FS_SAMPLE
 #undef FS_TEXEL
 }  // namespace filter_bodies
@@ -956,4 +956,4 @@ const Surface& CpuRenderer::render(Stage& stage, uint32_t out_width, uint32_t ou
     return impl_->renderFrame(stage, out_width, out_height, dt);
 }
 
-}  // namespace fluent_stage
+}  // namespace fluent_scene

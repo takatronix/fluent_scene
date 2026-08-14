@@ -3,15 +3,15 @@
 // overrides inside a Transaction, every gesture arrives through the
 // Stage's pointer injection.
 
-#include "fluent_stage/ui.hpp"
+#include "fluent_scene/ui.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-#include "fluent_stage/stage.hpp"
-#include "fluent_stage/transaction.hpp"
+#include "fluent_scene/stage.hpp"
+#include "fluent_scene/transaction.hpp"
 
-namespace fluent_stage {
+namespace fluent_scene {
 namespace ui {
 
 namespace {
@@ -722,4 +722,4 @@ void Dropdown::remove() {
 }
 
 }  // namespace ui
-}  // namespace fluent_stage
+}  // namespace fluent_scene
