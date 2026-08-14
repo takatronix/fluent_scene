@@ -1,197 +1,747 @@
 <!doctype html>
 <html lang="ja">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LSDフィルタ 実装レポート — fluent_scene</title>
+<title>LSDシェーダーの科学</title>
+<meta name="description" content="LSDの視覚変容を神経科学から導き、fluent_sceneのlsdフィルタとして実装した技術レポート。">
+<meta property="og:title" content="LSDシェーダーの科学">
+<meta property="og:description" content="なぜサイケデリックな視覚はああ見えるのか — 分子から皮質、そしてシェーダーまで。">
 <style>
-  :root { --bg: #0b0812; --panel: #151022; --ink: #ded6ea; --dim: #9d92b4;
-          --acc: #b39ddb; --line: #2c2440; }
-  * { box-sizing: border-box; }
-  body { margin: 0; background:
-           radial-gradient(140% 100% at 50% 0%, #140e20 0%, var(--bg) 60%);
-         color: var(--ink); font: 15px/1.9 "Hiragino Sans", "Noto Sans JP",
-         system-ui, sans-serif; }
-  main { max-width: 860px; margin: 0 auto; padding: 48px 22px 80px; }
-  h1 { font-size: 28px; line-height: 1.4; letter-spacing: 0.02em; margin: 0 0 4px; }
-  h1 small { display: block; font-size: 13px; color: var(--dim); font-weight: normal; }
-  h2 { font-size: 20px; margin: 48px 0 12px; color: var(--acc);
-       border-bottom: 1px solid var(--line); padding-bottom: 8px; }
-  h3 { font-size: 16px; margin: 28px 0 8px; }
-  p { margin: 10px 0; }
-  a { color: var(--acc); }
-  .lead { color: var(--dim); font-size: 14px; }
-  .demo-link { display: inline-block; margin: 14px 0; padding: 10px 18px;
-               border: 1px solid var(--line); border-radius: 10px;
-               background: var(--panel); text-decoration: none; }
-  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 13.5px; }
-  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left;
-           vertical-align: top; }
-  th { background: var(--panel); color: var(--acc); font-weight: 600;
-       white-space: nowrap; }
-  td b { color: #fff; }
-  .scroll { overflow-x: auto; }
-  code { font-family: ui-monospace, monospace; font-size: 0.92em;
-         background: var(--panel); padding: 1px 6px; border-radius: 5px; }
-  blockquote { margin: 14px 0; padding: 10px 16px; border-left: 3px solid var(--acc);
-               background: var(--panel); border-radius: 0 8px 8px 0;
-               color: var(--dim); font-size: 14px; }
-  ol.refs { font-size: 13px; color: var(--dim); padding-left: 22px; }
-  ol.refs li { margin: 7px 0; }
-  .note { font-size: 13px; color: var(--dim); }
-  footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
-           font-size: 13px; color: var(--dim); display: flex; gap: 18px;
-           flex-wrap: wrap; }
+  :root {
+    --bg: #faf8fc;
+    --surface: #ffffff;
+    --ink: #241f2e;
+    --muted: #6d6580;
+    --line: #e2dcea;
+    --accent: #6d4fc4;
+    --accent-soft: #efe9fb;
+    --code-bg: #f3eff9;
+    --warn-bg: #fdf3ec;
+    --warn-ink: #8a4b1d;
+  }
+  :root:not([data-theme="light"]) { }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16121e;
+      --surface: #1e1929;
+      --ink: #e9e4f2;
+      --muted: #9c92b2;
+      --line: #362e47;
+      --accent: #a78bfa;
+      --accent-soft: #2a2140;
+      --code-bg: #251e35;
+      --warn-bg: #2e2117;
+      --warn-ink: #e0a875;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16121e;
+    --surface: #1e1929;
+    --ink: #e9e4f2;
+    --muted: #9c92b2;
+    --line: #362e47;
+    --accent: #a78bfa;
+    --accent-soft: #2a2140;
+    --code-bg: #251e35;
+    --warn-bg: #2e2117;
+    --warn-ink: #e0a875;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Hiragino Sans", "Noto Sans CJK JP", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+    line-height: 1.85;
+    font-size: 15.5px;
+  }
+  main { max-width: 46rem; margin: 0 auto; padding: 3.5rem 1.4rem 6rem; }
+  header.hero { margin-bottom: 3rem; }
+  .eyebrow {
+    font-size: 12px; letter-spacing: 0.18em; color: var(--accent);
+    text-transform: uppercase; font-weight: 600; margin-bottom: 1rem;
+  }
+  h1 {
+    font-size: 2.3rem; line-height: 1.3; margin: 0 0 1rem; font-weight: 800;
+    text-wrap: balance; letter-spacing: 0.01em;
+  }
+  .lede { font-size: 1.06rem; color: var(--muted); margin: 0; }
+  h2 {
+    font-size: 1.45rem; margin: 3.2rem 0 1rem; font-weight: 700;
+    text-wrap: balance; padding-top: 1.2rem; border-top: 1px solid var(--line);
+  }
+  h3 { font-size: 1.08rem; margin: 2rem 0 0.6rem; font-weight: 700; }
+  p { margin: 0 0 1rem; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.87em;
+    background: var(--code-bg); padding: 0.15em 0.4em; border-radius: 5px;
+  }
+  pre {
+    background: var(--code-bg); border-radius: 10px; padding: 0.9rem 1.1rem;
+    overflow-x: auto; font-size: 0.82rem; line-height: 1.6;
+  }
+  pre code { background: none; padding: 0; }
+  figure { margin: 2rem 0; }
+  figure svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+  figcaption {
+    font-size: 0.84rem; color: var(--muted); margin-top: 0.7rem;
+    line-height: 1.7; max-width: 40rem; margin-left: auto; margin-right: auto;
+  }
+  .fig-num { color: var(--accent); font-weight: 700; }
+  .panel {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 14px; padding: 1.4rem 1.5rem; margin: 1.6rem 0;
+  }
+  .canvas-row {
+    display: flex; gap: 18px; align-items: center; justify-content: center;
+    flex-wrap: wrap; margin: 0.6rem 0 0.9rem;
+  }
+  .canvas-col { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .canvas-col span { font-size: 0.78rem; color: var(--muted); letter-spacing: 0.06em; }
+  .canvas-col canvas { border-radius: 10px; background: #0d0a14; max-width: 100%; }
+  .mode-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .mode-row button {
+    font: 600 13px/1 inherit; font-family: inherit; color: var(--ink);
+    background: var(--surface); border: 1.5px solid var(--line);
+    border-radius: 999px; padding: 7px 16px; cursor: pointer;
+  }
+  .mode-row button:hover { border-color: var(--accent); }
+  .mode-row button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .mode-row button[aria-pressed="true"] {
+    background: var(--accent-soft); border-color: var(--accent); color: var(--accent);
+  }
+  .arrow-note {
+    text-align: center; font-size: 0.82rem; color: var(--muted); margin: 0 0 0.4rem;
+  }
+  table {
+    border-collapse: collapse; width: 100%; font-size: 0.86rem; line-height: 1.6;
+  }
+  .table-wrap { overflow-x: auto; margin: 1.4rem 0; }
+  th {
+    text-align: left; font-size: 0.76rem; letter-spacing: 0.08em; color: var(--muted);
+    border-bottom: 2px solid var(--line); padding: 0.5rem 0.8rem 0.4rem 0;
+    white-space: nowrap;
+  }
+  td { border-bottom: 1px solid var(--line); padding: 0.55rem 0.8rem 0.55rem 0; vertical-align: top; }
+  td:first-child { font-weight: 600; white-space: nowrap; }
+  .caution {
+    background: var(--warn-bg); color: var(--warn-ink); border-radius: 12px;
+    padding: 1rem 1.3rem; font-size: 0.9rem; margin: 2rem 0;
+  }
+  ol.refs { padding-left: 1.4rem; font-size: 0.88rem; }
+  ol.refs li { margin-bottom: 0.55rem; }
+  ul { padding-left: 1.3rem; }
+  li { margin-bottom: 0.35rem; }
+  .param-name { font-weight: 700; color: var(--accent); }
+  /* ---- hero stage ---- */
+  .stage-frame { margin: 1.8rem 0 1.2rem; }
+  .stage-frame canvas {
+    display: block; width: 100%; height: auto; aspect-ratio: 16 / 9;
+    border-radius: 14px; background: #0d0a14;
+    box-shadow: 0 18px 50px rgba(20, 10, 40, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+  .stage-frame figcaption { text-align: left; margin-left: 0; margin-right: 0; }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 1rem; }
+  .cta {
+    display: inline-block; text-decoration: none; font-size: 0.88rem; font-weight: 600;
+    padding: 0.55rem 1.05rem; border-radius: 999px;
+    border: 1.5px solid var(--line); color: var(--ink); background: var(--surface);
+  }
+  .cta:hover { border-color: var(--accent); color: var(--accent); }
+  .cta:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cta.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .cta.primary:hover { opacity: 0.9; color: #fff; }
+  .byline { font-size: 0.85rem; color: var(--muted); margin: 0; }
+  .intro h2.flush { margin-top: 0; border-top: none; padding-top: 0; font-size: 1.2rem; }
+  .intro { margin-top: 2.4rem; }
+
+  /* ---- the live engine, running behind the article ---- */
+  #bg { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0;
+        object-fit: cover; opacity: 0.24; filter: saturate(0.85);
+        pointer-events: none; }
+  body { position: relative; }
+  /* the article rides on its own sheet so the animation never fights the
+     text; it stays visible in the margins and faintly through the blur */
+  main { position: relative; z-index: 1;
+         background: color-mix(in srgb, var(--bg) 92%, transparent);
+         backdrop-filter: blur(9px);
+         border-radius: 20px; margin-top: 1.5rem; margin-bottom: 3rem;
+         box-shadow: 0 12px 60px rgba(0, 0, 0, 0.16); }
+  @supports not (backdrop-filter: blur(1px)) { main { background: var(--bg); } }
+  .stage-link { display: block; position: relative; text-decoration: none;
+                border-radius: 14px; }
+  .stage-link:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .play { position: absolute; inset: 0; margin: auto; width: max-content; height: max-content;
+          display: flex; align-items: center; gap: 9px; padding: 12px 22px 12px 18px;
+          border-radius: 999px; background: rgba(12, 8, 20, 0.5);
+          backdrop-filter: blur(6px); border: 1.5px solid rgba(255, 255, 255, 0.35);
+          color: #fff; font-size: 0.92rem; font-weight: 700; letter-spacing: 0.02em;
+          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35); transition: transform 0.18s ease; }
+  .stage-link:hover .play { transform: scale(1.05); background: rgba(12, 8, 20, 0.65); }
+  @media (prefers-reduced-motion: reduce) { .play { transition: none; } }
+  .engine-tag { display: inline-flex; align-items: center; gap: 7px;
+                font-size: 0.76rem; letter-spacing: 0.08em; font-weight: 700;
+                color: var(--accent); text-transform: uppercase; margin-bottom: 0.7rem; }
+  .engine-tag::before { content: ''; width: 8px; height: 8px; border-radius: 50%;
+                        background: var(--accent); animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+  @media (prefers-reduced-motion: reduce) { .engine-tag::before { animation: none; } }
 </style>
+</head>
+<body>
+<canvas id="bg" width="320" height="180" aria-hidden="true"></canvas>
+
+
 <main>
+<header class="hero">
+  <div class="eyebrow">fluent_scene technical report</div>
+  <h1>LSDシェーダーの科学</h1>
+  <p class="lede">LSDのトリップ映像は「なんとなくサイケな模様」ではなく、視覚系の配線から数学的に導ける現象です。fluent_sceneの新フィルタ <code>lsd</code> が、どの神経メカニズムをどの計算で再現しているかを解説します。</p>
 
-<h1>LSDフィルタ 実装レポート
-<small>セロトニン作動性の視覚現象学を、文献に載った機構ごとにシェーダーへ写す</small></h1>
+  <figure class="stage-frame">
+    <span class="engine-tag" id="engine-tag">starting engine…</span>
+  <a class="stage-link" href="lsd.html"><span class="play"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M8 5.5 L19 12 L8 18.5 Z" fill="currentColor"/></svg>ライブデモを開く</span>
+  <canvas id="hero" width="320" height="180" aria-label="LSDフィルタの幻覚生成部のライブ実行: 永遠に拡大するフラクタル場と原色のズレ"></canvas></a>
+    <figcaption>上はシェーダーの幻覚生成部(永遠ズームのフラクタル場+原色のズレ)を、このページ上で <strong>fluent_scene のエンジン本体(wasm)</strong> を動かして描いたものです。ロボット実機のVulkanと同じ <code>fs_lsd</code> のコードが、いまブラウザで走っています。実アプリではこれがWebカメラ映像に重なり、視線追従とフィードバック再帰が加わります。</figcaption>
+  </figure>
 
-<p class="lead">fluent_scene の <code>lsd</code> フィルタは「サイケデリック風」の
-見た目クリシェ集ではなく、LSD の視覚体験について神経科学の文献が記述する
-現象を段ごとに実装したものです。各段が「何の現象を」「どの機構の報告に
-基づいて」「どう描いているか」を、このレポートで対応づけます。</p>
+  <div class="cta-row">
+    <a class="cta" href="lsd_report.en.html">English</a>
+    <a class="cta primary" href="lsd.html" target="_blank" rel="noopener">デモを開く(要カメラ許可)</a>
+    <a class="cta" href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">GitHub: fluent_scene</a>
+    <a class="cta" href="https://x.com/takatronix" target="_blank" rel="noopener">作者 @takatronix</a>
+  </div>
+  <p class="byline">Created by <strong>takatronix</strong> — fluent_scene / fluent_vision 開発者。デモはGitHub Pagesから配信され、映像処理はすべてブラウザ内(wasm)で完結します。カメラ映像がサーバーに送られることはありません。</p>
+</header>
 
-<a class="demo-link" href="lsd.html" target="_blank">▶ デモを開く（Webカメラ・音なし・データはタブの外に出ません）</a>
+<section class="panel intro">
+  <h2 class="flush">fluent_scene とは</h2>
+  <p><strong>fluent_scene</strong> は C++17製の宣言的2Dシーン/映像エフェクトエンジンです。
+  売りは3つ — <strong>GPUで速い</strong>・<strong>書くのが簡単</strong>・
+  <strong>AIが安全に書ける</strong>。
+  <a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">github.com/takatronix/fluent_scene</a>
+  でOSS(MIT)として公開しています。</p>
+  <ul>
+    <li><strong>GPUで高速</strong> — Vulkan(実行時シェーダーコンパイルゼロ)と WebGPU で描画し、1080pで5.6ms/frame(CPU比~17倍)。GPUの無い環境ではCPUリファレンスが同じ絵をそのまま出します</li>
+    <li><strong>簡単</strong> — 画面はYAML数行の宣言、エフェクトはパラメータ1行。この記事の幻覚も、任意のレイヤーに <code>filters: [ { lsd: { trip: 0.8 } } ]</code> と書くだけで掛かります。実行時はパラメータを差し替えるだけで、UIコントロールもシーングラフの一部です</li>
+    <li><strong>AIが書ける</strong> — シーン文書は型検査・参照解決・digest・デザインリンターを<em>実行前に</em>全部通ります。AIが画面を生成・編集しても、壊れたフレームが表に出る経路が存在しない — これを契約にした設計です</li>
+    <li><strong>フィルタ本体は世界に1つだけ</strong> — YAMLが書くのは「どのフィルタを・どの強さで・どこに掛けるか」であって、数式ではありません。数式の本体は GLSL∩C++ の共通サブセットで<em>一度だけ</em>書かれた1関数(この記事なら <code>fs_lsd()</code>)で、CPUリファレンス・Vulkan・WebGPU(SPIR-V→WGSL自動変換)の3バックエンドが<strong>同一のコード</strong>を実行します。手作業の移植版は存在せず、ゴールデン画像テストが3者の出力一致を継続的に検証します</li>
+    <li><strong>情報量を安く買う</strong> — <code>lsd</code>の幾何が示す通り、1つの場を多段で切り、段ごとに前段で歪めるだけで、計算量をほぼ増やさずに複雑さが跳ね上がります</li>
+    <li><strong>どこでも動く</strong> — ロボット実機(Jetson/Vulkan)からブラウザ(wasm+WebGPU)、ヘッドレスCIまで。このページのデモはブラウザ内のwasmで完結し、映像はサーバーに送られません</li>
+  </ul>
+</section>
 
-<h2>0. 全体の設計原則</h2>
-<p>トリップの視覚には直線も直角も真円も現れない — 報告される幾何は常に
-有機的で、あらゆるスケールに同時に構造がある。そこで本フィルタの幻覚場は
-<b>構成的に非周期</b>です: 正弦波の壁紙や同心円をどこにも置かず、ドメイン
-ワープした value-noise の fBM を土台に、6 段のオクターブ梯子全体がスケール
-空間をすべり続ける「永久ズームフラクタル」(64×のスケール域を循環、各段は
-生成消滅時に新しい内容で再シード)として描きます。中心は固定 — 体験には
-常に中心があり、永遠の拡張はそこから放射する、という現象学の再現です。</p>
+<p>2026-08-15、fluent_sceneに31番目のフィルタ <code>lsd</code> を追加しました。カメラ映像に対して、LSD(リゼルグ酸ジエチルアミド)服用時に報告される視覚変容——うねり・呼吸・色彩増強・幾何学模様・残像——を、それぞれの発生機序に対応する計算ステージとして適用します。デモは <code>wasm/lsd.html</code>(ブラウザ完結・Webカメラ入力)と <code>stage_web</code> のフィルタ選択から動かせます。</p>
 
-<h2>1. 現象 → 機構 → 実装の対応表</h2>
-<div class="scroll">
+<h2>1. 何が見えるのか — 現象の分類</h2>
+<p>LSDの視覚効果は主観報告の集積によりかなり細かく分類されています(体系的なカタログとしてはPsychonautWiki <a href="https://psychonautwiki.org/wiki/Visual_effects_-_Psychedelics">Visual effects</a> が最も網羅的)。主要なものは:</p>
+<ul>
+  <li><strong>ドリフト(drifting)</strong> — テクスチャや輪郭がゆっくり波打ち、溶け、流れる。「壁が呼吸する」</li>
+  <li><strong>色彩増強(color enhancement)</strong> — 彩度・明度の主観的増強。赤はより赤く</li>
+  <li><strong>トレーサー/残像(tracers / palinopsia)</strong> — 動くものが尾を引く。連続的なブラーではなく<em>コマ送りの静止像の列</em>として残るのが特徴</li>
+  <li><strong>幾何学的幻覚(geometric hallucinations)</strong> — トンネル・螺旋・放射・格子。閉眼や暗所、平坦な面に出やすい</li>
+  <li><strong>色収差・虹彩(diffraction)</strong> — 高輝度部の縁に虹色のにじみ</li>
+  <li><strong>視力の主観的鋭敏化(acuity enhancement)</strong> — エッジがくっきり見える</li>
+</ul>
+
+<h2>2. なぜそう見えるのか — 分子から皮質まで</h2>
+
+<h3>2-0. そもそもなぜLSDは効くのか — 鍵と鍵穴、そして「蓋」</h3>
+<p>出発点は分子の形です。LSDの骨格の芯には<strong>インドール環</strong>(ベンゼン環とピロール環が縮合した二環)があり、これは脳内の伝達物質<strong>セロトニンの骨格そのもの</strong>です。つまりLSDは「セロトニンの形を含んだ、より大きく硬い分子」で、セロトニン受容体の結合ポケットに鍵のように嵌ります。</p>
+<p>2017年、Wackerらが<a href="https://www.cell.com/fulltext/S0092-8674(16)31749-4">LSDが結合したセロトニン受容体の結晶構造</a>を解きました [13]。決定的な発見は、受容体の細胞外ループ(EL2)がポケットの入口に<strong>「蓋」のように被さり、LSDを閉じ込める</strong>こと。この蓋のせいでLSDは受容体から<strong>異常に解離しにくく</strong>(数時間居座る)、トリップが8〜12時間続く理由がここにあります。蓋の可動性を上げる変異を入れると解離が速くなり、シグナル伝達の偏り(βアレスチン経路)も消えることまで確認されています。</p>
+<figure>
+<svg viewBox="0 0 680 300" role="img" aria-label="セロトニンは受容体ポケットに素早く出入りするが、LSDは同じインドール環で嵌った上に細胞外ループEL2の蓋が閉じるため数時間解離できない">
+  <defs>
+    <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="ar3v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b5cf6"/>
+    </marker>
+    <!-- the indole core: benzene fused to pyrrole, the shape both molecules share -->
+    <g id="indole">
+      <polygon points="14,0 7,12.1 -7,12.1 -14,0 -7,-12.1 7,-12.1"
+               fill="none" stroke="#8b5cf6" stroke-width="2.4"/>
+      <polygon points="7,-12.1 7,12.1 25,18 35,0 25,-18"
+               fill="none" stroke="#8b5cf6" stroke-width="2.4"/>
+    </g>
+  </defs>
+
+  <!-- ---- left: serotonin ---- -->
+  <g fill="none" stroke="currentColor" stroke-width="1.6">
+    <path d="M 60 100 L 60 200 Q 60 228 92 228 L 188 228 Q 220 228 220 200 L 220 100"/>
+    <path d="M 60 100 L 34 70"/>
+    <path d="M 220 100 L 246 70"/>
+  </g>
+  <g transform="translate(128 168)"><use href="#indole"/></g>
+  <g fill="none" stroke="currentColor" stroke-width="1.6">
+    <path d="M 100 58 L 118 92" marker-end="url(#ar3)"/>
+    <path d="M 178 92 L 196 58" marker-end="url(#ar3)"/>
+  </g>
+  <g font-size="12.5" fill="currentColor" text-anchor="middle">
+    <text x="140" y="30" font-weight="700">セロトニン (5-HT)</text>
+    <text x="140" y="52" opacity="0.65">蓋は開いたまま</text>
+    <text x="140" y="262" opacity="0.65">秒〜分で出入りする</text>
+    <text x="140" y="282" opacity="0.65">= 通常の信号伝達</text>
+  </g>
+
+  <!-- ---- right: LSD ---- -->
+  <g fill="none" stroke="currentColor" stroke-width="1.6">
+    <path d="M 420 100 L 420 200 Q 420 228 452 228 L 548 228 Q 580 228 580 200 L 580 100"/>
+  </g>
+  <!-- EL2 lid, closed -->
+  <g fill="none" stroke="#8b5cf6" stroke-width="3">
+    <path d="M 420 100 Q 470 122 500 120"/>
+    <path d="M 580 100 Q 530 122 500 120"/>
+  </g>
+  <!-- LSD: the same indole core inside a bigger rigid scaffold + tail -->
+  <g transform="translate(482 176) scale(0.86)"><use href="#indole"/></g>
+  <g fill="none" stroke="currentColor" stroke-width="1.6" opacity="0.75">
+    <path d="M 448 150 Q 470 138 500 142 Q 534 147 540 170 Q 546 196 520 206
+             Q 492 216 468 204 Q 444 192 448 150 z"/>
+    <path d="M 540 170 L 560 162 M 560 162 L 572 152 M 560 162 L 572 174"/>
+  </g>
+  <!-- blocked escape -->
+  <path d="M 500 152 L 500 128" stroke="#8b5cf6" stroke-width="2"
+        stroke-dasharray="5 4" fill="none" marker-end="url(#ar3v)"/>
+  <g font-size="12.5" fill="currentColor" text-anchor="middle">
+    <text x="500" y="30" font-weight="700">LSD</text>
+    <text x="500" y="52" fill="#8b5cf6">EL2 の蓋が閉じる</text>
+    <text x="500" y="262" opacity="0.65">解離に数時間かかる</text>
+    <text x="500" y="282" opacity="0.65">= 8〜12時間の作用</text>
+  </g>
+  <g font-size="11.5" fill="currentColor" opacity="0.65">
+    <text x="596" y="152">ジエチルアミド</text>
+    <text x="340" y="180" text-anchor="middle" font-size="20" opacity="0.35">→</text>
+  </g>
+  <text x="340" y="205" font-size="11.5" fill="#8b5cf6" text-anchor="middle">同じインドール環</text>
+</svg>
+<figcaption><span class="fig-num">図1</span> — 紫がインドール環で、セロトニンとLSDが共有する骨格。これが「鍵」として受容体ポケットに嵌る。違いは出口側で、LSDでは細胞外ループEL2が蓋のように閉じて分子を閉じ込めるため解離が極端に遅く、作用が8〜12時間続く(Wacker et al. 2017)。</figcaption>
+</figure>
+
+<p>まとめると: <strong>インドール環の形状一致で5-HT2A受容体に嵌り、EL2の蓋で長時間ロックされ、皮質の興奮バランスを持続的に崩す</strong>——これが以降のすべての視覚現象の分子的な起点です。</p>
+
+<h3>2-1. 5-HT2A受容体 → 皮質ゲインの上昇とゲーティングの崩れ</h3>
+<p>LSDの主作用はセロトニン5-HT2A受容体の作動です。これが皮質錐体細胞の興奮性を引き上げ、同時に視覚野のアルファ律動(入力を「間引く」ゲート役)を減衰させます [4][6]。さらにfMRI研究では視床—皮質間の結合が増強し、視床による感覚フィルタリングが弛むことが視覚性幻覚の強度と相関することが示されています [5]。要するに<strong>「入力のゲインが上がり、選別が甘くなる」</strong>——色が濃く、エッジが鋭く、些細なパターンが意味ありげに見える状態です。</p>
+
+<figure>
+<svg viewBox="0 0 680 190" role="img" aria-label="網膜から視床、V1、高次視覚野への経路。LSDは視床のゲートを弛め、V1の興奮抑制バランスを崩し、高次からの予測信号を過剰にする">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <g fill="none" stroke="currentColor" stroke-width="1.4">
+    <rect x="14" y="60" width="104" height="46" rx="10"/>
+    <rect x="180" y="60" width="124" height="46" rx="10"/>
+    <rect x="366" y="60" width="104" height="46" rx="10"/>
+    <rect x="532" y="60" width="134" height="46" rx="10"/>
+    <line x1="118" y1="83" x2="176" y2="83" marker-end="url(#ar)"/>
+    <line x1="304" y1="83" x2="362" y2="83" marker-end="url(#ar)"/>
+    <line x1="470" y1="76" x2="528" y2="76" marker-end="url(#ar)"/>
+    <line x1="528" y1="92" x2="470" y2="92" marker-end="url(#ar)" stroke="#8b5cf6" stroke-width="2"/>
+  </g>
+  <g font-size="13" fill="currentColor" text-anchor="middle" font-weight="600">
+    <text x="66" y="88">網膜</text>
+    <text x="242" y="88">視床 (LGN)</text>
+    <text x="418" y="88">V1</text>
+    <text x="599" y="88">高次視覚野</text>
+  </g>
+  <g font-size="11" fill="currentColor" opacity="0.65" text-anchor="middle">
+    <text x="147" y="72">入力</text>
+    <text x="499" y="66">特徴</text>
+    <text x="499" y="112" fill="#8b5cf6" opacity="1">予測(prior)が過剰に</text>
+    <text x="242" y="130">ゲート弛緩:</text>
+    <text x="242" y="146">未選別の入力が通過 [5]</text>
+    <text x="418" y="130">E/Iバランス崩れ:</text>
+    <text x="418" y="146">縞パターンが自己組織化 [2][3]</text>
+    <text x="66" y="130">瞳孔散大:</text>
+    <text x="66" y="146">回折で虹のにじみ</text>
+    <text x="340" y="30">5-HT2A作動 → 皮質ゲイン↑・アルファ律動↓ [4][6]</text>
+  </g>
+</svg>
+<figcaption><span class="fig-num">図1</span> — 視覚経路とLSDの作用点。下向きの紫矢印(高次→V1)が鍵で、外界からの証拠より脳内の予測が優勢になり、入力が乏しい場所を脳が「描き足す」。</figcaption>
+</figure>
+
+<h3>2-2. 幾何学模様の正体 — V1の自己組織化と対数写像、そしてフラクタル</h3>
+<p>幾何学的幻覚は1926年にKlüverがメスカリン研究で4類型に整理しました(<strong>form constants</strong>: トンネル/漏斗・螺旋・格子・蜘蛛の巣)[1]。なぜ誰が体験しても同じ図形になるのか——1979年、ErmentroutとCowanが美しい説明を与えます [2]。</p>
+<p>第一次視覚野(V1)のニューロンは「近くを興奮させ、少し遠くを抑制する」側方結合を持ちます。薬物で興奮が底上げされてこのバランスが崩れると、皮質シート上に<strong>活動パターンが自発的に立ち上がります</strong>(化学反応のTuringパターンと同族の分岐現象)。ここで効いてくるのが、網膜からV1への投射が近似的に<strong>複素対数写像</strong> <code>(x,y) → (log r, θ)</code> になっているという解剖学的事実です。皮質上の平行な縞を逆写像で「見え」に戻すと:</p>
+<ul>
+  <li>縞が <code>log r</code> 軸に垂直 → <strong>同心円 = トンネル</strong></li>
+  <li>縞が <code>θ</code> 軸に垂直 → <strong>放射状 = 漏斗・光条</strong></li>
+  <li>斜めの縞 → <strong>対数螺旋</strong></li>
+  <li>2方向の縞の重なり → <strong>格子・市松</strong></li>
+</ul>
+<p>ただし単一の平面波(=規則正しい1枚の縞)では、体験者が語る<strong>「大小さまざまな塊がフラクタルに入れ子になって流れてくる」</strong>質感は出ません。ここには2つの科学的根拠があります:</p>
+<ul>
+  <li><strong>格子プランフォーム</strong> — Bressloffらの拡張理論 [3] は、V1の方位選択性コラム間の異方的な側方結合(shift-twist対称性)まで含めると、安定解が単独の縞ではなく<strong>菱形・六方格子上のパターン</strong>(honeycomb・cobweb・filigree)になることを示しました。Klüverの「格子」「蜘蛛の巣」類型はここから出ます。</li>
+  <li><strong>フラクタル次元の増大</strong> — Varleyら [10] はLSD・シロシビン下のfMRIで、皮質活動のフラクタル次元が<strong>空間・時間の両ドメインで増大</strong>することを実測しました。臨界に近づいた系はスケールフリー——特定の「支配的な波長」が消え、<strong>あらゆるスケールの構造が同時に立つ</strong>のです。</li>
+</ul>
+<p>ただし理論の「格子解」をそのまま三角関数で描くと、規則正しすぎて嘘になります。体験報告に共通するのは<strong>「直線・直角・真円が存在しない」</strong>こと、そして<strong>「3Dの中を飛んでいて、すべてが永遠に拡大し続ける」</strong>感覚です。そこでシェーダーの幾何場は周期関数を一切使わず、次の構成にしました:</p>
+<ul>
+  <li><strong>永遠の拡大(eternal zoom)</strong> — スケールが2倍ずつ違う3枚の深度シェルをハン窓でクロスフェード。飛行が進むと手前のシェルは窓の外へ膨張して消え、新しい遠景シェルが湧く。整数の「飛行インデックス」で毎回内容を取り替えるため、<strong>拡大は終わらず、二度と繰り返しません</strong></li>
+  <li><strong>自然な微細ディテール</strong> — 各シェルは高周波寄りの4オクターブ値ノイズをドメインワープしたもの。大きな流れの縁に、より細かい房状の構造がどこまでもぶら下がる——自然物の細かさ(海岸線・雲・地衣類)と同じ統計です</li>
+  <li><strong>奥行きの手がかり</strong> — 手前のシェルほど明るく、max合成で「手前が奥を遮る」。各シェルが黄金角で離れた固有の色相を持つため、<strong>奥行きが色でも分離</strong>して見えます</li>
+</ul>
+<p>Klüverの類型は描かれた図形としてではなく、<strong>多スケール性・流動・中心偏重という統計</strong>として生き残ります。フィードバック(後述)の吸い込みと合わせると、画面全体が奥から湧いて迫ってくる飛行感になります。</p>
+<p>下のデモで基本原理を確かめられます。左が皮質シート上のパターン、右がそれを網膜座標に逆写像した「見え」です。「入れ子格子」がシェーダーの多オクターブ構成に対応します:</p>
+
+<div class="panel">
+  <p class="arrow-note">皮質の縞 &nbsp;──&nbsp; 逆写像 <code>r = e^u, θ = v</code> &nbsp;──&gt;&nbsp; 知覚される図形</p>
+  <div class="canvas-row">
+    <div class="canvas-col">
+      <canvas id="cortex" width="240" height="200" aria-label="V1皮質シート上の平面波パターン"></canvas>
+      <span>V1皮質シート (u = log r, v = θ)</span>
+    </div>
+    <div class="canvas-col">
+      <canvas id="retina" width="220" height="220" aria-label="網膜座標に逆写像した知覚像"></canvas>
+      <span>知覚される像 (網膜座標)</span>
+    </div>
+  </div>
+  <div class="mode-row" role="group" aria-label="縞の向きを選択">
+    <button data-mode="tunnel" aria-pressed="true">トンネル</button>
+    <button data-mode="funnel" aria-pressed="false">放射</button>
+    <button data-mode="spiral" aria-pressed="false">螺旋</button>
+    <button data-mode="lattice" aria-pressed="false">格子</button>
+    <button data-mode="fractal" aria-pressed="false">入れ子格子</button>
+  </div>
+  <figcaption style="margin-top:0.9rem"><span class="fig-num">図2</span> — Ermentrout–Cowan理論のライブ実演。皮質上では単純な波の重なりなのに、対数写像を通すとKlüverの類型が現れる。「入れ子格子」は周波数を倍々にした3オクターブの重ね合わせで、自己相似(どのスケールにも同じ構造)がフラクタル幻覚の核であることを示す。シェーダーの<code>geometry</code>ステージはこの多オクターブ版を、輝度の弱い領域に「塊」として重畳している。</figcaption>
+</div>
+
+<h3>2-3. 残像とトレーサー — モーションストリーク抑制の破綻と「再帰」</h3>
+<p>通常、脳は動体が網膜に残す「ブレ跡」を能動的に消しています(motion streak suppression)。LSDはこの抑制回路を動作範囲外に追いやり、消されるはずの過去フレームが知覚に残り続けると考えられています [7]。重要なのは報告の質感で、滑らかなブラーではなく<strong>離散的な静止像の連なり</strong>(ストロボ的なコマ)として尾を引きます。</p>
+<p>これは計算としては<strong>フィードバック(出力の再入力)</strong>です。1パスのシェーダーには前フレームの記憶がないため、デモでは描画結果を毎フレーム取り出し、わずかに拡大・回転・減衰させて次フレームの入力に合成しています。この再帰が、トレーサーだけでなく<strong>トンネルの奥行きが無限に増殖するフラクタル感</strong>も生みます——ビデオフィードバック(カメラでモニタを撮る)と同じ力学です。</p>
+
+<figure>
+<svg viewBox="0 0 680 210" role="img" aria-label="カメラ入力と前フレーム出力を合成し、fs_lsdフィルタを通して画面に出す。出力は縮小回転減衰されて合成段に戻る">
+  <defs>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <g fill="none" stroke="currentColor" stroke-width="1.4">
+    <rect x="14" y="40" width="120" height="46" rx="10"/>
+    <rect x="200" y="40" width="90" height="46" rx="23"/>
+    <rect x="356" y="40" width="130" height="46" rx="10"/>
+    <rect x="552" y="40" width="114" height="46" rx="10"/>
+    <rect x="286" y="140" width="220" height="44" rx="10" stroke="#8b5cf6" stroke-width="2"/>
+    <line x1="134" y1="63" x2="196" y2="63" marker-end="url(#ar2)"/>
+    <line x1="290" y1="63" x2="352" y2="63" marker-end="url(#ar2)"/>
+    <line x1="486" y1="63" x2="548" y2="63" marker-end="url(#ar2)"/>
+    <path d="M 609 86 L 609 162 L 510 162" marker-end="url(#ar2)" stroke="#8b5cf6" stroke-width="2"/>
+    <path d="M 286 162 L 245 162 L 245 90" marker-end="url(#ar2)" stroke="#8b5cf6" stroke-width="2"/>
+  </g>
+  <g font-size="13" fill="currentColor" text-anchor="middle" font-weight="600">
+    <text x="74" y="68">カメラ入力</text>
+    <text x="245" y="68">合成 ⊕</text>
+    <text x="421" y="68">fs_lsd フィルタ</text>
+    <text x="609" y="68">画面出力</text>
+    <text x="396" y="167" fill="#8b5cf6">縮小・回転・減衰 (warp)</text>
+  </g>
+  <g font-size="11" fill="currentColor" opacity="0.65" text-anchor="middle">
+    <text x="165" y="52">新しい網膜像</text>
+    <text x="321" y="52">歪み+色+幾何</text>
+    <text x="583" y="130">前フレーム</text>
+    <text x="150" y="200">合成モード2種: なめらか(加重平均) / 発光残像(max合成 = 離散的なコマ残り [7])</text>
+  </g>
+</svg>
+<figcaption><span class="fig-num">図3</span> — <code>wasm/lsd.html</code> のフィードバックループ。紫の経路が「入力の再帰」で、トレーサー・パリノプシア・再帰的トンネルはすべてここから生まれる。減衰係数(残像スライダー)が抑制回路の効き具合に対応する。</figcaption>
+</figure>
+
+<h3>2-4. なぜ同じ映像は二度と現れないのか — 非定常性</h3>
+<p>LSD体験のもう一つの署名は<strong>非定常性</strong>です。映像は静止した「エフェクト」ではなく常に変容し続け、同じ状態は二度と戻りません。切り替わりも一様ではなく、<strong>気づいたら変わっていた・ゆっくり滲むように変わった・パッと切り替わった</strong>——の全てが起こります。これも実測と整合します:</p>
+<ul>
+  <li>シロシビン下の脳は通常時より<strong>広い動的状態レパートリー</strong>を遍歴します(Tagliazucchiら [11])。LSD下ではコネクトーム・ハーモニクス(脳活動の固有モード)の使われ方が拡張し、状態軌道が反復しなくなります(Atasoyら [12])。</li>
+  <li>Varleyら [10] の<strong>時間方向のフラクタル次元増大</strong>は、変動が特定の時間スケールを持たない(スケールフリー)ことを意味します。べき則的な変動には「ゆっくりの漂い」と「突然の転移」が<strong>同じ分布の裾と胴</strong>として共存します——「パッと/ゆっくり」の両方が起こるのは偶然ではありません。</li>
+</ul>
+<p>デモではこれを「<strong>トリップ導体</strong>」として実装しました。全パラメータがスライダー値を基線に彷徨い続けます: ①各パラメータに非通約な周波数の微揺らぎ(気づかぬ変化)、②ポアソン到着(平均約20秒)のメタ安定ジャンプ。ジャンプの遷移時間は<strong>0.25〜20秒の対数一様分布</strong>(重い裾)から引くため、あるときは一瞬で、あるときは1分近くかけて別の様相へ滑ります。さらにフィードバックループ自体が非線形再帰なので、初期条件に鋭敏——<strong>厳密に同じフレームは二度と生成されません</strong>。</p>
+
+<h2>3. 現象 → 機構 → 実装の対応表</h2>
+<div class="table-wrap">
 <table>
-<tr><th>現象（体験の言葉）</th><th>機構（文献）</th><th>実装（シェーダー段 / パラメータ）</th></tr>
-<tr>
-<td><b>ドリフト・呼吸</b> — 壁や質感がゆっくり波打ち「息をする」</td>
-<td>5-HT2A 作動が皮質ゲインを上げ、視覚野の α 波ゲーティングを抑制。
-α 抑制の強さは単純幻視の強度と相関 [4]</td>
-<td>1 周期未満の放射呼吸波 + ノイズ場をレンズにした変位
-（<code>drift</code>）。変位は中心でゼロ — 画面全体が平行移動せず「揺らぐ」</td>
-</tr>
-<tr>
-<td><b>色フリンジ</b> — 明るいエッジに虹の縁取り</td>
-<td>散瞳（瞳孔拡大）による軸外収差の増大</td>
-<td>周辺ほど強い放射方向の R/B 分離（<code>chroma</code>）</td>
-</tr>
-<tr>
-<td><b>鋭敏化・色の氾濫</b> — 細部が刺さり、彩度が上がる</td>
-<td>視床のゲーティング低下 = フィルタされない感覚駆動が皮質へ [5]</td>
-<td>アンシャープ + 彩度リフト + ゆっくりした色相の「呼吸」（<code>trip</code>）</td>
-</tr>
-<tr>
-<td><b>幾何幻覚</b> — 格子・トンネル・らせん（form constants）</td>
-<td>Klüver の form constants [1]。V1 の興奮/抑制不安定性が自発的に
-パターンを自己組織化 [2][3]。LSD は皮質活動のフラクタル次元を上げる [8]</td>
-<td>永久ズーム fBM の多スケール塊抽出（<code>geometry</code>、符号で
-有機⇔デジタル）。Klüver の類型は「描いた図形」ではなく統計
-（多スケール・流動・中心密）として現れる</td>
-</tr>
-<tr>
-<td><b>純色</b> — 赤・緑・青・黄・シアンは出るが紫がほぼ出ない</td>
-<td>（現象報告からの設計）原色の空間的な錯位として解釈</td>
-<td>粗い段のみ R が前方・B が後方に読む「プリズム錯位」。
-重なりは黄/シアン/白を作り、G 抜きの R+B（紫）はほぼ生じない</td>
-</tr>
-<tr>
-<td><b>非定常性</b> — 同じ絵は二度と来ない。変化は「パッ」とも、
-気づかないほどゆっくりとも起こる</td>
-<td>脳の動的状態レパートリーが拡張 [6][7]、時間ゆらぎがスケールフリー化 [8]</td>
-<td>デモ側の「指揮者」: 各パラメータが基準値の周りを微揺動しつつ、
-ポアソン到着の転移（遷移時間は 0.25–20 s の対数一様）で準安定状態を渡り歩く</td>
-</tr>
-<tr>
-<td><b>パリノプシア・トレーサー</b> — 動くものが残像の列を引く</td>
-<td>視覚的残効の持続（HPPD 研究などで記述される陽性残像）</td>
-<td>フレーム間フィードバック（デモ側）: 前フレームの<b>出力</b>を減衰・
-微ズーム・微回転して再入力。<code>lighten</code> は離散残像、
-<code>source-over</code> は滑らかなスメア。幻覚した幾何も再帰する —
-トンネルが咲くのはこのループ</td>
-</tr>
-<tr>
-<td><b>視線との結合</b> — 見つめた場所が深くなる</td>
-<td>（体験報告からの設計）注視点周りで幻覚が組織化する</td>
-<td>MediaPipe 虹彩ランドマークによる視線推定。フィードバック渦の
-中心が視線に追従し、カメラとのアイコンタクトで <code>trip</code> が深まる</td>
-</tr>
-<tr>
-<td><b>閉眼幻視（CEV）</b> — 目を閉じると幻覚が一段強くなる</td>
-<td>網膜入力が絶たれ、内因性活動が視覚野を支配する。Klüver の form
-constants はもともと閉眼・暗所での観察が中心 [1]</td>
-<td>目を閉じ続ける（まばたきではなく 0.35 s 以上）と検出し、
-カメラ入力を漸暗 → 幾何の駆動源が「弱い網膜駆動」側へ倒れて
-幻覚場が支配。<code>geometry</code>/<code>trip</code>/<code>chroma</code>/
-残像持続が同時に立ち上がり、目を開けると現実へ戻る</td>
-</tr>
+  <tr><th>現象</th><th>神経機構</th><th>シェーダーでの実装</th><th>パラメータ</th></tr>
+  <tr><td>ドリフト・呼吸</td><td>ゲイン上昇+予測優勢で輪郭の位置推定が揺らぐ [4][6]</td><td>低周波の放射波+2つの非通約な進行正弦波でサンプリング座標をワープ</td><td><code>drift</code></td></tr>
+  <tr><td>色彩増強</td><td>視床ゲート弛緩による未選別入力 [5]</td><td>彩度+コントラスト持ち上げ+ゆっくりした色相回転(色の呼吸)</td><td><code>trip</code></td></tr>
+  <tr><td>鋭敏化</td><td>同上(エッジ応答の増幅)</td><td>4タップのアンシャープマスク</td><td><code>trip</code></td></tr>
+  <tr><td>虹のにじみ</td><td>瞳孔散大による回折</td><td>半径方向のRGB分離(周辺ほど強く)</td><td><code>chroma</code></td></tr>
+  <tr><td>幾何学模様(3D飛行)</td><td>V1自己組織化 [1][2][3] + フラクタル次元増大 [10]。中心があり、微細で、永遠に拡大する</td><td>深度シェル3枚の永遠ズーム(ハン窓クロスフェード+飛行インデックスで内容更新)。塊は高周波寄り4オクターブのワープ値ノイズ(縁に房状の微細構造)、手前ほど明るくmax合成、シェル固有色相で奥行きを色分離</td><td><code>geometry</code></td></tr>
+  <tr><td>トレーサー・残像</td><td>モーションストリーク抑制の破綻 [7]</td><td>出力→入力のフィードバック(減衰+微小ズーム・回転)。max合成で離散的なコマ残りを再現</td><td>残像/吸い込み/渦</td></tr>
+  <tr><td>絶え間ない変容</td><td>動的状態レパートリー拡大 [11][12]・スケールフリー変動 [10]</td><td>トリップ導体: 微揺らぎ+ポアソン到着のメタ安定ジャンプ(遷移時間0.25〜20秒の対数一様)</td><td>自動変容/深度</td></tr>
 </table>
 </div>
 
-<h2>2. なぜ「情報密度」なのか</h2>
-<p>初期実装は丸い塊のノイズで、ラバランプのように見えました。トリップの
-幾何がそう見えない理由は<b>情報密度</b>にあります: どのスケールを見ても
-新しい構造があり（フラクタル次元の上昇 [8]）、輪郭は尖り、折れ、
-決してバブル状に丸まらない。現在の実装は ridged 折り返しと永久ズーム梯子で
-これを描きます — 近づいても構造が尽きず、飛行は終わらず、繰り返しません。</p>
+<h2>4. パラメータで遊ぶ</h2>
+<p>デモは <a href="https://aspa1.tail46fb1c.ts.net/lsd.html">https://aspa1.tail46fb1c.ts.net/lsd.html</a>(Tailscale Funnel経由のhttpsなのでどこからでもカメラ許可が通ります)。映像は全画面表示で、操作は右上の <strong>⚙</strong> で開くドロワーに収納。<strong>⛶</strong> またはダブルタップで全画面、スマホは最初のタップで自動的に全画面へ入ります。「薬理」群がフィルタ本体、「再帰」群がフィードバック、「変容」群がトリップ導体です。</p>
+<ul>
+  <li><span class="param-name">トリップ</span> — マスターゲイン。0で素通し、1.5で全ステージ最大。「用量」に相当</li>
+  <li><span class="param-name">ドリフト</span> — うねり・呼吸の振幅。3まで上げると壁が溶ける</li>
+  <li><span class="param-name">幾何幻覚</span> — form constantsの重畳強度。暗い場所・平坦な面ほど出る(実際の報告と同じ)</li>
+  <li><span class="param-name">色収差</span> — 虹のにじみ幅</li>
+  <li><span class="param-name">残像</span> — フィードバック減衰。0.9超で過去が消えなくなる</li>
+  <li><span class="param-name">吸い込み</span> — 再帰時のズーム。正で奥へ吸い込まれ、負で湧き出す</li>
+  <li><span class="param-name">渦</span> — 再帰時の回転。残像と組むと対数螺旋が自然発生</li>
+  <li><span class="param-name">自動変容 / 深度</span> — トリップ導体のON/OFFと振れ幅。ONの間、全パラメータはスライダー値を基線に彷徨い続け、二度と同じ映像になりません。ステータス行に「滞留/転移中(パッ・ゆっくり)」の状態が出ます</li>
+</ul>
+<h3>おすすめレシピ</h3>
+<ul>
+  <li><strong>閉眼幾何</strong>: カメラを手で塞ぎ、幾何幻覚1.2・トリップ1.0 — 入力が消えると内因性パターンだけが残る(暗所で模様が見える現象の再現)</li>
+  <li><strong>ストロボ残像</strong>: トレイル「発光残像」・残像0.85で手を振る — 論文[7]の言う離散的トレイル</li>
+  <li><strong>無限トンネル</strong>: 残像0.9・吸い込み0.3・渦0.2 — ビデオフィードバック力学</li>
+  <li><strong>低用量</strong>: トリップ0.3・幾何0 — 色が少し濃く、輪郭が少し揺れるだけ。閾値用量の記述に近い</li>
+</ul>
 
-<h2>3. 実装上の制約（正直な注記）</h2>
-<p><code>time</code> はホストが毎フレーム渡す秒数で、既定 0 では静止 —
-だから golden テスト可能です（CPU / Vulkan / WebGPU の3バックエンドが
-同一出力であることをピクセル比較で保証）。フレーム間フィードバック
-（トレーサー・再帰トンネル）は単一パスのフィルタ本体には持てないため、
-デモページ側でループを閉じています。つまり <code>lsd</code> フィルタ単体は
-「その瞬間の幻覚」、デモは「時間の中の幻覚」です。</p>
+<h2>5. 実装メモ</h2>
+<p>フィルタ本体は <code>include/fluent_scene/shared/filters_shared.h</code> の <code>fs_lsd()</code> 1関数(GLSL∩C++単一ソース)で、CPU・Vulkan・WebGPU(naga経由WGSL)の3バックエンドで同一コードが走ります。ゴールデンテストでCPU↔GPU差は max_diff=4/255。時間は <code>time</code> スロットをホストが毎フレーム駆動する方式(<code>fx::Ripple</code> と同じ)で、<code>time=0</code> なら静止し決定論的にテストできます。フィードバックはフィルタパイプラインの外(デモ側)で閉じており、コアのレンダラは無改造です。</p>
+<pre><code>// 幾何ステージの核心部(fs_lsd抜粋): 永遠に拡大する深度シェル
+float zp = t * 0.3;                        // 飛行速度(オクターブ/秒)
+float zf = zp - floor(zp);
+for (int i = 0; i &lt; 3; ++i) {
+    float e  = float(i) - zf;              // 深度指数(手前ほど小さい)
+    float sc = exp2(e);                    // 縮む → 画面上では膨張
+    float m  = float(i) + floor(zp);       // このシェルの飛行インデックス
+    vec2  off = hash(m);                   // シェルごとに新しい内容
+    float w  = 0.5 - 0.5*cos(2.094*(e+1)); // ハン窓: 湧いて→育って→消える
+    vec2 pl = pc * 3.0 * sc + warp * 2.2 * sc + off;
+    float nv = vnoise(pl) * 0.38 + vnoise(pl * 2.1) * 0.27   // 高周波寄りの
+             + vnoise(pl * 4.4) * 0.2 + vnoise(pl * 8.9) * 0.15;  // 微細構造
+    float near_f = smoothstep(2.0, -1.0, e);
+    float clv = smoothstep(0.52, 0.72, nv) * w * (0.5 + 0.5*near_f);
+    mass_ph = clv &gt; mass ? m*2.39996 + ... : mass_ph;  // シェル固有の色相
+    mass = max(mass, clv);                 // 手前が奥を遮る = 3D
+}</code></pre>
 
-<blockquote>フィルタ本体は GLSL∩C++ の単一ソース
-（<code>filters_shared.h</code>）で、CPU は C++ として、Vulkan は
-GLSL→SPIR-V として、WebGPU は SPIR-V→WGSL 機械変換として同じ数式を
-実行します。手書き移植はありません。</blockquote>
-
-<h2>4. これは何ではないか</h2>
-<p>本フィルタは薬物使用を推奨するものではなく、文献に記述された視覚現象の
-計算論的な再現・可視化です。また「LSD の見え方の完全な再現」でもありません —
-意味的な変容（顔貌の変化、パレイドリア、意味の過剰付与）はテクスチャ
-フィルタの守備範囲外です。</p>
+<div class="caution">この実装は視覚現象の計算論的な近似であり、薬物体験の完全な再現でも、薬物使用の推奨でもありません。点滅・渦巻きパターンは光感受性の方には刺激が強い場合があります。パラメータは控えめな値から試してください。</div>
 
 <h2>参考文献</h2>
 <ol class="refs">
-<li>[1] Klüver, H. <i>Mescal and Mechanisms of Hallucinations.</i>
-University of Chicago Press (1926/1966). — form constants（格子・蜘蛛の巣・
-トンネル・らせん）の分類。</li>
-<li>[2] Ermentrout, G.B. &amp; Cowan, J.D. "A mathematical theory of visual
-hallucination patterns." <i>Biological Cybernetics</i> 34 (1979). —
-V1 の興奮/抑制ネットワークの不安定性としての幾何幻覚。</li>
-<li>[3] Bressloff, P.C., Cowan, J.D., Golubitsky, M., Thomas, P.J. &amp;
-Wiener, M.C. "Geometric visual hallucinations, Euclidean symmetry and the
-functional architecture of striate cortex." <i>Phil. Trans. R. Soc. B</i>
-356 (2001). — 皮質–網膜写像と対称性破れによる form constants の導出。</li>
-<li>[4] Carhart-Harris, R.L. et al. "Neural correlates of the LSD experience
-revealed by multimodal neuroimaging." <i>PNAS</i> 113(17) (2016). —
-視覚野 α 波の減少が幻視強度と相関、V1 の機能結合拡大。</li>
-<li>[5] Preller, K.H. et al. "Changes in global and thalamic brain
-connectivity in LSD-induced altered states of consciousness are attributable
-to the 5-HT2A receptor." <i>eLife</i> 7:e35082 (2018). — 視床–皮質
-ゲーティングの変化。</li>
-<li>[6] Tagliazucchi, E. et al. "Enhanced repertoire of brain dynamical
-states during the psychedelic experience." <i>Human Brain Mapping</i> 35(11)
-(2014). — 動的状態レパートリーの拡張。</li>
-<li>[7] Atasoy, S. et al. "Connectome-harmonic decomposition of human brain
-activity reveals dynamical repertoire re-organization under LSD."
-<i>Scientific Reports</i> 7:17661 (2017). — 状態遷移統計の再編。</li>
-<li>[8] Varley, T.F. et al. "Serotonergic psychedelics LSD &amp; psilocybin
-increase the fractal dimension of cortical brain activity in spatial and
-temporal domains." <i>NeuroImage</i> 220:117049 (2020). — 皮質活動の
-フラクタル次元上昇。</li>
+  <li>Klüver, H. (1966). <em>Mescal and Mechanisms of Hallucinations.</em> University of Chicago Press.(form constantsの原典、初出1926)</li>
+  <li>Ermentrout, G. B. &amp; Cowan, J. D. (1979). A mathematical theory of visual hallucination patterns. <em>Biological Cybernetics</em>, 34, 137–150.</li>
+  <li>Bressloff, P. C., Cowan, J. D., Golubitsky, M., et al. (2001). <a href="https://pubmed.ncbi.nlm.nih.gov/11860679/">What geometric visual hallucinations tell us about the visual cortex.</a> <em>Neural Computation</em>, 14(3), 473–491.</li>
+  <li>Carhart-Harris, R. L., et al. (2016). <a href="https://www.pnas.org/doi/10.1073/pnas.1518377113">Neural correlates of the LSD experience revealed by multimodal neuroimaging.</a> <em>PNAS</em>, 113(17), 4853–4858.</li>
+  <li>Müller, F., et al. (2017). <a href="https://www.researchgate.net/publication/319966851_Increased_thalamic_resting-state_connectivity_as_a_core_driver_of_LSD-induced_hallucinations">Increased thalamic resting-state connectivity as a core driver of LSD-induced hallucinations.</a> <em>Acta Psychiatrica Scandinavica</em>, 136(6), 648–657.</li>
+  <li>Kometer, M. &amp; Vollenweider, F. X. (2016). <a href="https://pubmed.ncbi.nlm.nih.gov/27900674/">Serotonergic hallucinogen-induced visual perceptual alterations.</a> <em>Current Topics in Behavioral Neurosciences</em>, 36, 257–282.</li>
+  <li>Dubois, J. &amp; VanRullen, R. (2011). <a href="https://journals.plos.org/plosbiology/article?id=10.1371/journal.pbio.1001056">Visual trails: do the doors of perception open periodically?</a> <em>PLOS Biology</em>, 9(5), e1001056.</li>
+  <li>Kwan, A. C., et al. (2024). <a href="https://www.nature.com/articles/s41380-024-02632-3">Neural mechanisms of psychedelic visual imagery.</a> <em>Molecular Psychiatry</em>, 30, 809–818.</li>
+  <li>一般向け解説: <a href="https://www.quantamagazine.org/a-math-theory-for-why-people-hallucinate-20180730/">A Math Theory for Why People Hallucinate</a> (Quanta Magazine, 2018) / 現象カタログ: <a href="https://psychonautwiki.org/wiki/Visual_effects_-_Psychedelics">PsychonautWiki</a></li>
+  <li>Varley, T. F., Carhart-Harris, R., Roseman, L., Menon, D. K. &amp; Stamatakis, E. A. (2020). <a href="https://www.sciencedirect.com/science/article/pii/S1053811920305358">Serotonergic psychedelics LSD &amp; psilocybin increase the fractal dimension of cortical brain activity in spatial and temporal domains.</a> <em>NeuroImage</em>, 220, 117049.</li>
+  <li>Tagliazucchi, E., Carhart-Harris, R., Leech, R., Nutt, D. &amp; Chialvo, D. R. (2014). Enhanced repertoire of brain dynamical states during the psychedelic experience. <em>Human Brain Mapping</em>, 35(11), 5442–5456.</li>
+  <li>Atasoy, S., et al. (2017). Connectome-harmonic decomposition of human brain activity reveals dynamical repertoire re-organization under LSD. <em>Scientific Reports</em>, 7, 17661.</li>
+  <li>Wacker, D., Wang, S., McCorvy, J. D., et al. (2017). <a href="https://www.cell.com/fulltext/S0092-8674(16)31749-4">Crystal structure of an LSD-bound human serotonin receptor.</a> <em>Cell</em>, 168(3), 377–389.(EL2の「蓋」と超低速解離=長時間作用の構造的根拠)</li>
 </ol>
-
-<footer>
-<a href="lsd.html">▶ デモへ戻る</a>
-<a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">fluent_scene (GitHub)</a>
-<a href="https://x.com/takatronix" target="_blank" rel="noopener">by @takatronix</a>
-</footer>
 </main>
+
+<script>
+
+(function () {
+  const cortex = document.getElementById('cortex');
+  const retina = document.getElementById('retina');
+  const cctx = cortex.getContext('2d');
+  const rctx = retina.getContext('2d');
+  const CW = cortex.width, CH = cortex.height;
+  const RW = retina.width, RH = retina.height;
+  const cImg = cctx.createImageData(CW, CH);
+  const rImg = rctx.createImageData(RW, RH);
+  // wave vectors (a: along u = log r, b: along v = θ; b must be an integer
+  // harmonic so the seam at ±π is invisible)
+  const MODES = {
+    tunnel: [[8, 0]],
+    funnel: [[0, 9]],
+    spiral: [[6, 6]],
+    lattice: [[6, 6], [6, -6]],
+    fractal: 'octaves',  // 3 self-similar octaves of the lattice product
+  };
+  let mode = 'tunnel';
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let t = 2.0;
+
+  function field(u, v, t) {
+    if (MODES[mode] === 'octaves') {
+      // the shader's construction: lattice products, frequencies doubling
+      let s = 0, amp = 1, norm = 0, fu = 3, fm = 3;
+      for (let n = 0; n < 3; ++n) {
+        s += amp * Math.cos(fu * u + fm * v - t * (1 + 0.3 * n)) *
+                   Math.cos(fu * u - fm * v - t * 0.7);
+        norm += amp; amp *= 0.6; fu *= 2; fm *= 2;
+      }
+      return s / norm * 1.6;
+    }
+    let s = 0;
+    const waves = MODES[mode];
+    for (const [a, b] of waves) s += Math.sin(a * u + b * v - t);
+    s /= waves.length;
+    return s;
+  }
+  // violet-tinted stripe shading on a dark ground (fixed-look panel: the
+  // canvases commit to one visual world in both page themes)
+  function shade(s) {
+    const v = Math.max(0, Math.min(1, 0.5 + 0.62 * s));
+    return [Math.round(30 + 165 * v), Math.round(22 + 120 * v), Math.round(48 + 200 * v)];
+  }
+
+  function draw() {
+    // cortical sheet: u ∈ [-3.2, 0], v ∈ [-π, π]
+    let p = 0;
+    for (let y = 0; y < CH; ++y) {
+      const v = (y / CH) * 2 * Math.PI - Math.PI;
+      for (let x = 0; x < CW; ++x) {
+        const u = (x / CW) * 3.2 - 3.2;
+        const [r, g, b] = shade(field(u, v, t));
+        cImg.data[p++] = r; cImg.data[p++] = g; cImg.data[p++] = b; cImg.data[p++] = 255;
+      }
+    }
+    cctx.putImageData(cImg, 0, 0);
+    // retinal view: inverse map r = e^u
+    p = 0;
+    for (let y = 0; y < RH; ++y) {
+      for (let x = 0; x < RW; ++x) {
+        const dx = (x - RW / 2) / (RW / 2), dy = (y - RH / 2) / (RH / 2);
+        const rad = Math.hypot(dx, dy);
+        if (rad > 1 || rad < 0.02) {
+          rImg.data[p++] = 13; rImg.data[p++] = 10; rImg.data[p++] = 20; rImg.data[p++] = 255;
+          continue;
+        }
+        const u = Math.log(rad);
+        const v = Math.atan2(dy, dx);
+        const [r, g, b] = shade(field(u, v, t));
+        rImg.data[p++] = r; rImg.data[p++] = g; rImg.data[p++] = b; rImg.data[p++] = 255;
+      }
+    }
+    rctx.putImageData(rImg, 0, 0);
+  }
+
+  const buttons = document.querySelectorAll('.mode-row button');
+  buttons.forEach(btn => btn.addEventListener('click', () => {
+    mode = btn.dataset.mode;
+    buttons.forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    if (reduced) draw();
+  }));
+
+  if (reduced) {
+    draw();
+  } else {
+    (function loop() {
+      t += 0.035;
+      draw();
+      requestAnimationFrame(loop);
+    })();
+  }
+})();
+</script>
+
+
+<script type="module">
+// The report's own background IS the subject: fluent_scene's wasm build
+// runs the real fs_lsd filter here — the same GLSL∩C++ body the Vulkan
+// backend compiles on the robot. No camera; the input is a procedural
+// plate, and the feedback loop (output re-entering the input, zoomed and
+// turned) supplies the recursion a single pass cannot.
+const bg = document.getElementById('bg');
+const heroEl = document.getElementById('hero');
+const tag = document.getElementById('engine-tag');
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const SCENE = `
+schema: fluent.scene/v1alpha2
+stage: { size: [960, 540] }
+inputs:
+  plate: { type: image.rgba8, update: per_frame }
+layers:
+  - id: live
+    content: { image: { source: $inputs.plate, fit: cover } }
+    filters: [ { lsd: { trip: 1.0, time: 0, drift: 1.2, geometry: 0.9, chroma: 1.4 } } ]
+`;
+
+try {
+  const mod = await (await import('./fluent_scene.mjs')).default();
+  const fs = {
+    create: mod.cwrap('fs_create', 'number', ['number']),
+    error: mod.cwrap('fs_error', 'string', []),
+    imageBuffer: mod.cwrap('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
+    commitImage: mod.cwrap('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
+    render: mod.cwrap('fs_render', 'number', ['number', 'number', 'number', 'number']),
+    renderW: mod.cwrap('fs_render_width', 'number', ['number']),
+    renderH: mod.cwrap('fs_render_height', 'number', ['number']),
+    renderStride: mod.cwrap('fs_render_stride', 'number', ['number']),
+    setFilter: mod.cwrap('fs_layer_set_filter', 'number',
+        ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
+  };
+  const inst = fs.create(mod.stringToNewUTF8(SCENE));
+  if (!inst) throw new Error(fs.error());
+
+  const W = 320, H = 180;
+  bg.width = W; bg.height = H;
+  heroEl.width = W; heroEl.height = H;
+  const bgCtx = bg.getContext('2d');
+  const heroCtx = heroEl.getContext('2d');
+
+  // the plate: a quiet coloured ground, and the previous frame folded back
+  const plate = document.createElement('canvas');
+  plate.width = W; plate.height = H;
+  const pCtx = plate.getContext('2d', { willReadFrequently: true });
+  const grad = pCtx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, '#2b3f6b');
+  grad.addColorStop(0.5, '#6b4f8c');
+  grad.addColorStop(1, '#2f6b63');
+  const prev = document.createElement('canvas');
+  prev.width = W; prev.height = H;
+  const prevCtx = prev.getContext('2d');
+  let hasPrev = false;
+
+  let last = performance.now(), t0 = last, visible = true;
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(es => { visible = es[0].isIntersecting; },
+                             { threshold: 0.01 }).observe(bg);
+  }
+  document.addEventListener('visibilitychange', () => { last = performance.now(); });
+
+  function frame() {
+    const now = performance.now();
+    const dt = Math.min((now - last) / 1000, 0.1);
+    last = now;
+    const t = (now - t0) / 1000;
+
+    pCtx.globalCompositeOperation = 'source-over';
+    pCtx.globalAlpha = 1;
+    pCtx.fillStyle = grad;
+    pCtx.fillRect(0, 0, W, H);
+    if (hasPrev) {                       // feedback: zoom in, turn, decay
+      pCtx.globalAlpha = 0.72;
+      pCtx.translate(W / 2, H / 2);
+      pCtx.scale(Math.exp(0.16 * dt * 4), Math.exp(0.16 * dt * 4));
+      pCtx.rotate(0.1 * dt * 4);
+      pCtx.translate(-W / 2, -H / 2);
+      pCtx.drawImage(prev, 0, 0);
+      pCtx.setTransform(1, 0, 0, 1, 0, 0);
+      pCtx.globalAlpha = 1;
+    }
+    const px = fs.imageBuffer(inst, 'plate', W, H);
+    mod.HEAPU8.set(pCtx.getImageData(0, 0, W, H).data, px);
+    fs.commitImage(inst, 'plate', W, H);
+    fs.setFilter(inst, 'live', 'lsd', 1.0, t, 1.2, 0.9, 1.4);
+
+    const out = fs.render(inst, dt, W, H);
+    if (fs.renderW(inst) === W && fs.renderStride(inst) === W * 4) {
+      const view = new Uint8ClampedArray(mod.HEAPU8.buffer, out, W * H * 4);
+      const frameData = new ImageData(view, W, H);
+      bgCtx.putImageData(frameData, 0, 0);
+      heroCtx.putImageData(frameData, 0, 0);
+      prevCtx.drawImage(bg, 0, 0);
+      hasPrev = true;
+    }
+    if (!reduced) {
+      if (visible) requestAnimationFrame(frame);
+      else setTimeout(() => requestAnimationFrame(frame), 400);
+    }
+  }
+  frame();
+  if (tag) tag.textContent = 'fluent_scene engine — live in wasm';
+} catch (e) {
+  console.error('engine unavailable:', e);
+  if (tag) tag.textContent = 'engine unavailable — static page';
+  bg.style.display = 'none';
+}
+</script>
+
+</body>
 </html>
