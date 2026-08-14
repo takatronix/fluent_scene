@@ -158,16 +158,17 @@
 
   /* ---- the live engine, running behind the article ---- */
   #bg { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0;
-        object-fit: cover; opacity: 0.3; filter: saturate(0.85);
+        object-fit: cover; opacity: 0.24; filter: saturate(0.85);
         pointer-events: none; }
   body { position: relative; }
-  main { position: relative; z-index: 1; }
-  main > * { }
-  .sheet { background: color-mix(in srgb, var(--bg) 93%, transparent);
-           backdrop-filter: blur(7px); border-radius: 18px;
-           padding: 2rem clamp(1rem, 4vw, 2.4rem); margin-bottom: 2rem;
-           box-shadow: 0 10px 40px rgba(0, 0, 0, 0.14); }
-  @supports not (backdrop-filter: blur(1px)) { .sheet { background: var(--bg); } }
+  /* the article rides on its own sheet so the animation never fights the
+     text; it stays visible in the margins and faintly through the blur */
+  main { position: relative; z-index: 1;
+         background: color-mix(in srgb, var(--bg) 92%, transparent);
+         backdrop-filter: blur(9px);
+         border-radius: 20px; margin-top: 1.5rem; margin-bottom: 3rem;
+         box-shadow: 0 12px 60px rgba(0, 0, 0, 0.16); }
+  @supports not (backdrop-filter: blur(1px)) { main { background: var(--bg); } }
   .engine-tag { display: inline-flex; align-items: center; gap: 7px;
                 font-size: 0.76rem; letter-spacing: 0.08em; font-weight: 700;
                 color: var(--accent); text-transform: uppercase; margin-bottom: 0.7rem; }
