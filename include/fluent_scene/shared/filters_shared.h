@@ -245,15 +245,32 @@ vec3 fs_median(vec2 uv) {
 // come from one sparse 5x5 grid via E[x²]−E[x]²; the 50/0.1 pairing is
 // gpupixel's calibration (their delta=7.07 squared).
 //
-// Where this deliberately goes past gpupixel: `denoise` reuses the same
-// local statistics as a frame-wide variance-gated denoiser (no skin gate —
-// grain fades everywhere, edges still survive on the variance term), and
-// `whiten` is gated by the skin-chroma mask so brightening stays off
-// clothing and background — the original applies it to every pixel.
-// `sharpen` restores micro-contrast the blend absorbs (4-tap unsharp).
+// Where this deliberately goes past gpupixel: `denoise` is a frame-wide
+// fine-scale Wiener pass (dense 3×3 at 2-texel pitch, its own variance —
+// the wide sparse grid below reads fine grain as structure and barely
+// engages on it) that runs FIRST, so the skin gate, sharpen, and whiten
+// all work on the cleaned signal instead of re-amplifying grain. `whiten`
+// is gated by the skin-chroma mask so brightening stays off clothing and
+// background — the original applies it to every pixel. `sharpen` restores
+// micro-contrast the blends absorb (4-tap unsharp).
 vec3 fs_beauty(vec2 uv, float smoothing, float whiten, float radius, float sharpen_amount,
                float denoise) {
     vec3 c = FS_SAMPLE(uv);
+    if (denoise > 0.0) {
+        vec3 fsum = vec3(0.0);
+        vec3 fsum_sq = vec3(0.0);
+        for (int j = -1; j <= 1; ++j) {
+            for (int i = -1; i <= 1; ++i) {
+                vec3 s = FS_SAMPLE(uv + FS_TEXEL * vec2(float(i), float(j)) * 2.0);
+                fsum += s;
+                fsum_sq += s * s;
+            }
+        }
+        vec3 fmean = fsum * (1.0 / 9.0);
+        vec3 fvar = max(fsum_sq * (1.0 / 9.0) - fmean * fmean, vec3(0.0));
+        float fv = 50.0 * (fvar.x + fvar.y + fvar.z) * (1.0 / 3.0);
+        c = mix(c, fmean, (0.15 / (fv + 0.15)) * clamp(denoise, 0.0, 1.0));
+    }
     float grid = max(radius, 1.0) * 0.5;
     vec3 sum = vec3(0.0);
     vec3 sum_sq = vec3(0.0);
@@ -270,7 +287,6 @@ vec3 fs_beauty(vec2 uv, float smoothing, float whiten, float radius, float sharp
     float flatness = 0.1 / (mean_var + 0.1);
     float skin = clamp((min(c.x, mean.x - 0.1) - 0.2) * 4.0, 0.0, 1.0);
     float k = flatness * skin * clamp(smoothing, 0.0, 1.0);
-    k = max(k, flatness * 0.7 * clamp(denoise, 0.0, 1.0));
     vec3 result = mix(c, mean, clamp(k, 0.0, 1.0));
     if (sharpen_amount > 0.0) {
         vec3 neighbors = FS_SAMPLE(uv + vec2(FS_TEXEL.x, 0.0)) +

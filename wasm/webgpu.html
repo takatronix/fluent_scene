@@ -51,7 +51,7 @@ layers:
   - id: img2
     frame: [174, 12, 150, 110]
     content: { image: { source: $inputs.camera, fit: cover } }
-    filters: [ { beauty: { smoothing: 0.9, whiten: 0.3 } } ]
+    filters: [ { beauty: { smoothing: 0.9, whiten: 0.3, denoise: 0.5 } } ]
   - id: img3
     frame: [336, 12, 132, 110]
     content: { image: { source: $inputs.camera, fit: cover } }
