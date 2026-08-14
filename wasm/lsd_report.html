@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LSDフィルタ 実装レポート — fluent_scene</title>
+<style>
+  :root { --bg: #0b0812; --panel: #151022; --ink: #ded6ea; --dim: #9d92b4;
+          --acc: #b39ddb; --line: #2c2440; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background:
+           radial-gradient(140% 100% at 50% 0%, #140e20 0%, var(--bg) 60%);
+         color: var(--ink); font: 15px/1.9 "Hiragino Sans", "Noto Sans JP",
+         system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 48px 22px 80px; }
+  h1 { font-size: 28px; line-height: 1.4; letter-spacing: 0.02em; margin: 0 0 4px; }
+  h1 small { display: block; font-size: 13px; color: var(--dim); font-weight: normal; }
+  h2 { font-size: 20px; margin: 48px 0 12px; color: var(--acc);
+       border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+  h3 { font-size: 16px; margin: 28px 0 8px; }
+  p { margin: 10px 0; }
+  a { color: var(--acc); }
+  .lead { color: var(--dim); font-size: 14px; }
+  .demo-link { display: inline-block; margin: 14px 0; padding: 10px 18px;
+               border: 1px solid var(--line); border-radius: 10px;
+               background: var(--panel); text-decoration: none; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 13.5px; }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left;
+           vertical-align: top; }
+  th { background: var(--panel); color: var(--acc); font-weight: 600;
+       white-space: nowrap; }
+  td b { color: #fff; }
+  .scroll { overflow-x: auto; }
+  code { font-family: ui-monospace, monospace; font-size: 0.92em;
+         background: var(--panel); padding: 1px 6px; border-radius: 5px; }
+  blockquote { margin: 14px 0; padding: 10px 16px; border-left: 3px solid var(--acc);
+               background: var(--panel); border-radius: 0 8px 8px 0;
+               color: var(--dim); font-size: 14px; }
+  ol.refs { font-size: 13px; color: var(--dim); padding-left: 22px; }
+  ol.refs li { margin: 7px 0; }
+  .note { font-size: 13px; color: var(--dim); }
+  footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
+           font-size: 13px; color: var(--dim); display: flex; gap: 18px;
+           flex-wrap: wrap; }
+</style>
+<main>
+
+<h1>LSDフィルタ 実装レポート
+<small>セロトニン作動性の視覚現象学を、文献に載った機構ごとにシェーダーへ写す</small></h1>
+
+<p class="lead">fluent_scene の <code>lsd</code> フィルタは「サイケデリック風」の
+見た目クリシェ集ではなく、LSD の視覚体験について神経科学の文献が記述する
+現象を段ごとに実装したものです。各段が「何の現象を」「どの機構の報告に
+基づいて」「どう描いているか」を、このレポートで対応づけます。</p>
+
+<a class="demo-link" href="lsd.html" target="_blank">▶ デモを開く（Webカメラ・音なし・データはタブの外に出ません）</a>
+
+<h2>0. 全体の設計原則</h2>
+<p>トリップの視覚には直線も直角も真円も現れない — 報告される幾何は常に
+有機的で、あらゆるスケールに同時に構造がある。そこで本フィルタの幻覚場は
+<b>構成的に非周期</b>です: 正弦波の壁紙や同心円をどこにも置かず、ドメイン
+ワープした value-noise の fBM を土台に、6 段のオクターブ梯子全体がスケール
+空間をすべり続ける「永久ズームフラクタル」(64×のスケール域を循環、各段は
+生成消滅時に新しい内容で再シード)として描きます。中心は固定 — 体験には
+常に中心があり、永遠の拡張はそこから放射する、という現象学の再現です。</p>
+
+<h2>1. 現象 → 機構 → 実装の対応表</h2>
+<div class="scroll">
+<table>
+<tr><th>現象（体験の言葉）</th><th>機構（文献）</th><th>実装（シェーダー段 / パラメータ）</th></tr>
+<tr>
+<td><b>ドリフト・呼吸</b> — 壁や質感がゆっくり波打ち「息をする」</td>
+<td>5-HT2A 作動が皮質ゲインを上げ、視覚野の α 波ゲーティングを抑制。
+α 抑制の強さは単純幻視の強度と相関 [4]</td>
+<td>1 周期未満の放射呼吸波 + ノイズ場をレンズにした変位
+（<code>drift</code>）。変位は中心でゼロ — 画面全体が平行移動せず「揺らぐ」</td>
+</tr>
+<tr>
+<td><b>色フリンジ</b> — 明るいエッジに虹の縁取り</td>
+<td>散瞳（瞳孔拡大）による軸外収差の増大</td>
+<td>周辺ほど強い放射方向の R/B 分離（<code>chroma</code>）</td>
+</tr>
+<tr>
+<td><b>鋭敏化・色の氾濫</b> — 細部が刺さり、彩度が上がる</td>
+<td>視床のゲーティング低下 = フィルタされない感覚駆動が皮質へ [5]</td>
+<td>アンシャープ + 彩度リフト + ゆっくりした色相の「呼吸」（<code>trip</code>）</td>
+</tr>
+<tr>
+<td><b>幾何幻覚</b> — 格子・トンネル・らせん（form constants）</td>
+<td>Klüver の form constants [1]。V1 の興奮/抑制不安定性が自発的に
+パターンを自己組織化 [2][3]。LSD は皮質活動のフラクタル次元を上げる [8]</td>
+<td>永久ズーム fBM の多スケール塊抽出（<code>geometry</code>、符号で
+有機⇔デジタル）。Klüver の類型は「描いた図形」ではなく統計
+（多スケール・流動・中心密）として現れる</td>
+</tr>
+<tr>
+<td><b>純色</b> — 赤・緑・青・黄・シアンは出るが紫がほぼ出ない</td>
+<td>（現象報告からの設計）原色の空間的な錯位として解釈</td>
+<td>粗い段のみ R が前方・B が後方に読む「プリズム錯位」。
+重なりは黄/シアン/白を作り、G 抜きの R+B（紫）はほぼ生じない</td>
+</tr>
+<tr>
+<td><b>非定常性</b> — 同じ絵は二度と来ない。変化は「パッ」とも、
+気づかないほどゆっくりとも起こる</td>
+<td>脳の動的状態レパートリーが拡張 [6][7]、時間ゆらぎがスケールフリー化 [8]</td>
+<td>デモ側の「指揮者」: 各パラメータが基準値の周りを微揺動しつつ、
+ポアソン到着の転移（遷移時間は 0.25–20 s の対数一様）で準安定状態を渡り歩く</td>
+</tr>
+<tr>
+<td><b>パリノプシア・トレーサー</b> — 動くものが残像の列を引く</td>
+<td>視覚的残効の持続（HPPD 研究などで記述される陽性残像）</td>
+<td>フレーム間フィードバック（デモ側）: 前フレームの<b>出力</b>を減衰・
+微ズーム・微回転して再入力。<code>lighten</code> は離散残像、
+<code>source-over</code> は滑らかなスメア。幻覚した幾何も再帰する —
+トンネルが咲くのはこのループ</td>
+</tr>
+<tr>
+<td><b>視線との結合</b> — 見つめた場所が深くなる</td>
+<td>（体験報告からの設計）注視点周りで幻覚が組織化する</td>
+<td>MediaPipe 虹彩ランドマークによる視線推定。フィードバック渦の
+中心が視線に追従し、カメラとのアイコンタクトで <code>trip</code> が深まる</td>
+</tr>
+<tr>
+<td><b>閉眼幻視（CEV）</b> — 目を閉じると幻覚が一段強くなる</td>
+<td>網膜入力が絶たれ、内因性活動が視覚野を支配する。Klüver の form
+constants はもともと閉眼・暗所での観察が中心 [1]</td>
+<td>目を閉じ続ける（まばたきではなく 0.35 s 以上）と検出し、
+カメラ入力を漸暗 → 幾何の駆動源が「弱い網膜駆動」側へ倒れて
+幻覚場が支配。<code>geometry</code>/<code>trip</code>/<code>chroma</code>/
+残像持続が同時に立ち上がり、目を開けると現実へ戻る</td>
+</tr>
+</table>
+</div>
+
+<h2>2. なぜ「情報密度」なのか</h2>
+<p>初期実装は丸い塊のノイズで、ラバランプのように見えました。トリップの
+幾何がそう見えない理由は<b>情報密度</b>にあります: どのスケールを見ても
+新しい構造があり（フラクタル次元の上昇 [8]）、輪郭は尖り、折れ、
+決してバブル状に丸まらない。現在の実装は ridged 折り返しと永久ズーム梯子で
+これを描きます — 近づいても構造が尽きず、飛行は終わらず、繰り返しません。</p>
+
+<h2>3. 実装上の制約（正直な注記）</h2>
+<p><code>time</code> はホストが毎フレーム渡す秒数で、既定 0 では静止 —
+だから golden テスト可能です（CPU / Vulkan / WebGPU の3バックエンドが
+同一出力であることをピクセル比較で保証）。フレーム間フィードバック
+（トレーサー・再帰トンネル）は単一パスのフィルタ本体には持てないため、
+デモページ側でループを閉じています。つまり <code>lsd</code> フィルタ単体は
+「その瞬間の幻覚」、デモは「時間の中の幻覚」です。</p>
+
+<blockquote>フィルタ本体は GLSL∩C++ の単一ソース
+（<code>filters_shared.h</code>）で、CPU は C++ として、Vulkan は
+GLSL→SPIR-V として、WebGPU は SPIR-V→WGSL 機械変換として同じ数式を
+実行します。手書き移植はありません。</blockquote>
+
+<h2>4. これは何ではないか</h2>
+<p>本フィルタは薬物使用を推奨するものではなく、文献に記述された視覚現象の
+計算論的な再現・可視化です。また「LSD の見え方の完全な再現」でもありません —
+意味的な変容（顔貌の変化、パレイドリア、意味の過剰付与）はテクスチャ
+フィルタの守備範囲外です。</p>
+
+<h2>参考文献</h2>
+<ol class="refs">
+<li>[1] Klüver, H. <i>Mescal and Mechanisms of Hallucinations.</i>
+University of Chicago Press (1926/1966). — form constants（格子・蜘蛛の巣・
+トンネル・らせん）の分類。</li>
+<li>[2] Ermentrout, G.B. &amp; Cowan, J.D. "A mathematical theory of visual
+hallucination patterns." <i>Biological Cybernetics</i> 34 (1979). —
+V1 の興奮/抑制ネットワークの不安定性としての幾何幻覚。</li>
+<li>[3] Bressloff, P.C., Cowan, J.D., Golubitsky, M., Thomas, P.J. &amp;
+Wiener, M.C. "Geometric visual hallucinations, Euclidean symmetry and the
+functional architecture of striate cortex." <i>Phil. Trans. R. Soc. B</i>
+356 (2001). — 皮質–網膜写像と対称性破れによる form constants の導出。</li>
+<li>[4] Carhart-Harris, R.L. et al. "Neural correlates of the LSD experience
+revealed by multimodal neuroimaging." <i>PNAS</i> 113(17) (2016). —
+視覚野 α 波の減少が幻視強度と相関、V1 の機能結合拡大。</li>
+<li>[5] Preller, K.H. et al. "Changes in global and thalamic brain
+connectivity in LSD-induced altered states of consciousness are attributable
+to the 5-HT2A receptor." <i>eLife</i> 7:e35082 (2018). — 視床–皮質
+ゲーティングの変化。</li>
+<li>[6] Tagliazucchi, E. et al. "Enhanced repertoire of brain dynamical
+states during the psychedelic experience." <i>Human Brain Mapping</i> 35(11)
+(2014). — 動的状態レパートリーの拡張。</li>
+<li>[7] Atasoy, S. et al. "Connectome-harmonic decomposition of human brain
+activity reveals dynamical repertoire re-organization under LSD."
+<i>Scientific Reports</i> 7:17661 (2017). — 状態遷移統計の再編。</li>
+<li>[8] Varley, T.F. et al. "Serotonergic psychedelics LSD &amp; psilocybin
+increase the fractal dimension of cortical brain activity in spatial and
+temporal domains." <i>NeuroImage</i> 220:117049 (2020). — 皮質活動の
+フラクタル次元上昇。</li>
+</ol>
+
+<footer>
+<a href="lsd.html">▶ デモへ戻る</a>
+<a href="https://github.com/takatronix/fluent_scene" target="_blank" rel="noopener">fluent_scene (GitHub)</a>
+<a href="https://x.com/takatronix" target="_blank" rel="noopener">by @takatronix</a>
+</footer>
+</main>
+</html>

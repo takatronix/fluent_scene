@@ -85,7 +85,10 @@
   <label>視線追従 <input id="gazechk" type="checkbox" checked style="width:20px;height:20px;accent-color:#9d8dd9"></label>
 </div>
 </div>
-<div id="title"><b>LSD</b><span>serotonergic visual phenomenology on fluent_scene</span></div>
+<div id="title"><b>LSD</b><span>serotonergic visual phenomenology on fluent_scene</span>
+<span><a href="lsd_report.html" target="_blank" rel="noopener"
+  style="pointer-events:auto;color:rgba(200,185,235,0.85);text-decoration:none;
+         border-bottom:1px dotted rgba(200,185,235,0.5)">解説レポート — なぜこう見えるのか →</a></span></div>
 <div id="bar">loading wasm…</div>
 <a href="https://x.com/takatronix" target="_blank" rel="noopener" style="position:fixed;right:12px;bottom:10px;z-index:9;font:11px ui-monospace,monospace;color:rgba(255,255,255,0.6);text-decoration:none;background:rgba(0,0,0,0.35);padding:4px 10px;border-radius:999px;backdrop-filter:blur(4px)">fluent_scene · by <b style="color:rgba(255,255,255,0.85)">@takatronix</b></a>
 <script type="module">
@@ -252,6 +255,9 @@ const grabCtx = grab.getContext('2d', { willReadFrequently: true });
 const gazechk = document.getElementById('gazechk');
 let gazePivot = { x: CAM_W / 2, y: CAM_H / 2 };
 let gazeRaw = null, contactLevel = 0, faceSeen = 0;
+// 閉眼幻視 (CEV): まばたき(<0.35s)は素通し、目を閉じ続けると網膜入力が
+// 絶たれて内因性の幾何が支配する — そして閉じた瞬間に世界はリセットされる
+let eyeState = 'open', eyesClosedAt = 0, closedLevel = 0, cevArmed = false;
 let gbias = { yaw: 0, pitch: 0 }, gcalib = [];
 try {
   const b = JSON.parse(localStorage.getItem('lsd_gaze_bias'));
@@ -305,6 +311,12 @@ setInterval(() => {
   let eyeYaw = 0, eyePitch = 0, blink = false;
   if (R && L) {
     blink = (R.open + L.open) / 2 < 0.09;
+    if (blink && eyeState !== 'closed') {
+      eyeState = 'closed';
+      eyesClosedAt = performance.now();
+    } else if (!blink) {
+      eyeState = 'open';
+    }
     if (!blink) {
       eyeYaw = ((R.hx + L.hx) / 2) * 1.6;
       eyePitch = -((R.vy + L.vy) / 2) * 0.8;
@@ -381,6 +393,34 @@ function tick() {
   // baselines; unchecking 自動変容 pins them to the sliders exactly
   const eff = autoBox.checked ? conduct(t) :
       Object.fromEntries(Object.keys(DIMS).map(d => [d, Number(sl[d].value)]));
+
+  // ---- 閉眼幻視 (CEV) ------------------------------------------------------
+  // A held closure (not a blink) fades the retinal input to black; the
+  // kernel's geometry gate rides weak retinal drive, so the hallucination
+  // field takes over. Closing the eyes also RESETS the world: the trail
+  // history clears and the conductor snaps to a fresh regime — opening
+  // them again lands somewhere new.
+  const nowMs = performance.now();
+  const closedHeld = gazechk.checked && eyeState === 'closed' &&
+      nowMs - eyesClosedAt > 350 && nowMs - faceSeen < 1200;
+  closedLevel = Math.min(1, Math.max(0,
+      closedLevel + (closedHeld ? dt / 0.7 : -dt / 0.5)));
+  if (closedHeld && !cevArmed) {
+    cevArmed = true;
+    prevCtx.clearRect(0, 0, CAM_W, CAM_H);   // the outside world's echo dies
+    hasPrev = false;
+    conductor.next = t;                      // and a new regime begins
+  } else if (!closedHeld && cevArmed && closedLevel < 0.05) {
+    cevArmed = false;
+    conductor.next = t;                      // reopening snaps again — 「パッ」
+  }
+  if (closedLevel > 0) {
+    eff.trip = clampDim('trip', eff.trip + 0.5 * closedLevel);
+    eff.geometry = clampDim('geometry', eff.geometry + 0.9 * closedLevel);
+    eff.chroma = clampDim('chroma', eff.chroma + 0.6 * closedLevel);
+    eff.persist = clampDim('persist', eff.persist + 0.25 * closedLevel);
+    eff.zoom = clampDim('zoom', eff.zoom + 0.1 * closedLevel);
+  }
   // show WHERE the conductor currently is: each readout becomes 基準→実効
   if (++uiTick % 10 === 0) {
     for (const d in DIMS) {
@@ -395,6 +435,11 @@ function tick() {
     fbCtx.globalCompositeOperation = 'source-over';
     fbCtx.globalAlpha = 1;
     drawCover(fbCtx, video, video.videoWidth || 640, video.videoHeight || 360);
+    if (closedLevel > 0) {
+      // eyelids: retinal input fades out, the field and the echo remain
+      fbCtx.fillStyle = `rgba(0,0,0,${(0.88 * closedLevel).toFixed(3)})`;
+      fbCtx.fillRect(0, 0, CAM_W, CAM_H);
+    }
     // 2) re-enter the previous output: decayed, slightly zoomed + rotated.
     //    'lighten' keeps only the brighter history — the discrete frozen
     //    afterimages of true palinopsia; 'source-over' is the smooth smear.
@@ -455,7 +500,8 @@ function tick() {
              ? `転移中 ${conductor.dur < 1.5 ? '(パッ)' : '(ゆっくり)'}`
              : `滞留 → 次の転移まで ${Math.max(0, conductor.next - t).toFixed(0)}s`)
       : '手動';
-  const eye = contactLevel > 0.5 ? ' · 👁アイコンタクト' : '';
+  const eye = closedLevel > 0.4 ? ' · 🌌閉眼幻視'
+            : contactLevel > 0.5 ? ' · 👁アイコンタクト' : '';
   bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · 変容: ${phase}${eye}`;
   requestAnimationFrame(tick);
 }

@@ -27,7 +27,7 @@ server-side processing; video never leaves your tab.
 |---|---|
 | [Playground](https://takatronix.github.io/fluent_scene/) | The whole library running locally in a tab (CPU wasm, portrait effects) |
 | [beauty](https://takatronix.github.io/fluent_scene/beauty.html) | Beauty filter — variance-gated skin smoothing, skin-scoped whitening, 3D LUT; webcam wipe comparison |
-| [lsd](https://takatronix.github.io/fluent_scene/lsd.html) | The LSD filter — time-driven psychedelia |
+| [lsd](https://takatronix.github.io/fluent_scene/lsd.html) | The LSD filter — time-driven psychedelia, closed-eye visuals via webcam ([how it works](https://takatronix.github.io/fluent_scene/lsd_report.html)) |
 | [gaze](https://takatronix.github.io/fluent_scene/gaze.html) | Gaze focus — a MediaPipe landmarker driving Scene parameters |
 | [webgpu](https://takatronix.github.io/fluent_scene/webgpu.html) | Backend verification — one scene rendered by CPU and WebGPU, compared per pixel |
 

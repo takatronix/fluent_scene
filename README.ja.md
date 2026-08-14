@@ -26,7 +26,7 @@ wasm ビルドです。サーバー処理はなく、映像はタブの外に出
 |---|---|
 | [プレイグラウンド](https://takatronix.github.io/fluent_scene/) | ライブラリ一式が手元のタブで動く（CPU wasm・ポートレート演出付き） |
 | [beauty](https://takatronix.github.io/fluent_scene/beauty.html) | 美顔フィルタ — 磨皮(分散ゲートWiener)+肌限定美白+3D LUT、Webカメラでワイプ比較 |
-| [lsd](https://takatronix.github.io/fluent_scene/lsd.html) | LSD フィルタ — 時間駆動のサイケデリア |
+| [lsd](https://takatronix.github.io/fluent_scene/lsd.html) | LSD フィルタ — 時間駆動のサイケデリア、閉眼幻視対応（[解説レポート](https://takatronix.github.io/fluent_scene/lsd_report.html)） |
 | [gaze](https://takatronix.github.io/fluent_scene/gaze.html) | 視線フォーカス — MediaPipe landmarker が Scene パラメータを駆動 |
 | [webgpu](https://takatronix.github.io/fluent_scene/webgpu.html) | バックエンド検証 — 同一シーンを CPU と WebGPU で描いて画素比較 |
 
