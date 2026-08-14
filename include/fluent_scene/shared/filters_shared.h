@@ -285,9 +285,19 @@ vec3 fs_beauty(vec2 uv, float smoothing, float whiten, float radius, float sharp
     vec3 variance = max(sum_sq * (1.0 / 25.0) - mean * mean, vec3(0.0));
     float mean_var = 50.0 * (variance.x + variance.y + variance.z) * (1.0 / 3.0);
     float flatness = 0.1 / (mean_var + 0.1);
-    float skin = clamp((min(c.x, mean.x - 0.1) - 0.2) * 4.0, 0.0, 1.0);
+    // gpupixel's brightness gate × the chroma mask (with a floor, so
+    // borderline skin under warm indoor light is not cut off hard): walls,
+    // hair, and clothing stop passing as "skin", which is what kept the
+    // whole frame from going soft at high strength.
+    float skin = clamp((min(c.x, mean.x - 0.1) - 0.2) * 4.0, 0.0, 1.0) *
+                 (0.25 + 0.75 * fs_skin_chroma(c));
     float k = flatness * skin * clamp(smoothing, 0.0, 1.0);
-    vec3 result = mix(c, mean, clamp(k, 0.0, 1.0));
+    // Max-shift clamp: pore-level corrections (±0.05-ish) pass untouched,
+    // but the pull toward the mean can never flatten real shading or eat
+    // an eyelid — this is what keeps maximum strength from turning the
+    // face into plastic.
+    vec3 shift = clamp((mean - c) * clamp(k, 0.0, 1.0), -0.08, 0.08);
+    vec3 result = c + shift;
     if (sharpen_amount > 0.0) {
         vec3 neighbors = FS_SAMPLE(uv + vec2(FS_TEXEL.x, 0.0)) +
                          FS_SAMPLE(uv - vec2(FS_TEXEL.x, 0.0)) +

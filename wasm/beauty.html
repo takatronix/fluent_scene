@@ -234,14 +234,16 @@ if (res && /^\d+x\d+$/.test(res)) {
   const [rw, rh] = res.split('x').map(Number);
   canvas.width = rw; canvas.height = rh;
 }
-const CAM_W = 640, CAM_H = 480;
+// 720p capture: the 640x480 feed upscaled 2x was half the softness — the
+// filter can only keep detail the camera delivered.
+const CAM_W = 1280, CAM_H = 720;
 const grab = document.createElement('canvas');
 grab.width = CAM_W; grab.height = CAM_H;
 const grabCtx = grab.getContext('2d', { willReadFrequently: true });
 let video = null;
 try {
   const stream = await navigator.mediaDevices.getUserMedia(
-      { video: { width: CAM_W, height: CAM_H }, audio: false });
+      { video: { width: { ideal: CAM_W }, height: { ideal: CAM_H } }, audio: false });
   video = document.createElement('video');
   video.srcObject = stream; video.muted = true;
   await video.play();
