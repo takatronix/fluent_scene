@@ -268,6 +268,28 @@ void sceneBeauty(Renderer& r) {
     checkScene("beauty", r.render(stage, 0.0f));
 }
 
+// LSD warps its sampling coordinates through a value-noise chain, so CPU
+// and GPU accumulate ~1e-4 of coordinate drift and a handful of pixels
+// land on the far side of a texel boundary — full checker contrast on
+// isolated pixels. The per-pixel limit is therefore waived for this scene
+// and the over_ratio limit (0.2% CPU / 1% GPU) carries the regression
+// guard alone; a real break moves orders of magnitude more pixels.
+void sceneLsd(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Lsd());
+    stage.image(view).frame({170, 10, 150, 130}).filter(Lsd().time(2.4f));
+    stage.image(view).frame({330, 10, 140, 130}).filter(Lsd().time(7.9f).geometry(1.2f));
+    stage.image(view).frame({10, 160, 150, 130}).filter(Lsd().trip(0.2f).time(5.0f));
+    stage.image(view).frame({170, 160, 150, 130}).filter(
+        Lsd().time(11.3f).drift(2.0f).chroma(2.5f));
+    const int saved_limit = g_max_diff_limit;
+    g_max_diff_limit = 255;
+    checkScene("lsd", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
+}
+
 void sceneAnimation(Renderer& r) {
     // §13-6: "the screen at t = 0.15 s" must be reproducible.
     Stage stage(320, 200);
@@ -404,6 +426,7 @@ int main(int argc, char** argv) {
     sceneTransforms(r);
     sceneFilters(r);
     sceneBeauty(r);
+    sceneLsd(r);
     sceneAnimation(r);
     sceneImagePaste(r);
     sceneUi(r);

@@ -173,3 +173,14 @@ FS_PARAM(2, radius, 60.0f, Length)
 FS_PARAM(3, amplitude, 6.0f, Length)
 FS_PARAM(4, wavelength, 26.0f, Length)
 FS_END(RippleWave)
+
+// ---- psychedelia -----------------------------------------------------------
+
+FS_FILTER(Lsd, lsd, FS_LSD,
+          "LSD trip (drift, breathing, Klüver form constants; host drives `time`)")
+FS_PARAM(0, trip, 0.8f, Scalar)
+FS_PARAM(1, time, 0.0f, Scalar)
+FS_PARAM(2, drift, 1.0f, Scalar)
+FS_PARAM(3, geometry, 0.5f, Scalar)
+FS_PARAM(4, chroma, 1.0f, Scalar)
+FS_END(Lsd)

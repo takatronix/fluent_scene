@@ -1,0 +1,340 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fluent scene — LSD</title>
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; overflow: hidden; background: #000;
+         color: #e6dff0; font: 14px/1.5 system-ui, sans-serif; }
+  /* The canvas IS the screen: fixed full-viewport, cover-cropped. Its
+     *resolution* adapts to fps independently of this display size. */
+  #v { position: fixed; inset: 0; width: 100vw; height: 100dvh;
+       object-fit: cover; background: #000; }
+  /* corner buttons — deliberately quiet */
+  .corner { position: fixed; top: max(10px, env(safe-area-inset-top)); z-index: 3;
+            width: 42px; height: 42px; border-radius: 50%;
+            background: rgba(10, 8, 16, 0.4); color: rgba(233, 228, 242, 0.75);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            font-size: 19px; line-height: 1; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            backdrop-filter: blur(6px); }
+  .corner:active { background: rgba(157, 141, 217, 0.35); }
+  #gear { right: max(10px, env(safe-area-inset-right)); }
+  #fsbtn { right: calc(max(10px, env(safe-area-inset-right)) + 52px); }
+  /* the control drawer: hidden until ⚙ */
+  #drawer { position: fixed; left: 0; right: 0;
+            bottom: 0; z-index: 2; padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+            background: rgba(10, 8, 16, 0.72); backdrop-filter: blur(10px);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            max-height: 55dvh; overflow-y: auto;
+            transform: translateY(105%); transition: transform 0.25s ease; }
+  @media (prefers-reduced-motion: reduce) { #drawer { transition: none; } }
+  #drawer.open { transform: translateY(0); }
+  .panel { display: flex; gap: 14px 18px; flex-wrap: wrap; justify-content: center;
+           padding: 6px 4px; }
+  .panel label { display: flex; flex-direction: column; align-items: center; gap: 2px;
+                 font-size: 12px; color: #b3a8c8; }
+  .panel output { font-family: ui-monospace, monospace; font-size: 11px; color: #8d81a8; }
+  .panel .group { font-size: 11px; color: #7a6f92; align-self: center;
+                  writing-mode: vertical-rl; letter-spacing: 2px; }
+  input[type=range] { width: min(120px, 26vw); accent-color: #9d8dd9; }
+  select { background: #1c1728; color: #e6dff0; border: 1px solid #3a3352;
+           border-radius: 6px; font-size: 12px; padding: 2px 6px; }
+  #bar { position: fixed; left: 10px; bottom: calc(8px + env(safe-area-inset-bottom));
+         z-index: 1; pointer-events: none;
+         font-family: ui-monospace, monospace; color: rgba(200, 190, 220, 0.55);
+         font-size: 11px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+         max-width: 80vw; }
+  #drawer.open ~ #bar { display: none; }
+</style>
+<canvas id="v" width="1280" height="720"></canvas>
+<button id="fsbtn" class="corner" title="全画面" aria-label="全画面">⛶</button>
+<button id="gear" class="corner" title="設定" aria-label="設定">⚙</button>
+<div id="drawer">
+<div class="panel">
+  <span class="group">薬理</span>
+  <label>トリップ <input id="trip" type="range" min="0" max="1.5" step="0.01" value="0.8"><output>0.80</output></label>
+  <label>ドリフト <input id="drift" type="range" min="0" max="3" step="0.01" value="1"><output>1.00</output></label>
+  <label>幾何幻覚 <input id="geometry" type="range" min="0" max="1.5" step="0.01" value="0.5"><output>0.50</output></label>
+  <label>色収差 <input id="chroma" type="range" min="0" max="3" step="0.01" value="1"><output>1.00</output></label>
+  <span class="group">再帰</span>
+  <label>残像 <input id="persist" type="range" min="0" max="0.95" step="0.01" value="0.55"><output>0.55</output></label>
+  <label>吸い込み <input id="zoom" type="range" min="-0.4" max="0.4" step="0.01" value="0.12"><output>0.12</output></label>
+  <label>渦 <input id="rot" type="range" min="-0.6" max="0.6" step="0.01" value="0.08"><output>0.08</output></label>
+  <label>トレイル <select id="trailmode">
+    <option value="source-over">なめらか</option>
+    <option value="lighten">発光残像</option>
+  </select></label>
+  <span class="group">変容</span>
+  <label>自動変容 <input id="auto" type="checkbox" checked style="width:20px;height:20px;accent-color:#9d8dd9"></label>
+  <label>深度 <input id="depth" type="range" min="0" max="1" step="0.01" value="0.6"><output>0.60</output></label>
+</div>
+</div>
+<div id="bar">loading wasm…</div>
+<script type="module">
+// LSD demo — the serotonergic visual phenomenology as one fluent_scene
+// filter (fs_lsd: drifting, breathing, diffraction fringes, Klüver form
+// constants through the retino-cortical log map), plus the one thing a
+// single-pass filter cannot do: FEEDBACK. Tracers, palinopsia, and
+// recursive tunneling all come from re-entering the previous *output* into
+// the next frame's input, slightly zoomed and rotated — closed here with
+// two canvases before the pixels enter the wasm heap.
+import createFluentScene from './fluent_scene.mjs';
+
+const SCENE = `
+schema: fluent.scene/v1alpha2
+stage: { size: [1280, 720] }
+inputs:
+  camera: { type: image.rgba8, update: per_frame }
+layers:
+  - id: live
+    content: { image: { source: $inputs.camera, fit: cover } }
+    filters: [ { lsd: { trip: 0.8, time: 0, drift: 1, geometry: 0.5, chroma: 1 } } ]
+  - id: hud
+    position: [28, 24]
+    opacity: 0.94
+    shadow: {}
+    sublayers:
+      - content: { rect: { size: [520, 64], corner_radius: 16, color: [0, 0, 0, 0.42] } }
+      - content: { text: { text: "LSD", position: [20, 8], size: 30 } }
+      - content: { text: { text: "serotonergic visual phenomenology on fluent_scene",
+                           position: [86, 22], size: 15, color: [1, 1, 1, 0.55] } }
+`;
+
+const bar = document.getElementById('bar');
+const canvas = document.getElementById('v');
+const ctx = canvas.getContext('2d');
+
+const mod = await createFluentScene();
+const fs = {
+  create: mod.cwrap('fs_create', 'number', ['number']),
+  error: mod.cwrap('fs_error', 'string', []),
+  imageBuffer: mod.cwrap('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
+  commitImage: mod.cwrap('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
+  render: mod.cwrap('fs_render', 'number', ['number', 'number', 'number', 'number']),
+  renderW: mod.cwrap('fs_render_width', 'number', ['number']),
+  renderH: mod.cwrap('fs_render_height', 'number', ['number']),
+  renderStride: mod.cwrap('fs_render_stride', 'number', ['number']),
+  layerSetFilter: mod.cwrap('fs_layer_set_filter', 'number',
+      ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
+};
+
+const yamlPtr = mod.stringToNewUTF8(SCENE);
+const inst = fs.create(yamlPtr);
+if (!inst) {
+  bar.textContent = 'scene rejected:\n' + fs.error();
+  throw new Error(fs.error());
+}
+
+// ---- sliders ---------------------------------------------------------------
+const ids = ['trip', 'drift', 'geometry', 'chroma', 'persist', 'zoom', 'rot', 'depth'];
+const sl = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+const trailmode = document.getElementById('trailmode');
+const autoBox = document.getElementById('auto');
+function labels() {
+  for (const id of ids) {
+    sl[id].nextElementSibling.textContent = Number(sl[id].value).toFixed(2);
+  }
+}
+for (const id of ids) sl[id].addEventListener('input', labels);
+labels();
+
+// ---- immersive chrome ------------------------------------------------------
+// The view fills the screen; controls live in a drawer behind ⚙. Browsers
+// refuse fullscreen without a user gesture, so "fullscreen by default"
+// becomes: first touch enters it (touch devices), double-tap and ⛶ toggle.
+const drawer = document.getElementById('drawer');
+document.getElementById('gear').addEventListener('click',
+    () => drawer.classList.toggle('open'));
+const fsToggle = () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen().catch(() => {});
+};
+document.getElementById('fsbtn').addEventListener('click', fsToggle);
+let lastTap = 0, fsTried = false;
+const coarse = matchMedia('(pointer: coarse)').matches;
+canvas.addEventListener('pointerup', () => {
+  const now = performance.now();
+  if (coarse && !fsTried && !document.fullscreenElement) {
+    fsTried = true;
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else if (now - lastTap < 350) {
+    fsToggle();
+  }
+  lastTap = now;
+});
+if (matchMedia('(min-width: 900px) and (pointer: fine)').matches) {
+  drawer.classList.add('open');
+}
+
+// ---- the trip conductor ----------------------------------------------------
+// LSD visuals are non-stationary: the brain's dynamical-state repertoire
+// expands (Tagliazucchi 2014, Atasoy 2017) and temporal fluctuations turn
+// scale-free (Varley 2020) — so the same picture never comes twice, and
+// regime changes arrive at every speed: unnoticed drifts, slow morphs,
+// sudden snaps. Model: each parameter wanders around its slider baseline
+// with (a) slow incommensurate micro-jitter and (b) Poisson-arriving
+// metastable jumps whose transition time is log-uniform in 0.25–20 s —
+// the heavy tail is what makes some changes "パッ" and others glacial.
+const DIMS = {
+  trip:     { span: 0.35, min: 0,     max: 1.5  },
+  drift:    { span: 0.9,  min: 0,     max: 3    },
+  geometry: { span: 0.5,  min: 0,     max: 1.5  },
+  chroma:   { span: 0.9,  min: 0,     max: 3    },
+  persist:  { span: 0.18, min: 0,     max: 0.95 },
+  zoom:     { span: 0.16, min: -0.4,  max: 0.4  },
+  rot:      { span: 0.22, min: -0.6,  max: 0.6  },
+};
+const conductor = { from: {}, to: {}, jitterF: {}, jitterP: {}, t0: 0, dur: 1, next: 0 };
+for (const d in DIMS) {
+  conductor.from[d] = 0; conductor.to[d] = 0;
+  conductor.jitterF[d] = 0.05 + 0.1 * Math.random();   // incommensurate per load
+  conductor.jitterP[d] = Math.random() * 6.28;
+}
+function conduct(t) {
+  const depth = Number(sl.depth.value);
+  if (t >= conductor.next) {                            // a metastable jump
+    for (const d in DIMS) {
+      conductor.from[d] = currentOffset(d, t);
+      conductor.to[d] = (Math.random() * 2 - 1) * DIMS[d].span;
+    }
+    conductor.t0 = t;
+    conductor.dur = 0.25 * Math.pow(80, Math.random()); // 0.25–20 s, log-uniform
+    conductor.next = t + 3 + 17 * -Math.log(1 - Math.random());
+  }
+  const eff = {};
+  for (const d in DIMS) {
+    const jit = 0.25 * DIMS[d].span *
+        Math.sin(t * conductor.jitterF[d] + conductor.jitterP[d]);
+    eff[d] = clampDim(d, Number(sl[d].value) + depth * (currentOffset(d, t) + jit));
+  }
+  return eff;
+}
+function currentOffset(d, t) {
+  const u = Math.min((t - conductor.t0) / conductor.dur, 1);
+  const e = u * u * (3 - 2 * u);                        // smoothstep ease
+  return conductor.from[d] + (conductor.to[d] - conductor.from[d]) * e;
+}
+function clampDim(d, v) { return Math.min(DIMS[d].max, Math.max(DIMS[d].min, v)); }
+
+// ---- webcam ----------------------------------------------------------------
+// 16:9 capture so camera, feedback plane, and stage share one aspect —
+// a mismatch here would make the fed-back echo slide against the image.
+const CAM_W = 640, CAM_H = 360;
+let video = null;
+try {
+  const stream = await navigator.mediaDevices.getUserMedia(
+      { video: { width: 640, height: 360 }, audio: false });
+  video = document.createElement('video');
+  video.srcObject = stream; video.muted = true;
+  await video.play();
+} catch (e) {
+  bar.textContent = 'webcam: ' + e + ' (needs https or localhost)';
+}
+
+// ---- the feedback loop -----------------------------------------------------
+// fb      : what the filter will see this frame  = camera ⊕ warp(prevOut)
+// prevOut : last frame's *rendered* output (so the hallucinated geometry
+//           recurses too — that is what makes tunnels bloom)
+const fb = document.createElement('canvas');
+fb.width = CAM_W; fb.height = CAM_H;
+const fbCtx = fb.getContext('2d', { willReadFrequently: true });
+const prevOut = document.createElement('canvas');
+prevOut.width = CAM_W; prevOut.height = CAM_H;
+const prevCtx = prevOut.getContext('2d');
+let hasPrev = false;
+
+function drawCover(c, src, sw, sh) {
+  const dAsp = CAM_W / CAM_H, sAsp = sw / sh;
+  let cw = sw, ch = sh, cx = 0, cy = 0;
+  if (sAsp > dAsp) { cw = sh * dAsp; cx = (sw - cw) / 2; }
+  else { ch = sw / dAsp; cy = (sh - ch) / 2; }
+  c.drawImage(src, cx, cy, cw, ch, 0, 0, CAM_W, CAM_H);
+}
+
+// ---- render loop with the adaptive resolution ladder -----------------------
+const res = new URLSearchParams(location.search).get('res');
+if (res && /^\d+x\d+$/.test(res)) {
+  const [rw, rh] = res.split('x').map(Number);
+  canvas.width = rw; canvas.height = rh;
+}
+let last = performance.now(), t0 = last, frames = 0, fpsShown = 0;
+const LADDER = [[1280, 720], [1024, 576], [854, 480], [640, 360]];
+let rung = 0;
+setInterval(() => {
+  fpsShown = frames; frames = 0;
+  if (res) return;
+  // Down only: stepping back up caused a visible quality oscillation when
+  // fps hovered around the thresholds. ?res=WxH overrides.
+  if (fpsShown > 0 && fpsShown < 24 && rung < LADDER.length - 1) ++rung;
+  const [w, h] = LADDER[rung];
+  if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
+}, 1000);
+
+function tick() {
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+  const t = ((now - t0) / 1000) % 3600;
+
+  // effective parameters: the conductor wanders around the slider
+  // baselines; unchecking 自動変容 pins them to the sliders exactly
+  const eff = autoBox.checked ? conduct(t) :
+      Object.fromEntries(Object.keys(DIMS).map(d => [d, Number(sl[d].value)]));
+
+  if (video && video.readyState >= 2) {
+    // 1) fresh retinal input
+    fbCtx.globalCompositeOperation = 'source-over';
+    fbCtx.globalAlpha = 1;
+    drawCover(fbCtx, video, video.videoWidth || 640, video.videoHeight || 360);
+    // 2) re-enter the previous output: decayed, slightly zoomed + rotated.
+    //    'lighten' keeps only the brighter history — the discrete frozen
+    //    afterimages of true palinopsia; 'source-over' is the smooth smear.
+    const persist = eff.persist;
+    if (hasPrev && persist > 0) {
+      const s = Math.exp(eff.zoom * dt * 4);
+      const a = eff.rot * dt * 4;
+      fbCtx.globalCompositeOperation = trailmode.value;
+      fbCtx.globalAlpha = persist;
+      fbCtx.translate(CAM_W / 2, CAM_H / 2);
+      fbCtx.scale(s, s);
+      fbCtx.rotate(a);
+      fbCtx.translate(-CAM_W / 2, -CAM_H / 2);
+      fbCtx.drawImage(prevOut, 0, 0);
+      fbCtx.setTransform(1, 0, 0, 1, 0, 0);
+      fbCtx.globalCompositeOperation = 'source-over';
+      fbCtx.globalAlpha = 1;
+    }
+    // 3) feed the composite to the scene input
+    const data = fbCtx.getImageData(0, 0, CAM_W, CAM_H).data;
+    const ptr = fs.imageBuffer(inst, 'camera', CAM_W, CAM_H);
+    mod.HEAPU8.set(data, ptr);
+    fs.commitImage(inst, 'camera', CAM_W, CAM_H);
+  }
+
+  // 4) drive the filter — slot order from filters_def.h:
+  //    trip, time, drift, geometry, chroma
+  fs.layerSetFilter(inst, 'live', 'lsd',
+      eff.trip, t, eff.drift, eff.geometry, eff.chroma);
+
+  // 5) render, paint, and remember the output for the next re-entry
+  const px = fs.render(inst, dt, canvas.width, canvas.height);
+  const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
+  if (w === canvas.width && stride === w * 4) {
+    const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
+    ctx.putImageData(new ImageData(view, w, h), 0, 0);
+    prevCtx.drawImage(canvas, 0, 0, CAM_W, CAM_H);
+    hasPrev = true;
+  }
+  ++frames;
+  const phase = autoBox.checked
+      ? (t < conductor.t0 + conductor.dur
+             ? `転移中 ${conductor.dur < 1.5 ? '(パッ)' : '(ゆっくり)'}`
+             : `滞留 → 次の転移まで ${Math.max(0, conductor.next - t).toFixed(0)}s`)
+      : '手動';
+  bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · 変容: ${phase} · ` +
+      `薬理=フィルタ本体 / 再帰=前フレーム出力の再入力`;
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>

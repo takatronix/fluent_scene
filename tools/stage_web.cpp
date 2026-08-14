@@ -1712,6 +1712,9 @@ int main(int argc, char** argv) {
                     const float wave = std::sin(t * 0.8f + tile.phase);
                     f.values[0] = def != 0 ? def * (0.7f + 0.3f * wave) : 0.4f * wave;
                 }
+                if (tile.spec->mode == FS_LSD) {
+                    f.values[1] = t;  // lsd animates through its `time` slot
+                }
                 tile.img->clearFilters();
                 tile.img->filter(f);
                 const float dx = tile.home.x - mouse.x;
@@ -1741,7 +1744,12 @@ int main(int argc, char** argv) {
                 pip_pos.y += (target.y - pip_pos.y) * 0.04f;
                 pip.position(pip_pos);
             }
-            if (fx_dirty) {
+            // lsd is time-driven: while selected, its filter re-applies every
+            // frame with `time` (slot 1) advancing, the fx::Ripple pattern.
+            const bool sel_lsd = sel_effect > 0 &&
+                                 sel_effect <= static_cast<int>(table.size()) &&
+                                 table[static_cast<size_t>(sel_effect - 1)].mode == FS_LSD;
+            if (fx_dirty || sel_lsd) {
                 fx_dirty = false;
                 video.clearFilters();
                 if (sel_effect > 0 && sel_effect <= static_cast<int>(table.size())) {
@@ -1753,6 +1761,9 @@ int main(int argc, char** argv) {
                     if (sel_param >= 0 && !spec.params.empty()) {
                         const float def = spec.params[0].default_value;
                         f.values[0] = def != 0 ? 2 * def * sel_param : sel_param;
+                    }
+                    if (spec.mode == FS_LSD) {
+                        f.values[1] = t;
                     }
                     video.filter(f);
                 }

@@ -78,6 +78,7 @@ inline vec3 pow(vec3 b, vec3 e) {
 }
 inline float exp_(float v) { return std::exp(v); }
 inline float exp2_(float v) { return std::exp2(v); }
+inline float log_(float v) { return std::log(v); }
 inline float atan_(float y, float x) { return std::atan2(y, x); }
 inline float cos_(float v) { return std::cos(v); }
 inline float sin_(float v) { return std::sin(v); }
@@ -95,6 +96,7 @@ inline vec2 max2_(vec2 a, vec2 b) { return {max_(a.x, b.x), max_(a.y, b.y)}; }
 inline float pow(float b, float e) { return pow_(b, e); }
 inline float exp(float v) { return exp_(v); }
 inline float exp2(float v) { return exp2_(v); }
+inline float log(float v) { return log_(v); }
 inline float atan(float y, float x) { return atan_(y, x); }
 inline float cos(float v) { return cos_(v); }
 inline float sin(float v) { return sin_(v); }

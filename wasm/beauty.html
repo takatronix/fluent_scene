@@ -8,7 +8,8 @@
          justify-content: center; gap: 12px;
          background: radial-gradient(120% 120% at 50% 0%, #1a141b 0%, #0a070b 70%);
          color: #e8dfe6; font: 14px/1.5 system-ui, sans-serif; }
-  #v { display: block; max-width: 96vw; max-height: 78vh; aspect-ratio: 16 / 9;
+  #v { display: block; width: min(96vw, calc(78vh * 16 / 9), 1280px);
+       aspect-ratio: 16 / 9;
        background: #000; border-radius: 14px;
        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.5);
        touch-action: none; user-select: none; cursor: ew-resize; }
@@ -173,8 +174,8 @@ let rung = 0;
 setInterval(() => {
   fpsShown = frames; frames = 0;
   if (res) return;
-  if (fpsShown < 24 && rung < LADDER.length - 1) ++rung;
-  else if (fpsShown > 50 && rung > 0) --rung;
+  // Down only — see lsd.html: the up-step made the rung oscillate visibly.
+  if (fpsShown > 0 && fpsShown < 24 && rung < LADDER.length - 1) ++rung;
   const [w, h] = LADDER[rung];
   if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
 }, 1000);
