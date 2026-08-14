@@ -1,0 +1,37 @@
+# GitHub Pages — wasm/dist はそのままサイトになる。
+# dist は自己完結(スレッド不使用なので COOP/COEP 不要、外部参照は
+# MediaPipe CDN のみ)で、Pages の強制 HTTPS がカメラ許可と WebGPU の
+# secure context をそのまま満たす。main の dist が変わるたび再デプロイ。
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'wasm/dist/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: wasm/dist
+      - id: deployment
+        uses: actions/deploy-pages@v4
