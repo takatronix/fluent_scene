@@ -1,3 +1,4 @@
 build/
 tests/golden/*.actual.ppm
 wasm/gen/
+.claude/
