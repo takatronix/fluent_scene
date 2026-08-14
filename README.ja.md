@@ -2,9 +2,7 @@
 
 **[English](README.md)** | 日本語
 
-作者: **[takatronix](https://github.com/takatronix)**
-([X @takatronix](https://x.com/takatronix) · [takatronix.com](http://takatronix.com))
-— MITライセンス、[お仕事のご相談歓迎](#作者)。
+作者: **[@takatronix](https://x.com/takatronix)** · MITライセンス
 
 ![hud_basic — 実際のレンダリング出力](docs/images/hud_basic.png)
 
@@ -179,17 +177,8 @@ source ~/emsdk/emsdk_env.sh
 
 ## 作者
 
-fluent_scene の設計と実装: **takatronix** — ロボティクス、リアルタイム
-ビジョン、グラフィックス。ROS 2 の実機ロボットからブラウザまで。
-
-- X: **[@takatronix](https://x.com/takatronix)** — デモや進捗はここで
-- GitHub: [github.com/takatronix](https://github.com/takatronix)
-- Web: [takatronix.com](http://takatronix.com)
-- 連絡先: takatronix@gmail.com
-
-**コンサルティング・受託のご相談歓迎です** — ロボットHMI、リアルタイム
-映像パイプライン、GPUフィルタ、組み込み/ブラウザ描画など。
-fluent_scene が役に立ったら ⭐ とシェアをいただけると励みになります。
+**takatronix** — デモや進捗は X で:
+**[@takatronix](https://x.com/takatronix)**
 
 ## ライセンス
 

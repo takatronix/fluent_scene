@@ -2,9 +2,7 @@
 
 English | **[日本語](README.ja.md)**
 
-by **[takatronix](https://github.com/takatronix)**
-([X @takatronix](https://x.com/takatronix) · [takatronix.com](http://takatronix.com))
-— MIT licensed, and [available for work](#author).
+by **[@takatronix](https://x.com/takatronix)** · MIT licensed
 
 ![hud_basic — actual rendered output](docs/images/hud_basic.png)
 
@@ -185,18 +183,8 @@ Documentation is currently in Japanese (English versions planned):
 
 ## Author
 
-fluent_scene is designed and built by **takatronix** — robotics, real-time
-vision, and graphics engineering, from ROS 2 field robots to the browser.
-
-- X: **[@takatronix](https://x.com/takatronix)** — follow for demos and
-  progress
-- GitHub: [github.com/takatronix](https://github.com/takatronix)
-- Web: [takatronix.com](http://takatronix.com)
-- Contact: takatronix@gmail.com
-
-**Open to consulting and commissions** — robot HMIs, real-time video
-pipelines, GPU filter work, and embedded/browser rendering. If fluent_scene
-is useful to you, a ⭐ and a mention go a long way.
+**takatronix** — demos and progress on X:
+**[@takatronix](https://x.com/takatronix)**
 
 ## License
 
