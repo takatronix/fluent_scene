@@ -1,0 +1,276 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fluent scene — face studio</title>
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; align-items: center;
+         justify-content: center; gap: 12px;
+         background: radial-gradient(120% 120% at 50% 0%, #171225 0%, #08060d 70%);
+         color: #e5dff0; font: 14px/1.5 system-ui, sans-serif; }
+  #v { display: block; width: min(96vw, calc(78vh * 16 / 9), 1280px); aspect-ratio: 16 / 9;
+       background: #000; border-radius: 14px;
+       box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.5);
+       touch-action: none; user-select: none; }
+  #panel { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center;
+           padding: 10px 22px; border-radius: 12px; background: rgba(255,255,255,0.05); }
+  #panel label { display: flex; flex-direction: column; align-items: center; gap: 2px;
+                 font-size: 12px; color: #b3a8cc; }
+  #panel output { font-family: ui-monospace, monospace; font-size: 11px; color: #78688f; }
+  input[type=range] { width: 120px; accent-color: #a98de0; }
+  #bar { font-family: ui-monospace, monospace; color: #837a99; font-size: 12px;
+         white-space: pre-wrap; text-align: center; }
+</style>
+<canvas id="v" width="1280" height="720"></canvas>
+<div id="panel">
+  <label>デカ目 <input id="eye" type="range" min="0" max="1" step="0.01" value="0.5"><output>0.50</output></label>
+  <label>小顔 <input id="slim" type="range" min="0" max="1" step="0.01" value="0.35"><output>0.35</output></label>
+  <label>リップ <input id="lip" type="range" min="0" max="1" step="0.01" value="0.5"><output>0.50</output></label>
+  <label>チーク <input id="cheek" type="range" min="0" max="1" step="0.01" value="0.35"><output>0.35</output></label>
+  <label>美肌 <input id="smoothing" type="range" min="0" max="1" step="0.01" value="0.5"><output>0.50</output></label>
+</div>
+<div id="bar">loading wasm…</div>
+<a href="https://x.com/takatronix" target="_blank" rel="noopener" style="position:fixed;right:12px;bottom:10px;z-index:9;font:11px ui-monospace,monospace;color:rgba(255,255,255,0.6);text-decoration:none;background:rgba(0,0,0,0.35);padding:4px 10px;border-radius:999px;backdrop-filter:blur(4px)">fluent_scene · by <b style="color:rgba(255,255,255,0.85)">@takatronix</b></a>
+<script type="module">
+// FACE STUDIO — gpupixel Phase 2 on fluent_scene: eye enlargement, jaw
+// slimming, lip rouge, and blush, all landmark-driven. MediaPipe Face
+// Landmarker (478 pts w/ iris) runs OUTSIDE the engine; each frame its
+// landmarks are distilled into a 44-value control strip (16-bit fixed
+// point in a 44x1 image) and fed through the face filter's image
+// parameter — the same channel a robot-side analyzer would use. No face
+// on screen = zeroed strip = the filter passes through.
+import createFluentScene from './fluent_scene.mjs';
+
+const SCENE = `
+schema: fluent.scene/v1alpha2
+stage: { size: [1280, 720] }
+inputs:
+  camera: { type: image.rgba8, update: per_frame }
+  facepts: { type: image.rgba8, update: per_frame }
+layers:
+  - id: view
+    content: { image: { source: $inputs.camera, fit: cover } }
+    filters: [ { face: { points: $inputs.facepts, eye: 0.5, slim: 0.35, lip: 0.5, cheek: 0.35 } },
+               { beauty: { smoothing: 0.5, whiten: 0, radius: 10, sharpen: 0.15, denoise: 0.35 } } ]
+  - id: hud
+    position: [28, 24]
+    opacity: 0.94
+    shadow: {}
+    sublayers:
+      - content: { rect: { size: [430, 64], corner_radius: 16, color: [0, 0, 0, 0.42] } }
+      - content: { text: { text: "FACE STUDIO", position: [20, 8], size: 30 } }
+      - content: { text: { text: "landmarks bend the pixels - warp + makeup", position: [20, 40],
+                           size: 15, color: [1, 1, 1, 0.55] } }
+`;
+
+const bar = document.getElementById('bar');
+let canvas = document.getElementById('v');
+let ctx = null;
+
+const mod = await createFluentScene();
+const c = (n, r, a) => mod.cwrap(n, r, a);
+const fs = {
+  create: c('fs_create', 'number', ['number']),
+  error: c('fs_error', 'string', []),
+  backend: c('fs_backend', 'string', []),
+  imageBuffer: c('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
+  commitImage: c('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
+  render: c('fs_render', 'number', ['number', 'number', 'number', 'number']),
+  renderW: c('fs_render_width', 'number', ['number']),
+  renderH: c('fs_render_height', 'number', ['number']),
+  renderStride: c('fs_render_stride', 'number', ['number']),
+  setFilter: c('fs_layer_set_filter', 'number',
+      ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
+};
+
+const inst = fs.create(mod.stringToNewUTF8(SCENE));
+if (!inst) { bar.textContent = 'scene rejected:\n' + fs.error(); throw new Error(fs.error()); }
+
+// ---- backend: WebGPU when the browser has it, CPU otherwise ----------------
+let gpu = false;
+try {
+  if (navigator.gpu) {
+    const gInit = c('fs_webgpu_init', null, ['string']);
+    const gStatus = c('fs_webgpu_status', 'number', []);
+    const gError = c('fs_webgpu_error', 'string', []);
+    fs.gRender = c('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']);
+    gInit('#v');
+    bar.textContent = 'waiting for WebGPU device…';
+    gpu = await new Promise(resolve => {
+      const t0 = performance.now();
+      (function poll() {
+        const s = gStatus();
+        if (s === 1) return resolve(true);
+        if (s === -1) { console.error('WebGPU init failed:', gError()); return resolve(false); }
+        if (performance.now() - t0 > 5000) return resolve(false);
+        requestAnimationFrame(poll);
+      })();
+    });
+  }
+} catch (e) { gpu = false; }
+if (!gpu) ctx = canvas.getContext('2d');
+fs.gStatus = gpu ? c('fs_webgpu_status', 'number', []) : () => -1;
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+if (gpu && DPR > 1) { canvas.width = 1280 * DPR; canvas.height = 720 * DPR; }
+
+function fallbackToCpu(why) {
+  if (!gpu) return;
+  gpu = false;
+  console.error('falling back to CPU renderer:', why);
+  const fresh = canvas.cloneNode(false);
+  fresh.width = 1280; fresh.height = 720;
+  canvas.replaceWith(fresh);
+  canvas = fresh;
+  ctx = canvas.getContext('2d');
+}
+
+// ---- sliders ----------------------------------------------------------------
+const sliders = ['eye', 'slim', 'lip', 'cheek', 'smoothing'].map(id => document.getElementById(id));
+function pushFilters() {
+  const [ey, sl, li, ch, sm] = sliders.map(s => Number(s.value));
+  for (const s of sliders) s.nextElementSibling.textContent = Number(s.value).toFixed(2);
+  fs.setFilter(inst, 'view', 'face', ey, sl, li, ch, 0);
+  fs.setFilter(inst, 'view', 'beauty', sm, 0, 10, 0.15, 0.35);
+}
+for (const s of sliders) s.addEventListener('input', pushFilters);
+
+// ---- webcam, mirrored (selfie) ---------------------------------------------
+let CAM_W = 1280, CAM_H = 720;
+const grab = document.createElement('canvas');
+const grabCtx = grab.getContext('2d', { willReadFrequently: true });
+let video = null;
+try {
+  const stream = await navigator.mediaDevices.getUserMedia(
+      { video: { width: { ideal: CAM_W }, height: { ideal: CAM_H } }, audio: false });
+  video = document.createElement('video');
+  video.srcObject = stream; video.muted = true;
+  await video.play();
+  CAM_W = video.videoWidth || CAM_W;
+  CAM_H = video.videoHeight || CAM_H;
+  grab.width = CAM_W;
+  grab.height = CAM_H;
+  grabCtx.setTransform(-1, 0, 0, 1, CAM_W, 0);   // mirror once, at capture
+} catch (e) {
+  bar.textContent = 'webcam: ' + e + ' (needs https or localhost)';
+}
+
+// camera-normalized → stage-uv under cover fit (the filter's own space)
+const covScale = Math.max(1280 / CAM_W, 720 / CAM_H);
+const covOx = (CAM_W * covScale - 1280) / 2, covOy = (CAM_H * covScale - 720) / 2;
+const toUV = (nx, ny) => [(nx * CAM_W * covScale - covOx) / 1280,
+                          (ny * CAM_H * covScale - covOy) / 720];
+const ASPECT = 1280 / 720;
+const adist = (a, b) => Math.hypot((a[0] - b[0]) * ASPECT, a[1] - b[1]);
+
+// ---- analyzer: MediaPipe Face Landmarker → 44-value control strip ----------
+let mode = 'none';
+let landmarker = null;
+let lastSeen = 0;
+const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+try {
+  const vision = await import(`${MP}/vision_bundle.mjs`);
+  const files = await vision.FilesetResolver.forVisionTasks(`${MP}/wasm`);
+  const make = delegate => vision.FaceLandmarker.createFromOptions(files, {
+    baseOptions: {
+      modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+      delegate,
+    },
+    runningMode: 'VIDEO',
+    numFaces: 1,
+  });
+  try { landmarker = await make('GPU'); }
+  catch (e) { console.error('GPU delegate failed, retrying on CPU:', e); landmarker = await make('CPU'); }
+  mode = 'iris';
+} catch (e) {
+  console.error('MediaPipe unavailable:', e);
+}
+
+const vals = new Float32Array(44);
+function commitStrip() {
+  const fb = fs.imageBuffer(inst, 'facepts', 44, 1);
+  for (let i = 0; i < 44; ++i) {
+    const v = Math.max(0, Math.min(65535, Math.round(vals[i] * 65535)));
+    mod.HEAPU8[fb + i * 4] = v >> 8;
+    mod.HEAPU8[fb + i * 4 + 1] = v & 255;
+    mod.HEAPU8[fb + i * 4 + 2] = 0;
+    mod.HEAPU8[fb + i * 4 + 3] = 255;
+  }
+  fs.commitImage(inst, 'facepts', 44, 1);
+}
+commitStrip();   // zeros = pass-through until a face arrives
+
+function analyze() {
+  if (!video || video.readyState < 2 || !landmarker) return;
+  grabCtx.drawImage(video, 0, 0, CAM_W, CAM_H);
+  const r = landmarker.detectForVideo(grab, performance.now());
+  if (!(r.faceLandmarks && r.faceLandmarks.length)) {
+    if (performance.now() - lastSeen > 800) { vals.fill(0); commitStrip(); }
+    return;
+  }
+  lastSeen = performance.now();
+  const lm = r.faceLandmarks[0];
+  const P = i => toUV(lm[i].x, lm[i].y);
+
+  // eyes: iris centers + half the eye width (aspect-corrected uv metric)
+  const eR = P(468), eL = P(473);
+  const rR = adist(P(33), P(133)) * 0.5, rL = adist(P(362), P(263)) * 0.5;
+  vals[0] = eR[0]; vals[1] = eR[1]; vals[2] = rR;
+  vals[3] = eL[0]; vals[4] = eL[1]; vals[5] = rL;
+  // mouth: corners set the width, outer lips the height
+  const c61 = P(61), c291 = P(291);
+  vals[6] = (c61[0] + c291[0]) / 2; vals[7] = (c61[1] + c291[1]) / 2;
+  vals[8] = adist(c61, c291) * 0.62; vals[9] = adist(P(0), P(17)) * 0.62;
+  // cheeks: under the eyes, radius from face width
+  const chL = P(50), chR = P(280);
+  vals[11] = chL[0]; vals[12] = chL[1]; vals[13] = chR[0]; vals[14] = chR[1];
+  vals[15] = adist(P(234), P(454)) * 0.16;
+  // jaw pairs: three per side, pulled toward the mid-face point
+  const mid = P(5);
+  const JAW = [172, 136, 150, 397, 365, 379];
+  for (let k = 0; k < 6; ++k) {
+    const o = P(JAW[k]);
+    vals[16 + k * 4] = o[0]; vals[17 + k * 4] = o[1];
+    vals[18 + k * 4] = o[0] + (mid[0] - o[0]) * 0.15;
+    vals[19 + k * 4] = o[1] + (mid[1] - o[1]) * 0.15;
+  }
+  commitStrip();
+}
+setInterval(analyze, 66);   // ~15 Hz; warp itself runs at render rate
+
+// ---- render loop -----------------------------------------------------------
+let last = performance.now(), frames = 0, fpsShown = 0;
+setInterval(() => { fpsShown = frames; frames = 0; }, 1000);
+
+function tick() {
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+
+  if (video && video.readyState >= 2) {
+    grabCtx.drawImage(video, 0, 0, CAM_W, CAM_H);
+    const data = grabCtx.getImageData(0, 0, CAM_W, CAM_H).data;
+    const ptr = fs.imageBuffer(inst, 'camera', CAM_W, CAM_H);
+    mod.HEAPU8.set(data, ptr);
+    fs.commitImage(inst, 'camera', CAM_W, CAM_H);
+  }
+
+  if (gpu) {
+    if (fs.gStatus() !== 1) fallbackToCpu('device left ready state');
+    else if (!fs.gRender(inst, dt, canvas.width, canvas.height)) fallbackToCpu('fs_render_webgpu failed');
+  }
+  if (!gpu) {
+    const px = fs.render(inst, dt, canvas.width, canvas.height);
+    const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
+    if (w === canvas.width && stride === w * 4) {
+      const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
+      ctx.putImageData(new ImageData(view, w, h), 0, 0);
+    }
+  }
+  ++frames;
+  const tracking = performance.now() - lastSeen < 800;
+  bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · wasm/${fs.backend()}` +
+      ` · analyzer: ${mode}${tracking ? ' · TRACKING' : ' · no face'}`;
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>

@@ -338,6 +338,12 @@ void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext) {
             return;
         }
         g_filter_image = &f.image;
+    } else if (f.mode == FS_FACE) {
+        // No landmark strip = no face on screen: pass through quietly.
+        if (!f.image.valid()) {
+            return;
+        }
+        g_filter_image = &f.image;
     }
     Buf src = buf;  // filters read the unmodified source
     g_filter_src = &src;

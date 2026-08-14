@@ -31,10 +31,11 @@ const CARDS = [
   { id: 1, label: 'GAZE FOCUS', sub: 'iris drives the lens',  href: 'gaze.html' },
   { id: 2, label: 'LSD',        sub: 'phenomenology, shaded', href: 'lsd.html' },
   { id: 3, label: 'WATER',      sub: 'touch the webcam',      href: 'demo.html' },
-  { id: 4, label: 'GPU LAB',    sub: 'cpu = webgpu, proven',  href: 'webgpu.html' },
+  { id: 4, label: 'FACE',       sub: 'warp + makeup, live',   href: 'face.html' },
+  { id: 5, label: 'GPU LAB',    sub: 'cpu = webgpu, proven',  href: 'webgpu.html' },
 ];
-const CARD_W = 224, CARD_H = 196, GAP = 24;
-const ROW_X0 = (1280 - (CARD_W * 5 + GAP * 4)) / 2;   // 32
+const CARD_W = 196, CARD_H = 196, GAP = 16;
+const ROW_X0 = (1280 - (CARD_W * CARDS.length + GAP * (CARDS.length - 1)) / 1) / 2;
 const CARD_Y = 476;                                    // top edge at rest
 const cx = i => ROW_X0 + i * (CARD_W + GAP) + CARD_W / 2;
 const CY_REST = CARD_Y + CARD_H / 2, CY_IN = CY_REST + 46, LIFT = 10;
@@ -59,7 +60,8 @@ ${i === 0 ? `        filters: [ { beauty: { smoothing: 1, denoise: 1, sharpen: 0
 ${i === 1 ? `        filters: [ { blur: { radius: 5 } } ]` : ''}\
 ${i === 2 ? `        filters: [ { lsd: { trip: 1, chroma: 0.9 } } ]` : ''}\
 ${i === 3 ? `        filters: [ { ripple: { center_x: 102, center_y: 61 } } ]` : ''}\
-${i === 4 ? `        filters: [ { halftone: { spacing: 5 } } ]` : ''}
+${i === 4 ? `        filters: [ { swirl: { radius: 0.55, angle: 1.6 } } ]` : ''}\
+${i === 5 ? `        filters: [ { halftone: { spacing: 5 } } ]` : ''}
 ${i === 1 ? `      - content: { crosshair: { center: [${CARD_W / 2}, 71], size: 30, color: [0.3, 0.95, 0.65, 0.9] } }` : ''}
       - content: { text: { text: "${CARDS[i].label}", position: [${CARD_W / 2}, 140], size: 23,
                            align: center } }
@@ -230,7 +232,7 @@ CARDS.forEach((card, i) => setTimeout(() => {
 let hovered = -1;
 const cardAt = (x, y) => {
   if (y < CARD_Y - LIFT || y > CARD_Y + CARD_H) return -1;
-  for (let i = 0; i < 5; ++i) {
+  for (let i = 0; i < CARDS.length; ++i) {
     const x0 = ROW_X0 + i * (CARD_W + GAP);
     if (x >= x0 && x <= x0 + CARD_W) return i;
   }

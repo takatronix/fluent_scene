@@ -345,6 +345,81 @@ vec3 fs_lut(vec2 uv, float amount, float skin, float tiles, float tile_n) {
     float gate = mix(1.0, fs_skin_chroma(c), clamp(skin, 0.0, 1.0));
     return mix(c, graded, clamp(amount, 0.0, 1.0) * gate);
 }
+// Landmark-driven face warp and makeup — gpupixel Phase 2, generalized.
+// The image parameter is a 44×1 control strip: each texel packs one value
+// as 16-bit fixed point (hi byte in r, lo in g), all coordinates normalized
+// to the layer's uv. An analyzer (MediaPipe in the browser, ml-hub on the
+// robot) writes the strip per frame; no strip = pass-through, like `lut`.
+//
+// Strip layout (values, not texels ×4):
+//    0-2  right eye: cx, cy, radius      3-5  left eye: cx, cy, radius
+//    6-9  mouth: cx, cy, rx, ry         10    reserved
+//   11-14 cheeks: Lx, Ly, Rx, Ry        15    cheek radius
+//   16-39 six jaw warp pairs: origin.xy, target.xy (slim)
+//
+// Warping is the classic inverse mapping: eyes magnify by the parabolic
+// weight 1-(1-w²)δ (gpupixel's enlargeEye), the jaw pulls toward its
+// targets with a linear falloff (curveWarp). Makeup is applied at the
+// warped position so it sticks to the face: lips get a multiply rouge in
+// a soft ellipse, cheeks a blend toward pink in soft discs. Distances are
+// aspect-corrected so circles are circles.
+float fs_face_val(float i) {
+    vec3 t = FS_SAMPLE_LUT(vec2((i + 0.5) / 44.0, 0.5));
+    return (floor(t.x * 255.0 + 0.5) * 256.0 + floor(t.y * 255.0 + 0.5)) / 65535.0;
+}
+vec2 fs_face_pt(float i) { return vec2(fs_face_val(i), fs_face_val(i + 1.0)); }
+
+vec3 fs_face(vec2 uv, float eye, float slim, float lip, float cheek) {
+    float aspect = FS_TEXEL.y / FS_TEXEL.x;   // width / height
+    vec2 src = uv;
+    if (slim > 0.0) {
+        for (int k = 0; k < 6; ++k) {
+            float base = 16.0 + float(k) * 4.0;
+            vec2 o = fs_face_pt(base);
+            vec2 tgt = fs_face_pt(base + 2.0);
+            vec2 span = vec2((tgt.x - o.x) * aspect, tgt.y - o.y);
+            float reach = length(span) * 3.0;
+            if (reach > 1e-4) {
+                vec2 rel = vec2((src.x - o.x) * aspect, src.y - o.y);
+                float ratio = clamp(1.0 - length(rel) / reach, 0.0, 1.0);
+                src = src - (tgt - o) * (slim * 0.6 * ratio);
+            }
+        }
+    }
+    if (eye > 0.0) {
+        for (int k = 0; k < 2; ++k) {
+            vec2 ec = fs_face_pt(float(k) * 3.0);
+            float reach = fs_face_val(float(k) * 3.0 + 2.0) * 2.2;
+            vec2 rel = vec2((src.x - ec.x) * aspect, src.y - ec.y);
+            float d = length(rel);
+            if (reach > 1e-4 && d < reach) {
+                float w = d / reach;
+                src = ec + (src - ec) * (1.0 - (1.0 - w * w) * eye * 0.35);
+            }
+        }
+    }
+    vec3 c = FS_SAMPLE(src);
+    if (lip > 0.0) {
+        vec2 mc = fs_face_pt(6.0);
+        float rx = max(fs_face_val(8.0), 1e-4);
+        float ry = max(fs_face_val(9.0), 1e-4);
+        vec2 rel = vec2((src.x - mc.x) * aspect / rx, (src.y - mc.y) / ry);
+        float m = clamp(1.0 - dot(rel, rel), 0.0, 1.0);
+        c = mix(c, c * vec3(1.0, 0.5, 0.58), m * m * clamp(lip, 0.0, 1.0) * 0.85);
+    }
+    if (cheek > 0.0) {
+        float r = max(fs_face_val(15.0), 1e-4);
+        for (int k = 0; k < 2; ++k) {
+            vec2 cc = fs_face_pt(11.0 + float(k) * 2.0);
+            vec2 rel = vec2((src.x - cc.x) * aspect, src.y - cc.y);
+            float m = clamp(1.0 - length(rel) / r, 0.0, 1.0);
+            c = mix(c, c + (vec3(1.0, 0.45, 0.52) - c) * 0.5,
+                    m * m * clamp(cheek, 0.0, 1.0) * 0.5);
+        }
+    }
+    return c;
+}
+
 #endif  // FS_SAMPLE_LUT
 
 // ---- resampling filters (change where we read, then what we read) ----------
@@ -606,6 +681,7 @@ vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p
     else if (mode == FS_BEAUTY)          c = fs_beauty(uv, p0, p1, p2, p3, p4);
 #ifdef FS_SAMPLE_LUT
     else if (mode == FS_LUT)             c = fs_lut(uv, p0, p1, p2, p3);
+    else if (mode == FS_FACE)            c = fs_face(uv, p0, p1, p2, p3);
 #endif
     else if (mode == FS_RIPPLE)          c = fs_ripple(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_LSD)             c = fs_lsd(uv, p0, p1, p2, p3, p4);

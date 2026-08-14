@@ -993,7 +993,7 @@ struct VulkanRenderer::Impl {
         // and cache as image content; alpha is opaque, so the premultiply
         // staging is a no-op for them.
         for (const Filter& f : layer.filters()) {
-            if (f.mode == FS_LUT && f.image.valid()) {
+            if ((f.mode == FS_LUT || f.mode == FS_FACE) && f.image.valid()) {
                 uploadContentImage(f.image);
             }
         }
@@ -1506,13 +1506,14 @@ struct VulkanRenderer::Impl {
                 continue;
             }
             VkImageView lut_view = VK_NULL_HANDLE;
-            if (f.mode == FS_LUT) {
-                // Unfed or malformed atlas: the documented pass-through
-                // (identical to the CPU reference and the shader's own
-                // fallback for backends without the sampler).
+            if (f.mode == FS_LUT || f.mode == FS_FACE) {
+                // Unfed or malformed image parameter: the documented
+                // pass-through (identical to the CPU reference and the
+                // shader's own fallback for backends without the sampler).
                 auto it = image_cache.find(f.image.pixels);
-                if (!lutAtlasGrid(f.image, &values[2], &values[3]) ||
-                    it == image_cache.end()) {
+                if (it == image_cache.end() ||
+                    (f.mode == FS_LUT &&
+                     !lutAtlasGrid(f.image, &values[2], &values[3]))) {
                     continue;
                 }
                 lut_view = it->second.image.view;

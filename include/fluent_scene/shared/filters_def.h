@@ -102,6 +102,17 @@ FS_PARAM(0, amount, 1.0f, Scalar)
 FS_PARAM(1, skin, 0.0f, Scalar)
 FS_END(Lut)
 
+// The 44×1 control strip comes from a landmark analyzer through the image
+// parameter (`points: $inputs.<name>`); see fs_face in filters_shared.h for
+// the layout. No strip = pass-through.
+FS_FILTER_IMG(Face, face, FS_FACE, points,
+              "landmark-driven face warp and makeup (eye, slim, lip, cheek)")
+FS_PARAM(0, eye, 0.0f, Scalar)
+FS_PARAM(1, slim, 0.0f, Scalar)
+FS_PARAM(2, lip, 0.0f, Scalar)
+FS_PARAM(3, cheek, 0.0f, Scalar)
+FS_END(Face)
+
 FS_FILTER(ColorTransform, color_transform, FS_COLOR_TRANSFORM,
           "brightness, contrast, saturation, gamma")
 FS_PARAM(0, brightness, 0.0f, Scalar)

@@ -42,6 +42,7 @@ stage: { size: [480, 270] }
 inputs:
   camera: { type: image.rgba8, update: per_frame }
   grade: { type: image.rgba8 }
+  facepts: { type: image.rgba8 }
 layers:
   - content: { grid: { spacing: 40, color: [1, 1, 1, 0.12] } }
   - id: img1
@@ -66,6 +67,10 @@ layers:
   - content: { line: { from: [300, 145], to: [460, 200], thickness: 5, dash: 12,
                        color: [1, 1, 0.4, 1] } }
   - content: { text: { text: "webgpu = cpu?", position: [16, 220], size: 26 } }
+  - id: img5
+    frame: [180, 132, 132, 66]
+    content: { image: { source: $inputs.camera, fit: cover } }
+    filters: [ { face: { points: $inputs.facepts, eye: 0.8, slim: 0.7, lip: 1, cheek: 1 } } ]
   - id: img4
     frame: [336, 132, 132, 66]
     content: { image: { source: $inputs.camera, fit: cover } }
@@ -132,6 +137,28 @@ for (let s = 0; s < N; ++s) {
   }
 }
 fs.commitImage(inst, 'grade', LW, LW);
+
+// Synthetic face-control strip (44 values, 16-bit fixed point): a fake face
+// centered in the tile so warp and makeup paths both execute.
+{
+  const vals = new Float32Array(44);
+  const set = (i, ...v) => v.forEach((x, k) => vals[i + k] = x);
+  set(0, 0.35, 0.40, 0.08,  0.65, 0.40, 0.08);       // eyes
+  set(6, 0.50, 0.70, 0.15, 0.08);                    // mouth
+  set(11, 0.30, 0.55, 0.70, 0.55);                   // cheeks
+  vals[15] = 0.12;                                   // cheek radius
+  for (let k = 0; k < 6; ++k)                        // jaw pairs
+    set(16 + k * 4, 0.2 + k * 0.1, 0.85, 0.25 + k * 0.1, 0.78);
+  const fb = fs.imageBuffer(inst, 'facepts', 44, 1);
+  for (let i = 0; i < 44; ++i) {
+    const v = Math.max(0, Math.min(65535, Math.round(vals[i] * 65535)));
+    mod.HEAPU8[fb + i * 4] = v >> 8;
+    mod.HEAPU8[fb + i * 4 + 1] = v & 255;
+    mod.HEAPU8[fb + i * 4 + 2] = 0;
+    mod.HEAPU8[fb + i * 4 + 3] = 255;
+  }
+  fs.commitImage(inst, 'facepts', 44, 1);
+}
 
 const paint = (id, pix) => {
   const ctx = document.getElementById(id).getContext('2d');
