@@ -66,25 +66,25 @@
 <div id="drawer">
 <div class="panel">
   <span class="group" data-k="pharma">薬理</span>
-  <label><span data-k="trip">トリップ</span> <input id="trip" type="range" min="0" max="1.5" step="0.01" value="0.3"><output>0.80</output></label>
-  <label><span data-k="drift">ドリフト</span> <input id="drift" type="range" min="0" max="3" step="0.01" value="0.4"><output>1.00</output></label>
-  <label><span data-k="geometry">幾何幻覚</span> <input id="geometry" type="range" min="0" max="1.5" step="0.01" value="0.18"><output>0.50</output></label>
+  <label><span data-k="trip">トリップ</span> <input id="trip" type="range" min="0" max="1.5" step="0.01" value="0.8"><output>0.80</output></label>
+  <label><span data-k="drift">ドリフト</span> <input id="drift" type="range" min="0" max="3" step="0.01" value="1"><output>1.00</output></label>
+  <label><span data-k="geometry">幾何幻覚</span> <input id="geometry" type="range" min="0" max="1.5" step="0.01" value="0.5"><output>0.50</output></label>
   <label><span data-k="texture">質感</span> <select id="style">
     <option value="organic" data-k="organic">オーガニック</option>
     <option value="digital" data-k="digital">デジタル</option>
   </select></label>
-  <label><span data-k="chroma">色収差</span> <input id="chroma" type="range" min="0" max="3" step="0.01" value="0.35"><output>1.00</output></label>
+  <label><span data-k="chroma">色収差</span> <input id="chroma" type="range" min="0" max="3" step="0.01" value="1"><output>1.00</output></label>
   <span class="group" data-k="recur">再帰</span>
-  <label><span data-k="persist">残像</span> <input id="persist" type="range" min="0" max="0.95" step="0.01" value="0.3"><output>0.55</output></label>
-  <label><span data-k="zoom">吸い込み</span> <input id="zoom" type="range" min="-0.4" max="0.4" step="0.01" value="0.05"><output>0.12</output></label>
-  <label><span data-k="swirl">渦</span> <input id="rot" type="range" min="-0.6" max="0.6" step="0.01" value="0.03"><output>0.08</output></label>
+  <label><span data-k="persist">残像</span> <input id="persist" type="range" min="0" max="0.95" step="0.01" value="0.55"><output>0.55</output></label>
+  <label><span data-k="zoom">吸い込み</span> <input id="zoom" type="range" min="-0.4" max="0.4" step="0.01" value="0.12"><output>0.12</output></label>
+  <label><span data-k="swirl">渦</span> <input id="rot" type="range" min="-0.6" max="0.6" step="0.01" value="0.08"><output>0.08</output></label>
   <label><span data-k="trail">トレイル</span> <select id="trailmode">
     <option value="source-over" data-k="smooth">なめらか</option>
     <option value="lighten" data-k="glow">発光残像</option>
   </select></label>
   <span class="group" data-k="flux">変容</span>
   <label><span data-k="auto">自動変容</span> <input id="auto" type="checkbox" checked style="width:20px;height:20px;accent-color:#9d8dd9"></label>
-  <label><span data-k="depth">深度</span> <input id="depth" type="range" min="0" max="1" step="0.01" value="0.4"><output>0.60</output></label>
+  <label><span data-k="depth">深度</span> <input id="depth" type="range" min="0" max="1" step="0.01" value="0.6"><output>0.60</output></label>
   <label><span data-k="gaze">視線追従</span> <input id="gazechk" type="checkbox" checked style="width:20px;height:20px;accent-color:#9d8dd9"></label>
 </div>
 </div>
@@ -327,6 +327,7 @@ let blinkPulse = 0, wasBlink = false, blinkJump = false;
 // 洗い流される(長い閉眼=完全リセット)
 let eyeState = 'open', eyesClosedAt = 0, closedLevel = 0, cevArmed = false;
 let blinkSnap = false;
+let tripT0 = 0;  // when the come-up (re)started — the trip builds from here
 let gbias = { yaw: 0, pitch: 0 }, gcalib = [];
 try {
   const b = JSON.parse(localStorage.getItem('lsd_gaze_bias'));
@@ -492,13 +493,11 @@ function tick() {
   closedLevel = Math.min(1, Math.max(0,
       closedLevel + (closedHeld ? dt / 0.55 : -dt / 0.4)));
   if (closedLevel > 0) {
-    for (const d in DIMS) {
-      eff[d] += (DEFAULTS[d] - eff[d]) * closedLevel;
-    }
     prevCtx.fillStyle = `rgba(0,0,0,${Math.min(0.9, closedLevel * dt * 6).toFixed(3)})`;
     prevCtx.fillRect(0, 0, CAM_W, CAM_H);
     if (closedLevel >= 0.999 && cevArmed !== 'reset') {
       cevArmed = 'reset';
+      tripT0 = t;                     // the come-up starts over
       for (const d in DIMS) {
         conductor.from[d] = 0;
         conductor.to[d] = 0;
@@ -511,6 +510,15 @@ function tick() {
     }
   } else if (cevArmed) {
     cevArmed = false;
+  }
+  // ---- カムアップ ------------------------------------------------------------
+  // The trip builds: effect strength eases from a whisper (30%) toward the
+  // sliders' full values over a couple of minutes. Closing the eyes drains
+  // it in proportion, and a committed reset starts the climb from zero.
+  const rise = (1 - Math.exp(-(t - tripT0) / 30)) * (1 - closedLevel);
+  const lift = 0.3 + 0.7 * rise;
+  for (const d in DIMS) {
+    eff[d] *= lift;
   }
   if (blinkSnap) {
     // a blink the world noticed: one fast metastable jump — 「パッ」
@@ -603,9 +611,10 @@ function tick() {
              : T(`滞留 → 次の転移まで ${Math.max(0, conductor.next - t).toFixed(0)}s`,
                  `holding → next shift in ${Math.max(0, conductor.next - t).toFixed(0)}s`))
       : T('手動', 'manual');
+  const climb = ` · 効き${Math.round(lift * 100)}%`;
   const eye = closedLevel > 0.3 ? ' · ↺ 初期化中…'
             : contactLevel > 0.5 ? ' · 👁アイコンタクト' : '';
-  bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · 変容: ${phase}${eye}`;
+  bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · 変容: ${phase}${climb}${eye}`;
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
