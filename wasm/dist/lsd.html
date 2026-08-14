@@ -484,13 +484,13 @@ function tick() {
   // Holding the eyes closed (not a blink) washes the trip away: the longer
   // they stay shut, the closer the world eases back to its freshly-loaded
   // state — parameters toward defaults, trail history fading out. A full
-  // hold (~1.5 s) commits the reset: sliders return to defaults and the
+  // hold (~0.8 s total) commits the reset: sliders return home and the
   // conductor forgets where it was.
   const nowMs = performance.now();
   const closedHeld = gazechk.checked && eyeState === 'closed' &&
       nowMs - eyesClosedAt > 250 && nowMs - faceSeen < 1200;
   closedLevel = Math.min(1, Math.max(0,
-      closedLevel + (closedHeld ? dt / 1.25 : -dt / 0.4)));
+      closedLevel + (closedHeld ? dt / 0.55 : -dt / 0.4)));
   if (closedLevel > 0) {
     for (const d in DIMS) {
       eff[d] += (DEFAULTS[d] - eff[d]) * closedLevel;
