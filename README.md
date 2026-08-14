@@ -2,6 +2,10 @@
 
 English | **[日本語](README.ja.md)**
 
+by **[takatronix](https://github.com/takatronix)**
+([X @takatronix](https://x.com/takatronix) · [takatronix.com](http://takatronix.com))
+— MIT licensed, and [available for work](#author).
+
 ![hud_basic — actual rendered output](docs/images/hud_basic.png)
 
 **Write a screen once — get the same pixels on robots, in browsers, in apps.**

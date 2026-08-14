@@ -297,13 +297,13 @@ vec3 fs_beauty(vec2 uv, float smoothing, float whiten, float radius, float sharp
     // hair, and clothing stop passing as "skin", which is what kept the
     // whole frame from going soft at high strength.
     float skin = clamp((min(c.x, mean.x - 0.1) - 0.2) * 4.0, 0.0, 1.0) *
-                 (0.25 + 0.75 * fs_skin_chroma(c));
+                 (0.45 + 0.55 * fs_skin_chroma(c));
     float k = flatness * skin * clamp(smoothing, 0.0, 1.0);
     // Max-shift clamp: pore-level corrections (±0.05-ish) pass untouched,
     // but the pull toward the mean can never flatten real shading or eat
     // an eyelid — this is what keeps maximum strength from turning the
     // face into plastic.
-    vec3 shift = clamp((mean - c) * clamp(k, 0.0, 1.0), -0.08, 0.08);
+    vec3 shift = clamp((mean - c) * clamp(k, 0.0, 1.0), -0.12, 0.12);
     vec3 result = c + shift;
     if (sharpen_amount > 0.0) {
         vec3 neighbors = FS_SAMPLE(uv + vec2(FS_TEXEL.x, 0.0)) +
