@@ -133,12 +133,18 @@ void fs_pointer(FsInstance* inst, int phase, float x, float y) {
 
 /// Attaches the refraction ripple to a layer (hover = wake, tap = splash).
 EMSCRIPTEN_KEEPALIVE
-int fs_attach_ripple(FsInstance* inst, const char* layer_id) {
+int fs_attach_ripple(FsInstance* inst, const char* layer_id, int max_waves) {
     Layer* target = inst->scene->stage().find(layer_id);
     if (target == nullptr) {
         return 0;
     }
-    inst->ripple = std::make_unique<fx::Ripple>(*target);
+    fx::RippleStyle style;
+    if (max_waves > 0) {
+        // Each wave is one full-surface filter pass — on the CPU renderer
+        // that is the frame budget, so hosts cap it to their machine.
+        style.max_waves = static_cast<uint32_t>(max_waves);
+    }
+    inst->ripple = std::make_unique<fx::Ripple>(*target, style);
     return 1;
 }
 
@@ -150,6 +156,10 @@ int fs_set_param_f32(FsInstance* inst, const char* name, float v) {
 EMSCRIPTEN_KEEPALIVE
 int fs_set_param_bool(FsInstance* inst, const char* name, int v) {
     return inst->scene->setParam(name, v != 0) ? 1 : 0;
+}
+EMSCRIPTEN_KEEPALIVE
+int fs_set_param_vec2(FsInstance* inst, const char* name, float x, float y) {
+    return inst->scene->setParam(name, Vec2{x, y}) ? 1 : 0;
 }
 
 /// Renders one frame at out_w x out_h (0 = logical size) after advancing

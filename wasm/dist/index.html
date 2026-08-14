@@ -32,9 +32,33 @@ inputs:
 params:
   load: { type: f32, default: 0, runtime_mutable: true,
           animate: { duration: 0.25, ease: ease_out } }
+  portrait_off: { type: bool, default: true, runtime_mutable: true }
+  face: { type: vec2, default: [640, 330], runtime_mutable: true,
+          animate: { duration: 0.18, ease: ease_out } }
+  face_inv: { type: vec2, default: [130, 160], runtime_mutable: true,
+              animate: { duration: 0.18, ease: ease_out } }
 layers:
   - id: water
     content: { image: { source: $inputs.camera, fit: cover } }
+  - id: bgblur
+    hidden: $params.portrait_off
+    content: { image: { source: $inputs.camera, fit: cover } }
+    filters: [ { blur: { radius: 16 } } ]
+  - id: spotlight
+    hidden: $params.portrait_off
+    bounds: [0, 0, 280, 280]
+    corner_radius: 140
+    masks_to_bounds: true
+    position: $params.face
+    sublayers:
+      - bounds: [0, 0, 1280, 720]
+        position: $params.face_inv
+        content: { image: { source: $inputs.camera, fit: cover } }
+  - id: portrait_sw
+    frame: [1166, 140, 76, 40]
+    content: { switch: {} }
+  - content: { text: { text: "portrait", position: [1166, 184], size: 14,
+                       color: [1, 1, 1, 0.6] } }
   - id: hud
     position: [28, 24]
     opacity: 0.94
@@ -46,6 +70,8 @@ layers:
                            size: 15, color: [1, 1, 1, 0.55] } }
   - id: meter
     content: { gauge: { center: [1204, 74], radius: 46, value: $params.load } }
+  - content: { text: { text: "fps / 60", position: [1204, 126], size: 13, align: center,
+                       color: [1, 1, 1, 0.55] } }
   - id: tiles
     position: [0, 566]
     sublayers:
@@ -105,13 +131,32 @@ const fs = {
   imageBuffer: mod.cwrap('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
   commitImage: mod.cwrap('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
   pointer: mod.cwrap('fs_pointer', null, ['number', 'number', 'number', 'number']),
-  attachRipple: mod.cwrap('fs_attach_ripple', 'number', ['number', 'string']),
+  attachRipple: mod.cwrap('fs_attach_ripple', 'number', ['number', 'string', 'number']),
   render: mod.cwrap('fs_render', 'number', ['number', 'number', 'number', 'number']),
   renderW: mod.cwrap('fs_render_width', 'number', ['number']),
   renderH: mod.cwrap('fs_render_height', 'number', ['number']),
   renderStride: mod.cwrap('fs_render_stride', 'number', ['number']),
   setParamF32: mod.cwrap('fs_set_param_f32', 'number', ['number', 'string', 'number']),
+  setParamBool: mod.cwrap('fs_set_param_bool', 'number', ['number', 'string', 'number']),
+  drainEvents: mod.cwrap('fs_drain_events', 'string', ['number']),
 };
+
+// Portrait spotlight: the circular sharp window over the blurred camera.
+// Its center is a document param, so anything can drive it — the browser's
+// FaceDetector when available, your pointer otherwise (on the robot, a YOLO
+// person box would do the same through the identical param).
+let portrait = false;
+function setFace(x, y) {
+  // Keep the window on canvas and counter-shift the inner image so its
+  // pixels align with the background exactly.
+  x = Math.max(60, Math.min(stageW - 60, x));
+  y = Math.max(60, Math.min(stageH - 60, y));
+  fsSetVec2('face', x, y);
+  fsSetVec2('face_inv', 780 - x, 500 - y);
+}
+
+const setParamVec2 = mod.cwrap('fs_set_param_vec2', 'number', ['number', 'string', 'number', 'number']);
+function fsSetVec2(name, x, y) { setParamVec2(inst, name, x, y); }
 
 const yamlPtr = mod.stringToNewUTF8(SCENE);
 const inst = fs.create(yamlPtr);
@@ -119,7 +164,7 @@ if (!inst) {
   bar.textContent = 'scene rejected:\n' + fs.error();
   throw new Error(fs.error());
 }
-fs.attachRipple(inst, 'water');
+fs.attachRipple(inst, 'water', 4);  // CPU budget: 4 waves max
 const stageW = fs.stageW(inst), stageH = fs.stageH(inst);
 
 // ---- pointer: straight into the local engine (zero network) ---------------
@@ -132,7 +177,14 @@ function hook(el) {
                (e.clientY - r.top) / r.height * stageH);
   };
   el.addEventListener('pointerdown', e => { down = true; el.setPointerCapture(e.pointerId); send(0, e); e.preventDefault(); });
-  el.addEventListener('pointermove', e => send(1, e));
+  el.addEventListener('pointermove', e => {
+    send(1, e);
+    if (portrait) {
+      const r = el.getBoundingClientRect();
+      setFace((e.clientX - r.left) / r.width * stageW,
+              (e.clientY - r.top) / r.height * stageH);
+    }
+  });
   el.addEventListener('pointerup', e => { down = false; send(2, e); });
 }
 hook(canvas);
@@ -159,9 +211,38 @@ try {
   bar.textContent = 'webcam: ' + e + ' (needs https or localhost)';
 }
 
+// FaceDetector (Chrome, where available) auto-tracks; otherwise the
+// spotlight follows your pointer.
+if ('FaceDetector' in window) {
+  const detector = new FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
+  setInterval(async () => {
+    if (!portrait || !video || video.readyState < 2) return;
+    try {
+      const faces = await detector.detect(grab);
+      if (faces.length) {
+        const b = faces[0].boundingBox;
+        // camera 640x480 → stage 1280x720 under cover fit (scale 2, y-offset 120)
+        setFace((b.x + b.width / 2) * 2, (b.y + b.height / 2) * 2 - 120);
+      }
+    } catch (e) {}
+  }, 250);
+}
+
 // ---- the loop: everything local -------------------------------------------
 let last = performance.now(), frames = 0, fpsShown = 0;
-setInterval(() => { fpsShown = frames; frames = 0; }, 1000);
+// Adaptive resolution: SDF rendering is resolution-independent, so when the
+// CPU falls behind we shrink the output (crisp, just fewer pixels) and grow
+// it back when there is headroom.
+const LADDER = [[1280, 720], [1024, 576], [854, 480], [640, 360]];
+let rung = 0;
+setInterval(() => {
+  fpsShown = frames; frames = 0;
+  if (res) return;  // explicit ?res= pins the resolution
+  if (fpsShown < 24 && rung < LADDER.length - 1) ++rung;
+  else if (fpsShown > 50 && rung > 0) --rung;
+  const [w, h] = LADDER[rung];
+  if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
+}, 1000);
 
 function tick() {
   const now = performance.now();
@@ -181,6 +262,17 @@ function tick() {
   if (w === canvas.width && stride === w * 4) {
     const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
     ctx.putImageData(new ImageData(view, w, h), 0, 0);
+  }
+  // UI events out of the document (the portrait switch lives in the scene).
+  for (const line of fs.drainEvents(inst).split('\n')) {
+    if (!line) continue;
+    try {
+      const e = JSON.parse(line);
+      if (e.id === 'portrait_sw') {
+        portrait = e.value > 0.5;
+        fs.setParamBool(inst, 'portrait_off', portrait ? 0 : 1);
+      }
+    } catch (err) {}
   }
   ++frames;
   fs.setParamF32(inst, 'load', Math.min(fpsShown / 60, 1));
