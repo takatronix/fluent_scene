@@ -92,7 +92,7 @@ layers:
     filters: [ { fractal: { flight: 1, time: 0, morph: 1, glow: 1, blend: 0 } } ]
 `;
 
-const canvas = document.getElementById('v');
+let canvas = document.getElementById('v');
 canvas.width = STAGE_W; canvas.height = STAGE_H;
 const bar = document.getElementById('bar');
 const mod = await createFluentScene();
@@ -132,7 +132,8 @@ document.getElementById('cfg').onclick = () =>
     document.getElementById('hud').classList.toggle('open');
 // on phones there is no gaze — a TAP on the piece is the blink instead
 let lastTapAt = -1e9;
-canvas.addEventListener('pointerdown', () => {
+document.addEventListener('pointerdown', (e) => {
+  if (!e.target || e.target.id !== 'v') return;
   const nowT = performance.now();
   if (nowT - lastTapAt < 2500) return;
   lastTapAt = nowT;
@@ -469,6 +470,10 @@ function tickBody() {
       return;
     } else {
       mode = 'cpu';
+      // the gInit-claimed node refuses a 2D context — swap in a fresh twin
+      const fresh = canvas.cloneNode(false);
+      canvas.replaceWith(fresh);
+      canvas = fresh;
       canvas.width = portrait ? 180 : 320;
       canvas.height = portrait ? 320 : 180;
       cpuCtx = canvas.getContext('2d');

@@ -116,19 +116,30 @@ schema: fluent.scene/v1alpha2
 stage: { size: [${STAGE_W}, ${STAGE_H}] }
 inputs:
   camera: { type: image.rgba8, update: per_frame }
+params:
+  bodymix: { type: f32, default: 0, runtime_mutable: true }
 layers:
   - id: live
     content: { image: { source: $inputs.camera, fit: cover } }
     filters: [ { lsd: { trip: 0.8, time: 0, drift: 1, geometry: 0.5, chroma: 1 } } ]
+  - id: body
+    frame: [0, 0, ${STAGE_W}, ${STAGE_H}]
+    opacity: $params.bodymix
+    blend: screen
+    content: { image: { source: $inputs.camera, fit: cover } }
+    filters: [ { fractal: { flight: 0.4, time: 0, morph: 0.8, glow: 1.0, blend: 0 } } ]
 `;
+// the 3D glowing body (fs_fractal, screen-blended over the trip) only runs
+// on the WebGPU path — the CPU fallback keeps bodymix at 0 and never pays
+// for the raymarch. Blinks teleport its epoch; the come-up fades it in.
 // The title lives in HTML, not in the scene: the canvas is cover-cropped to
 // the viewport, so anything drawn at stage coordinates walks off the edge on
 // a non-16:9 window — and a burned-in HUD would also re-enter the feedback
 // loop and smear.
 
 const bar = document.getElementById('bar');
-const canvas = document.getElementById('v');
-const ctx = canvas.getContext('2d');
+let canvas = document.getElementById('v');
+let ctx = null;  // taken only on the CPU fallback
 
 const mod = await createFluentScene();
 const fs = {
@@ -142,7 +153,45 @@ const fs = {
   renderStride: mod.cwrap('fs_render_stride', 'number', ['number']),
   layerSetFilter: mod.cwrap('fs_layer_set_filter', 'number',
       ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
+  gInit: mod.cwrap('fs_webgpu_init', null, ['string']),
+  gStatus: mod.cwrap('fs_webgpu_status', 'number', []),
+  gError: mod.cwrap('fs_webgpu_error', 'string', []),
+  gRender: mod.cwrap('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']),
+  gReadBegin: mod.cwrap('fs_webgpu_read_begin', 'number', ['number', 'number', 'number', 'number']),
+  gReadPixels: mod.cwrap('fs_webgpu_read_pixels', 'number', []),
+  setPf: mod.cwrap('fs_set_param_f32', 'number', ['number', 'string', 'number']),
 };
+fs.gInit('#v');
+let mode = 'boot';
+const bootAt = performance.now();
+// GPU tracers: the echo comes home through an async readback (1–2 frames
+// late — palinopsia does not mind). One in flight, read in the same rAF
+// discipline that the fractal page's probe taught us.
+let rbBusy = false;
+let bodyEpoch = 137 + Math.random() * 2800;
+function pumpEcho() {
+  if (rbBusy || mode !== 'gpu') return;
+  rbBusy = true;
+  try {
+    if (!fs.gReadBegin(inst, 0, CAM_W, CAM_H)) { rbBusy = false; return; }
+  } catch (e) { rbBusy = false; return; }
+  const poll = () => {
+    let px = 0;
+    try { px = fs.gReadPixels(); }
+    catch (e) { rbBusy = false; return; }
+    if (!px) {
+      if (fs.gStatus() === -1) { rbBusy = false; return; }
+      requestAnimationFrame(poll); return;
+    }
+    const img = new ImageData(
+        new Uint8ClampedArray(mod.HEAPU8.buffer, px, CAM_W * CAM_H * 4).slice(),
+        CAM_W, CAM_H);
+    prevCtx.putImageData(img, 0, 0);
+    hasPrev = true;
+    rbBusy = false;
+  };
+  requestAnimationFrame(poll);
+}
 
 const yamlPtr = mod.stringToNewUTF8(SCENE);
 const inst = fs.create(yamlPtr);
@@ -466,7 +515,7 @@ canvas.width = LADDER[0][0]; canvas.height = LADDER[0][1];
 let rung = 0;
 setInterval(() => {
   fpsShown = frames; frames = 0;
-  if (res) return;
+  if (res || mode !== 'cpu') return;
   // Down only: stepping back up caused a visible quality oscillation when
   // fps hovered around the thresholds. ?res=WxH overrides.
   if (fpsShown > 0 && fpsShown < 24 && rung < LADDER.length - 1) ++rung;
@@ -479,6 +528,24 @@ function tick() {
   const dt = Math.min((now - last) / 1000, 0.1);
   last = now;
   const t = ((now - t0) / 1000) % 3600;
+
+  if (mode === 'boot') {
+    const st = fs.gStatus();
+    if (st === 1) { mode = 'gpu'; }
+    else if (st === 0 && now - bootAt < 6000) {
+      bar.textContent = `WebGPU 初期化中… ${((now - bootAt) / 1000) | 0}s`;
+      requestAnimationFrame(tick); return;
+    } else {
+      mode = 'cpu';
+      // gInit claimed the canvas for WebGPU — the same node will refuse a
+      // 2D context forever. Swap in a fresh twin before falling back.
+      const fresh = canvas.cloneNode(false);
+      canvas.replaceWith(fresh);
+      canvas = fresh;
+      ctx = canvas.getContext('2d');
+      console.warn('WebGPU unavailable (status', st + '):', fs.gError());
+    }
+  }
 
   // effective parameters: the conductor wanders around the slider
   // baselines; unchecking 自動変容 pins them to the sliders exactly
@@ -527,6 +594,7 @@ function tick() {
   if (blinkReset) {
     // a blink that ended the world: same as the held-closure reset
     blinkReset = false;
+    bodyEpoch = 137 + Math.random() * 2800;   // and a reset births a new body
     tripT0 = t;
     for (const d in DIMS) {
       conductor.from[d] = 0;
@@ -541,6 +609,7 @@ function tick() {
   if (blinkSnap) {
     // a blink the world noticed: one fast metastable jump — 「パッ」
     blinkSnap = false;
+    bodyEpoch += 120 + Math.random() * 500;   // the glowing body wakes elsewhere
     for (const d in DIMS) {
       conductor.from[d] = currentOffset(d, t);
       conductor.to[d] = (Math.random() * 2 - 1) * DIMS[d].span;
@@ -612,14 +681,27 @@ function tick() {
       t, come * eff.drift,
       styleSign * (come * eff.geometry + 0.6 * blinkPulse), eff.chroma);
 
+  // 4.5) the 3D glowing body — GPU only, breathing with the trip
+  if (mode === 'gpu') {
+    const bmix = Math.min(0.7, (0.12 + 0.30 * eff.trip) * lift) * (1 - closedLevel);
+    fs.setPf(inst, 'bodymix', bmix);
+    fs.layerSetFilter(inst, 'body', 'fractal',
+        0.4, bodyEpoch + t * 0.55, 0.5 + 0.45 * lift, 0.8 + 0.6 * contactLevel, 0);
+  }
+
   // 5) render, paint, and remember the output for the next re-entry
-  const px = fs.render(inst, dt, canvas.width, canvas.height);
-  const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
-  if (w === canvas.width && stride === w * 4) {
-    const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
-    ctx.putImageData(new ImageData(view, w, h), 0, 0);
-    prevCtx.drawImage(canvas, 0, 0, CAM_W, CAM_H);
-    hasPrev = true;
+  if (mode === 'gpu') {
+    fs.gRender(inst, dt, canvas.width, canvas.height);
+    pumpEcho();
+  } else {
+    const px = fs.render(inst, dt, canvas.width, canvas.height);
+    const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
+    if (w === canvas.width && stride === w * 4) {
+      const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
+      ctx.putImageData(new ImageData(view, w, h), 0, 0);
+      prevCtx.drawImage(canvas, 0, 0, CAM_W, CAM_H);
+      hasPrev = true;
+    }
   }
   ++frames;
   const phase = autoBox.checked
@@ -632,7 +714,7 @@ function tick() {
   const climb = ` · 効き${Math.round(lift * 100)}%`;
   const eye = closedLevel > 0.3 ? ' · ↺ 初期化中…'
             : contactLevel > 0.5 ? ' · 👁アイコンタクト' : '';
-  bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · 変容: ${phase}${climb}${eye}`;
+  bar.textContent = `${mode} · ${canvas.width}x${canvas.height} · ${fpsShown} fps · 変容: ${phase}${climb}${eye}`;
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
