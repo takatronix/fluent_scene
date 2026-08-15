@@ -76,7 +76,7 @@ const inst = mod.cwrap('fs_create', 'number', ['number'])(
 | **ロボット (ROS 2)** | `scene_node`（.fvs+.fvb → トピック購読 → 描画 → Image 配信）、`scene_web` ライブ編集、`fvsc` CLI | 実機運用中 |
 | **Webアプリ** | `fluent_scene.mjs` + `.wasm`（ES module、自己完結）。CPU または WebGPU | 公開中（上のデモ） |
 | **デスクトップ** | C++17 ライブラリ + `stage_web` / `scene_web` / `fvsc` | 運用中 |
-| **モバイル** | 同じポータブル C++17 コア + フラット C ABI（wasm/api.cpp と同じ面）。iOS / Android バインディングはロードマップ | 計画 |
+| **モバイル** | 同じポータブル C++17 コア + フラット C ABI（wasm/api.cpp と同じ面）。iOS / Android バインディングはロードマップ（[計画書](docs/design/mobile_support.ja.md)） | 計画 |
 
 コアの依存は freetype + harfbuzz だけ。GPU が無ければ CPU リファレンスが
 そのまま本番品質で動きます。
@@ -106,8 +106,13 @@ golden テストが3バックエンドを同じ基準画像に対して検証し
 - **CALayer 準拠の属性** — frame / position / anchor / rotation / scale /
   opacity / shadow / border / background / cornerRadius / masksToBounds /
   blend。左上原点・+y 下の**1座標系のみ**（反転スイッチは存在しない）
-- **フィルタ 32種** — blur / bilateral / color_transform / toon / halftone /
-  ripple / beauty（磨皮+美白+NR） / lut（3D LUT） / lsd …
+- **フィルタ 38種** — blur / bilateral / color_transform / toon / halftone /
+  ripple / beauty（磨皮+美白+NR） / lut（3D LUT） / lsd /
+  bokeh（多角形絞り） / oilpaint（Kuwahara油絵） / ntsc + crt（コンポジット
+  信号の実変調→ブラウン管。MAME ntsc.fx BSD-3 / Lottes PD / Cathode-Retro
+  MIT 系譜） / fractal（無限KIFS飛行） /
+  notebook（鉛筆スケッチ、[flockaroo XtVGD1](https://www.shadertoy.com/view/XtVGD1)
+  移植・CC BY-NC-SA につき**この1本のみ非商用限定**、他は MIT のまま）…
   任意のレイヤーにもグループ（合成後の1枚）にも掛かる
 
   ![フィルタカタログ（filters_tour の出力）](docs/images/filters_tour.png)

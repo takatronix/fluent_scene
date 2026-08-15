@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>fluent scene — fractal 永遠フラクタル飛行</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #v { position: fixed; inset: 0; width: 100vw; height: 100vh;
+       object-fit: cover; background: #000; }
+  #hud { position: fixed; left: 12px; bottom: 12px; z-index: 9;
+         font: 12px ui-monospace, monospace; color: rgba(255,255,255,0.75);
+         background: rgba(8, 6, 14, 0.55); border-radius: 12px;
+         padding: 10px 14px; backdrop-filter: blur(8px);
+         display: flex; flex-direction: column; gap: 6px; }
+  #hud label { display: flex; align-items: center; gap: 8px; }
+  #hud span.k { width: 4.5em; opacity: 0.8; }
+  #hud input[type=range] { width: 140px; accent-color: #c86ef0; }
+  #bar { opacity: 0.65; }
+  #fsb { position: fixed; right: 12px; bottom: 12px; z-index: 9;
+         font: 12px ui-monospace, monospace; color: rgba(255,255,255,0.7);
+         background: rgba(8, 6, 14, 0.55); border: 0; border-radius: 999px;
+         padding: 8px 14px; backdrop-filter: blur(8px); cursor: pointer; }
+  #credit { position: fixed; right: 12px; top: 10px; z-index: 9;
+            font: 11px ui-monospace, monospace; color: rgba(255,255,255,0.55);
+            text-decoration: none; background: rgba(0,0,0,0.35);
+            padding: 4px 10px; border-radius: 999px; backdrop-filter: blur(4px); }
+  #credit b { color: rgba(255,255,255,0.85); }
+</style>
+<canvas id="v" width="1280" height="720"></canvas>
+<div id="hud">
+  <label><span class="k">自動変容</span><input id="auto" type="checkbox" checked></label>
+  <label><span class="k">視線追従</span><input id="gazechk" type="checkbox" checked></label>
+  <label><span class="k">疾走</span><input id="flight" type="range" min="0" max="300" value="100"></label>
+  <label><span class="k">変容</span><input id="morph" type="range" min="0" max="200" value="100"></label>
+  <label><span class="k">発光</span><input id="glow" type="range" min="0" max="300" value="100"></label>
+  <div id="bar">起動中…</div>
+</div>
+<button id="fsb">全画面</button>
+<a id="credit" href="https://x.com/takatronix" target="_blank" rel="noopener">fluent_scene · by <b>@takatronix</b></a>
+<script type="module">
+// fs_fractal — eternal flight through a self-morphing KIFS (mode 39).
+// Everything on screen is a pure function of elapsed time: no randomness,
+// no feedback. The filter's parameter orbit rides mutually incommensurate
+// sine clocks, so the flight literally never repeats — leave it running
+// forever and the same frame will not come back.
+// Design: docs/design/fractal_filter.ja.md.
+import createFluentScene from './fluent_scene.mjs';
+
+const portrait = matchMedia('(orientation: portrait)').matches;
+matchMedia('(orientation: portrait)').addEventListener('change', () => location.reload());
+const STAGE_W = portrait ? 720 : 1280, STAGE_H = portrait ? 1280 : 720;
+
+const SCENE = `
+schema: fluent.scene/v1alpha2
+stage: { size: [${STAGE_W}, ${STAGE_H}] }
+inputs:
+  seed: { type: image.rgba8 }
+layers:
+  - id: void
+    frame: [0, 0, ${STAGE_W}, ${STAGE_H}]
+    content: { image: { source: $inputs.seed, fit: cover } }
+    filters: [ { fractal: { flight: 1, time: 0, morph: 1, glow: 1, blend: 0 } } ]
+`;
+
+const canvas = document.getElementById('v');
+canvas.width = STAGE_W; canvas.height = STAGE_H;
+const bar = document.getElementById('bar');
+const mod = await createFluentScene();
+const c = (n, r, a) => mod.cwrap(n, r, a);
+const fs = {
+  create: c('fs_create', 'number', ['number']),
+  error: c('fs_error', 'string', []),
+  imageBuffer: c('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
+  commitImage: c('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
+  render: c('fs_render', 'number', ['number', 'number', 'number', 'number']),
+  renderW: c('fs_render_width', 'number', ['number']),
+  renderH: c('fs_render_height', 'number', ['number']),
+  gInit: c('fs_webgpu_init', null, ['string']),
+  gStatus: c('fs_webgpu_status', 'number', []),
+  gError: c('fs_webgpu_error', 'string', []),
+  gRender: c('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']),
+  layerSetFilter: c('fs_layer_set_filter', 'number',
+      ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
+};
+
+const inst = fs.create(mod.stringToNewUTF8(SCENE));
+if (!inst) { bar.textContent = 'scene rejected: ' + fs.error(); throw new Error(fs.error()); }
+
+// The generator ignores its source at blend 0 — a 2×2 black seed satisfies
+// the image binding once and is never touched again.
+const sp = fs.imageBuffer(inst, 'seed', 2, 2);
+mod.HEAPU8.fill(0, sp, sp + 16);
+for (let i = 0; i < 4; ++i) mod.HEAPU8[sp + i * 4 + 3] = 255;
+fs.commitImage(inst, 'seed', 2, 2);
+
+document.getElementById('fsb').onclick = () =>
+    document.fullscreenElement ? document.exitFullscreen() : document.body.requestFullscreen();
+
+// ---- gaze (MediaPipe iris @10 Hz — the lsd.html analyzer, retargeted) ------
+// The eyes steer the view; holding eye contact deepens the metamorphosis;
+// a blink rolls the dice (1/4 snap-shift, 1/4 slow shift, 2/4 nothing);
+// keeping the eyes closed means waking in a different universe.
+const gazechk = document.getElementById('gazechk');
+const CAM_W = portrait ? 360 : 640, CAM_H = portrait ? 640 : 360;
+let video = null, landmarker = null;
+let gaze = { yaw: 0, pitch: 0 }, gazeS = { yaw: 0, pitch: 0 };
+let contact = false, contactLevel = 0, faceSeen = 0;
+let blinkPulse = 0, wasBlink = false;
+let eyeState = 'open', eyesClosedAt = 0;
+let snapWarp = false, slowShift = false, wakeWarp = false;
+let gbias = { yaw: 0, pitch: 0 }, gcalib = [];
+try {
+  const b = JSON.parse(localStorage.getItem('fractal_gaze_bias') ||
+                       localStorage.getItem('lsd_gaze_bias'));
+  if (b) { gbias = b; gcalib = null; }
+} catch (e) {}
+const grab = document.createElement('canvas');
+grab.width = CAM_W; grab.height = CAM_H;
+const grabCtx = grab.getContext('2d', { willReadFrequently: true });
+function drawCover(c, src, sw, sh) {
+  const dAsp = CAM_W / CAM_H, sAsp = sw / sh;
+  let cw = sw, ch = sh, cx = 0, cy = 0;
+  if (sAsp > dAsp) { cw = sh * dAsp; cx = (sw - cw) / 2; }
+  else { ch = sw / dAsp; cy = (sh - ch) / 2; }
+  c.drawImage(src, cx, cy, cw, ch, 0, 0, CAM_W, CAM_H);
+}
+async function gazeUp() {
+  if (video) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(
+        { video: { width: CAM_W, height: CAM_H }, audio: false });
+    video = document.createElement('video');
+    video.srcObject = stream; video.muted = true;
+    await video.play();
+    const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+    const vision = await import(`${MP}/vision_bundle.mjs`);
+    const files = await vision.FilesetResolver.forVisionTasks(`${MP}/wasm`);
+    const make = d => vision.FaceLandmarker.createFromOptions(files, {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+        delegate: d,
+      },
+      outputFacialTransformationMatrixes: true, runningMode: 'VIDEO', numFaces: 1,
+    });
+    try { landmarker = await make('GPU'); }
+    catch (e) { landmarker = await make('CPU'); }
+  } catch (e) { console.warn('gaze unavailable:', e); }
+}
+if (gazechk.checked) gazeUp();
+gazechk.addEventListener('change', () => { if (gazechk.checked) gazeUp(); });
+function irisOffset(lm, inner, outer, top, bottom, iris) {
+  const w = lm[outer].x - lm[inner].x;
+  const h = lm[bottom].y - lm[top].y;
+  if (Math.abs(w) < 1e-4) return null;
+  return {
+    hx: (lm[iris].x - lm[inner].x) / w - 0.5,
+    vy: Math.abs(h) > 1e-4 ? (lm[iris].y - lm[top].y) / h - 0.5 : 0,
+    open: Math.abs(h / w),
+  };
+}
+function headPose(m) {
+  const zx = m[8], zy = m[9], zz = m[10];
+  return { yaw: Math.atan2(zx, Math.abs(zz)),
+           pitch: Math.atan2(zy, Math.hypot(zx, zz)) };
+}
+setInterval(() => {
+  if (!landmarker || !gazechk.checked || !video || video.readyState < 2) return;
+  drawCover(grabCtx, video, video.videoWidth || CAM_W, video.videoHeight || CAM_H);
+  const r = landmarker.detectForVideo(grab, performance.now());
+  if (!(r.faceLandmarks && r.faceLandmarks.length)) return;
+  const lm = r.faceLandmarks[0];
+  faceSeen = performance.now();
+  let head = { yaw: 0, pitch: 0 };
+  if (r.facialTransformationMatrixes && r.facialTransformationMatrixes.length) {
+    head = headPose(r.facialTransformationMatrixes[0].data);
+  }
+  const R = irisOffset(lm, 133, 33, 159, 145, 468);
+  const L = irisOffset(lm, 362, 263, 386, 374, 473);
+  let eyeYaw = 0, eyePitch = 0, blink = false;
+  if (R && L) {
+    const openAvg = (R.open + L.open) / 2;
+    blink = openAvg < 0.09;
+    if (openAvg < 0.13) {
+      if (eyeState !== 'closed') { eyeState = 'closed'; eyesClosedAt = performance.now(); }
+    } else {
+      // ordinary blinks pass unnoticed — only a deliberate closure
+      // (holding the eyes shut) warps the world on reopening
+      if (eyeState === 'closed' && performance.now() - eyesClosedAt >= 450) {
+        wakeWarp = true;
+      }
+      eyeState = 'open';
+    }
+    if (!blink) {
+      eyeYaw = ((R.hx + L.hx) / 2) * 1.6;
+      eyePitch = -((R.vy + L.vy) / 2) * 0.8;
+    }
+  }
+  if (blink && !wasBlink) { blinkPulse = 1; }
+  wasBlink = blink;
+  const rawYaw = head.yaw + eyeYaw, rawPitch = head.pitch + eyePitch;
+  if (gcalib !== null && !blink) {
+    gcalib.push([rawYaw, rawPitch]);
+    if (gcalib.length >= 15) {
+      gbias.yaw = gcalib.reduce((s, v) => s + v[0], 0) / gcalib.length;
+      gbias.pitch = gcalib.reduce((s, v) => s + v[1], 0) / gcalib.length;
+      localStorage.setItem('fractal_gaze_bias', JSON.stringify(gbias));
+      gcalib = null;
+    }
+  }
+  const cl = a => Math.max(-0.9, Math.min(0.9, a));
+  if (!blink) {
+    gaze.yaw = cl(rawYaw - gbias.yaw);
+    gaze.pitch = cl(-(rawPitch - gbias.pitch));
+    contact = Math.abs(gaze.yaw) < 0.17 && Math.abs(gaze.pitch) < 0.17;
+  }
+}, 100);
+
+const knob = id => document.getElementById(id).value / 100;
+
+// ---- conductor --------------------------------------------------------------
+// The lsd.html idea, retold for a world that is a pure function of time:
+// the piece alternates 滞留 (hold) and 転移 (shift). A shift retargets the
+// filter's whole regime — speed, morph depth, glow — and, because every
+// frame is time-addressed, it can also TELEPORT: jumping the time offset
+// lands in a completely different universe instantly; gliding it is a
+// hyperspeed churn where structures boil past. Transition times are
+// log-uniform (0.3–0.8 s snaps, 2–6 s glides), holds 3–25 s.
+const logu = (lo, hi) => Math.exp(Math.log(lo) + Math.random() * (Math.log(hi) - Math.log(lo)));
+// every load opens in a different universe: a random birth epoch shifts
+// geometry AND weather (kept ≤ 15000 s so float32 camera stays silky)
+let regime = { flight: 1, morph: 1, glow: 1, tOff: logu(50, 15000) };
+let target = { ...regime };
+// The filter's camera sits at speed×time, so passing a CHANGING speed
+// would teleport it by Δspeed×t — at a 10000 s epoch that is thousands of
+// tiles in one frame. Instead we integrate the speed here and hand the
+// filter the AVERAGE (zPhase/time): z becomes the true integral, speed
+// changes turn into smooth acceleration, and during a time-warp the camera
+// holds still while the world fast-forwards around it.
+let zPhase = regime.tOff;  // as if it had flown at speed 1 since the epoch
+let shift = { t0: -9, dur: 0, snap: false, warp: false };
+let nextShift = 2.5;
+function conduct(t) {
+  const warp = Math.random() < 0.4;
+  target = {
+    flight: logu(0.15, 4.5) * (Math.random() < 0.12 ? -1 : 1),  // sometimes fly backwards
+    morph: 0.35 + Math.random() * 1.15,
+    glow: Math.random() < 0.25 ? logu(0.05, 0.5) : logu(0.6, 2.6),
+    tOff: regime.tOff + (warp ? logu(40, 900) : 0),
+  };
+  const snap = Math.random() < 0.45;
+  shift = { t0: t, dur: snap ? logu(0.25, 0.8) : logu(2, 6), snap, warp };
+  nextShift = t + shift.dur + logu(3, 25);
+}
+const smooth = x => x * x * (3 - 2 * x);
+function conducted(t) {
+  const k = smooth(Math.max(0, Math.min(1, (t - shift.t0) / shift.dur)));
+  const cur = {};
+  for (const key of ['flight', 'morph', 'glow', 'tOff'])
+    cur[key] = regime[key] + (target[key] - regime[key]) * k;
+  if (k >= 1) regime = { ...target };
+  return cur;
+}
+
+// WebGPU first; CPU fallback drops the presentation size, not the idea.
+fs.gInit('#v');
+let mode = 'boot';
+let cpuCtx = null;
+const t0 = performance.now();
+let last = t0, frames = 0, fps = 0, fpsAt = t0;
+
+function tick() {
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+  const t = (now - t0) / 1000;
+
+  if (mode === 'boot') {
+    const st = fs.gStatus();
+    if (st === 1) { mode = 'gpu'; }
+    else if (st === 0 && now - t0 < 6000) {
+      bar.textContent = `WebGPU 初期化中… ${((now - t0) / 1000) | 0}s`;
+      requestAnimationFrame(tick); return;
+    } else {
+      // -1, or stuck at 0 for 6 s — the flight continues on the CPU
+      mode = 'cpu';
+      canvas.width = portrait ? 180 : 320;
+      canvas.height = portrait ? 320 : 180;
+      cpuCtx = canvas.getContext('2d');
+      console.warn('WebGPU unavailable (status', st + '):', fs.gError());
+    }
+  }
+
+  const auto = document.getElementById('auto').checked;
+  // gaze: the view leans where the eyes look, staring deepens the
+  // metamorphosis, and blink events land as conductor shifts
+  gazeS.yaw += (gaze.yaw - gazeS.yaw) * Math.min(1, dt * 6);
+  gazeS.pitch += (gaze.pitch - gazeS.pitch) * Math.min(1, dt * 6);
+  const tracking = gazechk.checked && performance.now() - faceSeen < 1500;
+  contactLevel += ((tracking && contact ? 1 : 0) - contactLevel) * Math.min(1, dt * 1.2);
+  blinkPulse = Math.max(0, blinkPulse - dt * 1.8);
+  canvas.style.transform = tracking
+      ? `translate(${(-gazeS.yaw * 4).toFixed(2)}%, ${(gazeS.pitch * 4).toFixed(2)}%) scale(1.09)`
+      : '';
+  if (auto && wakeWarp) {
+    conduct(t);
+    target.tOff = regime.tOff + logu(300, 3000);   // waking in another universe
+    shift.dur = 0.35; shift.snap = true; shift.warp = true;
+  } else if (auto && snapWarp) {
+    conduct(t);
+    shift.dur = logu(0.25, 0.5); shift.snap = true;
+  } else if (auto && slowShift) {
+    conduct(t);
+  }
+  wakeWarp = snapWarp = slowShift = false;
+  // staring doesn't agitate the world — it slows it down and lights it up,
+  // like it noticed you watching
+  const gzMorph = 1 + 0.15 * contactLevel;
+  const gzGlow = 1 + 0.7 * contactLevel;
+  const gzFlight = 1 - 0.4 * contactLevel;
+  if (auto && t > nextShift) conduct(t);
+  const cc = auto ? conducted(t) : { flight: 1, morph: 1, glow: 1, tOff: 0 };
+  const flEff = knob('flight') * cc.flight * gzFlight;
+  zPhase += flEff * dt;
+  const te = t + cc.tOff;
+  const fp = te > 1 ? zPhase / te : flEff;
+  fs.layerSetFilter(inst, 'void', 'fractal', fp, te,
+      knob('morph') * cc.morph * gzMorph, knob('glow') * cc.glow * gzGlow, 0);
+
+  if (mode === 'gpu') {
+    if (fs.gRender(inst, dt, canvas.width, canvas.height)) ++frames;
+  } else {
+    const px = fs.render(inst, dt, canvas.width, canvas.height);
+    const w = fs.renderW(inst), h = fs.renderH(inst);
+    cpuCtx.putImageData(new ImageData(
+        new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4), w, h), 0, 0);
+    ++frames;
+  }
+  if (now - fpsAt > 1000) { fps = frames; frames = 0; fpsAt = now; }
+  const hh = (t / 3600) | 0, mm = ((t / 60) | 0) % 60, ss = (t | 0) % 60;
+  const phase = !auto ? '手動'
+      : t < shift.t0 + shift.dur
+          ? `転移中${shift.warp ? ' ⟿ ワープ' : ''}${shift.snap ? ' (パッ)' : ' (ゆっくり)'}`
+          : `滞留 → 次の転移まで ${Math.max(0, nextShift - t).toFixed(0)}s`;
+  const eye = !gazechk.checked ? '' : !tracking ? ' · 👁…'
+      : contactLevel > 0.5 ? ' · 👁凝視' : ' · 👁';
+  bar.textContent = `${mode} · ${fps} fps · ${phase}${eye} · 飛行 ${hh}h${String(mm).padStart(2, '0')}m${String(ss).padStart(2, '0')}s`;
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</html>

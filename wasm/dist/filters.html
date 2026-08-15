@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fluent scene — filter lab</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #e8e4f2; --dim: #9a93ad; --faint: #6c6580;
+    --glass: rgba(18, 16, 32, 0.72); --line: #241f38; --line-hi: #6f5fae;
+    --cyan: #7ee8fa; --violet: #c86ef0; --amber: #ffb35c;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; align-items: center;
+         gap: 14px; padding: 22px 14px 16px;
+         background:
+           radial-gradient(90% 60% at 50% 0%, #14101f 0%, #07060c 60%),
+           #07060c;
+         color: var(--ink); font: 14px/1.5 -apple-system, "Hiragino Sans",
+         "Noto Sans CJK JP", system-ui, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 14px; width: min(96vw, 1280px); }
+  header h1 { margin: 0; font: 700 22px/1 ui-monospace, monospace;
+              background: linear-gradient(100deg, var(--cyan), var(--violet), var(--amber));
+              -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header small { color: var(--faint); font-size: 12px; }
+  header a { margin-left: auto; color: var(--dim); font-size: 12px; text-decoration: none; }
+  header a:hover { color: var(--ink); }
+
+  #frame { position: relative; width: min(96vw, calc(62vh * 16 / 9), 1280px); }
+  #v { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000;
+       border-radius: 16px; border: 1px solid var(--line);
+       box-shadow: 0 30px 90px rgba(0, 0, 0, 0.65), 0 0 60px rgba(111, 95, 174, 0.12);
+       touch-action: none; user-select: none; cursor: ew-resize; }
+  #pill { position: absolute; top: 12px; right: 12px; z-index: 3;
+          font: 11px ui-monospace, monospace; color: var(--dim);
+          background: rgba(0, 0, 0, 0.5); border: 1px solid var(--line);
+          padding: 4px 10px; border-radius: 999px; backdrop-filter: blur(6px); }
+  #hint { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+          z-index: 3; font-size: 11px; color: rgba(255, 255, 255, 0.5);
+          background: rgba(0, 0, 0, 0.35); padding: 3px 12px; border-radius: 999px;
+          pointer-events: none; }
+
+  #deck { width: min(96vw, 1280px); display: flex; flex-direction: column; gap: 10px;
+          padding: 12px 14px; border-radius: 16px; background: var(--glass);
+          border: 1px solid var(--line); backdrop-filter: blur(14px); }
+
+  #presets { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  #presets .lbl, #chips-wrap .lbl { font: 10px ui-monospace, monospace;
+          color: var(--faint); letter-spacing: 0.14em; text-transform: uppercase;
+          flex: none; width: 58px; }
+  .preset { background: linear-gradient(120deg, rgba(126,232,250,0.12), rgba(200,110,240,0.12));
+            color: var(--ink); border: 1px solid var(--line); border-radius: 999px;
+            padding: 5px 13px; font-size: 12.5px; cursor: pointer; transition: 0.15s; }
+  .preset:hover { border-color: var(--line-hi); transform: translateY(-1px); }
+
+  #chips-wrap { display: flex; gap: 8px; align-items: flex-start; }
+  #chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px;
+           scrollbar-width: thin; scrollbar-color: #2c2745 transparent; flex: 1; }
+  .cat { display: flex; gap: 6px; align-items: center; flex: none; }
+  .cat + .cat { border-left: 1px solid var(--line); padding-left: 10px; margin-left: 4px; }
+  .cat i { font-style: normal; font-size: 10px; color: var(--faint);
+           writing-mode: vertical-rl; letter-spacing: 0.2em; flex: none; }
+  .chip { flex: none; background: #100e1c; color: var(--dim); border: 1px solid var(--line);
+          border-radius: 9px; padding: 5px 11px; font-size: 12.5px;
+          font-family: ui-monospace, monospace; cursor: pointer; transition: 0.13s; }
+  .chip:hover { color: var(--ink); border-color: var(--line-hi); }
+  .chip.on { color: #0c0a14; border-color: transparent;
+             background: linear-gradient(120deg, var(--cyan), var(--violet));
+             box-shadow: 0 0 18px rgba(160, 140, 250, 0.35); font-weight: 700; }
+
+  #controls { display: flex; gap: 10px 22px; flex-wrap: wrap; align-items: flex-end; }
+  #controls label.slider { display: flex; flex-direction: column; gap: 3px;
+          font: 11px ui-monospace, monospace; color: var(--dim); }
+  #controls .row { display: flex; align-items: center; gap: 8px; }
+  #controls output { font: 11px ui-monospace, monospace; color: var(--cyan);
+          min-width: 44px; text-align: right; }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 140px; height: 4px;
+          border-radius: 2px; background: #262138; outline: none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
+          width: 14px; height: 14px; border-radius: 50%;
+          background: linear-gradient(120deg, var(--cyan), var(--violet));
+          box-shadow: 0 0 10px rgba(140, 170, 250, 0.5); cursor: pointer; border: none; }
+  input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%;
+          background: linear-gradient(120deg, var(--cyan), var(--violet)); border: none; cursor: pointer; }
+  #tail { display: flex; gap: 14px; align-items: center; margin-left: auto; }
+  #tail label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
+  select { background: #100e1c; color: var(--ink); border: 1px solid var(--line);
+           border-radius: 9px; padding: 5px 8px; font-size: 12.5px;
+           font-family: ui-monospace, monospace; }
+  input[type=checkbox] { accent-color: var(--violet); }
+  #bar { font: 11px ui-monospace, monospace; color: var(--faint); text-align: center; }
+</style>
+<header>
+  <h1>FILTER LAB</h1>
+  <small>38 filters · one GLSL∩C++ source · in wasm</small>
+  <a href="./index.html">← fluent_scene demos</a>
+</header>
+<div id="frame">
+  <canvas id="v" width="1280" height="720"></canvas>
+  <div id="pill">loading…</div>
+  <div id="hint">ドラッグで境界移動 · 左=原画</div>
+</div>
+<div id="deck">
+  <div id="presets"><span class="lbl">preset</span></div>
+  <div id="chips-wrap"><span class="lbl">filter</span><div id="chips"></div></div>
+  <div id="controls">
+    <span id="params" style="display:contents"></span>
+    <span id="tail">
+      <label>チェーン <select id="chain"><option value="">なし</option></select></label>
+      <label><input id="anim" type="checkbox" checked> アニメ</label>
+    </span>
+  </div>
+</div>
+<div id="bar">loading wasm…</div>
+<a href="https://x.com/takatronix" target="_blank" rel="noopener" style="position:fixed;right:12px;bottom:10px;z-index:9;font:11px ui-monospace,monospace;color:rgba(255,255,255,0.6);text-decoration:none;background:rgba(0,0,0,0.35);padding:4px 10px;border-radius:999px;backdrop-filter:blur(4px)">fluent_scene · by <b style="color:rgba(255,255,255,0.85)">@takatronix</b></a>
+<script type="module">
+// Filter lab — every catalog filter on the live webcam, in this tab.
+// The chip strip and every slider come from fs_filters_json(): the same
+// single-source table (filters_def.h) that feeds Scene parsing, so this
+// page can never drift from the engine. Drag the canvas to wipe original
+// vs filtered; time-driven filters (lsd/notebook/ntsc/fractal…) animate
+// through their `time` slot.
+import createFluentScene from './fluent_scene.mjs';
+
+const SCENE = `
+schema: fluent.scene/v1alpha2
+stage: { size: [1280, 720] }
+inputs:
+  camera: { type: image.rgba8, update: per_frame }
+params:
+  wipe_win: { type: vec2, default: [0, 360], runtime_mutable: true,
+              animate: { duration: 0.1, ease: ease_out } }
+  wipe_inv: { type: vec2, default: [1280, 360], runtime_mutable: true,
+              animate: { duration: 0.1, ease: ease_out } }
+  divider: { type: vec2, default: [640, 360], runtime_mutable: true,
+             animate: { duration: 0.1, ease: ease_out } }
+layers:
+  - id: after
+    content: { image: { source: $inputs.camera, fit: cover } }
+  - id: before_win
+    bounds: [0, 0, 1280, 720]
+    masks_to_bounds: true
+    position: $params.wipe_win
+    sublayers:
+      - bounds: [0, 0, 1280, 720]
+        position: $params.wipe_inv
+        content: { image: { source: $inputs.camera, fit: cover } }
+  - id: divider_line
+    position: $params.divider
+    content: { rect: { size: [3, 720], color: [1, 1, 1, 0.55] } }
+`;
+
+const bar = document.getElementById('bar');
+const pill = document.getElementById('pill');
+let canvas = document.getElementById('v');
+let ctx = null;
+
+const mod = await createFluentScene();
+const fs = {
+  create: mod.cwrap('fs_create', 'number', ['number']),
+  error: mod.cwrap('fs_error', 'string', []),
+  stageW: mod.cwrap('fs_stage_width', 'number', ['number']),
+  imageBuffer: mod.cwrap('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
+  commitImage: mod.cwrap('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
+  render: mod.cwrap('fs_render', 'number', ['number', 'number', 'number', 'number']),
+  renderW: mod.cwrap('fs_render_width', 'number', ['number']),
+  renderH: mod.cwrap('fs_render_height', 'number', ['number']),
+  renderStride: mod.cwrap('fs_render_stride', 'number', ['number']),
+  setParamVec2: mod.cwrap('fs_set_param_vec2', 'number', ['number', 'string', 'number', 'number']),
+  setFilter: mod.cwrap('fs_layer_set_filter', 'number',
+      ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
+  clearFilters: mod.cwrap('fs_layer_clear_filters', 'number', ['number', 'string']),
+  filtersJson: mod.cwrap('fs_filters_json', 'string', []),
+};
+
+const yamlPtr = mod.stringToNewUTF8(SCENE);
+const inst = fs.create(yamlPtr);
+if (!inst) { bar.textContent = 'scene rejected:\n' + fs.error(); throw new Error(fs.error()); }
+const stageW = fs.stageW(inst);
+
+// ---- catalog → chips -------------------------------------------------------
+const HIDDEN = new Set(['lut', 'face', 'opacity']);
+const CATALOG = JSON.parse(fs.filtersJson()).filter(f => !HIDDEN.has(f.name));
+const CATS = [
+  ['ANALOG', ['ntsc', 'crt']],
+  ['ART', ['notebook', 'oilpaint', 'sketch', 'toon', 'halftone', 'emboss', 'edge_sobel', 'posterize', 'solarize']],
+  ['LENS', ['bokeh', 'blur', 'bilateral', 'median', 'motion_blur', 'zoom_blur', 'sharpen', 'pixelate']],
+  ['TRIP', ['lsd', 'fractal', 'swirl', 'ripple']],
+  ['COLOR', ['grayscale', 'sepia', 'invert', 'hue', 'exposure', 'white_balance', 'levels',
+             'threshold', 'rgb', 'haze', 'color_transform', 'vignette', 'beauty']],
+];
+function rangeFor(p) {
+  const byName = {
+    blades: [0, 9, 1], rotation: [0, 360, 1], angle: [0, 360, 1],
+    levels: [0, 64, 1], mask: [0, 2, 1], scale: [0.05, 1, 0.01],
+    curvature: [0, 0.4, 0.01], converge: [0, 3, 0.05], blend: [0, 1, 0.01],
+    trip: [0, 1.5, 0.01], geometry: [-1.5, 1.5, 0.01],
+  };
+  if (byName[p.name]) return byName[p.name];
+  if (p.unit === 'length') return [0, Math.max(30, p.def * 3), 0.5];
+  if (p.unit === 'coord_x' || p.unit === 'coord_y') return [-320, 320, 1];
+  if (p.def < 0) return [-Math.max(1, -p.def * 2.5), Math.max(1, -p.def * 2.5), 0.01];
+  return [0, Math.max(1, p.def * 2.5), 0.01];
+}
+
+const chipsBox = document.getElementById('chips');
+const chainSel = document.getElementById('chain');
+const paramsBox = document.getElementById('params');
+const anim = document.getElementById('anim');
+let current = new URLSearchParams(location.search).get('f') || 'ntsc';
+if (!CATALOG.some(f => f.name === current)) current = CATALOG[0].name;
+
+const chipByName = {};
+{
+  const placed = new Set();
+  for (const [label, names] of CATS) {
+    const box = document.createElement('div');
+    box.className = 'cat';
+    const tag = document.createElement('i');
+    tag.textContent = label;
+    box.append(tag);
+    for (const n of names) {
+      const f = CATALOG.find(x => x.name === n);
+      if (!f) continue;
+      placed.add(n);
+      box.append(makeChip(f.name));
+    }
+    chipsBox.append(box);
+  }
+  const rest = CATALOG.filter(f => !placed.has(f.name));
+  if (rest.length) {
+    const box = document.createElement('div');
+    box.className = 'cat';
+    const tag = document.createElement('i');
+    tag.textContent = 'MISC';
+    box.append(tag);
+    for (const f of rest) box.append(makeChip(f.name));
+    chipsBox.append(box);
+  }
+}
+function makeChip(name) {
+  const b = document.createElement('button');
+  b.className = 'chip';
+  b.textContent = name;
+  b.addEventListener('click', () => selectFilter(name));
+  chipByName[name] = b;
+  return b;
+}
+for (const f of CATALOG) chainSel.add(new Option(f.name, f.name));
+
+// ---- presets ---------------------------------------------------------------
+// [label, primary, chain, primary overrides {name: value}]
+const PRESETS = [
+  ['📺 ブラウン管', 'ntsc', 'crt', {}],
+  ['📼 深夜の電波', 'ntsc', 'crt', { noise: 0.18, artifacts: 1.0 }],
+  ['✏️ ノート', 'notebook', '', {}],
+  ['🎨 油絵', 'oilpaint', 'median', { radius: 7, levels: 20 }],
+  ['🔭 ボケ六角', 'bokeh', '', { radius: 14, blades: 6, highlight: 1.4 }],
+  ['🌀 フラクタル', 'fractal', '', {}],
+  ['👁 トリップ', 'lsd', '', {}],
+];
+const presetsBox = document.getElementById('presets');
+for (const [label, primary, chain, over] of PRESETS) {
+  const b = document.createElement('button');
+  b.className = 'preset';
+  b.textContent = label;
+  b.addEventListener('click', () => {
+    chainSel.value = chain;
+    selectFilter(primary, over);
+  });
+  presetsBox.append(b);
+}
+
+// ---- selection + sliders ---------------------------------------------------
+const spec = () => CATALOG.find(f => f.name === current);
+const chainSpec = () => CATALOG.find(f => f.name === chainSel.value) || null;
+let values = [];
+const timeSlot = s => s && s.params.length > 1 && s.params[1].name === 'time' ? 1 : -1;
+const perfNowSec = () => performance.now() / 1000;
+const animated = () => timeSlot(spec()) >= 0 || timeSlot(chainSpec()) >= 0;
+
+function selectFilter(name, overrides = {}) {
+  current = name;
+  history.replaceState(null, '', '?f=' + name);
+  for (const [n, b] of Object.entries(chipByName)) b.classList.toggle('on', n === name);
+  chipByName[name]?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  buildSliders(overrides);
+  pushFilters(perfNowSec());
+}
+
+function buildSliders(overrides = {}) {
+  const s = spec();
+  values = s.params.map(p => overrides[p.name] !== undefined ? overrides[p.name] : p.def);
+  paramsBox.replaceChildren();
+  s.params.forEach((p, i) => {
+    if (p.name === 'time') return;              // the clock drives this one
+    const [lo, hi, step] = rangeFor(p);
+    const label = document.createElement('label');
+    label.className = 'slider';
+    const row = document.createElement('div');
+    row.className = 'row';
+    const input = document.createElement('input');
+    const out = document.createElement('output');
+    input.type = 'range'; input.min = lo; input.max = hi; input.step = step;
+    input.value = values[i];
+    out.textContent = Number(values[i]).toFixed(step >= 1 ? 0 : 2);
+    input.addEventListener('input', () => {
+      values[i] = Number(input.value);
+      out.textContent = Number(input.value).toFixed(step >= 1 ? 0 : 2);
+      pushFilters(perfNowSec());
+    });
+    row.append(input, out);
+    label.append(p.name, row);
+    paramsBox.append(label);
+  });
+}
+
+function pushFilters(t) {
+  const s = spec();
+  const v = values.slice();
+  const ts = timeSlot(s);
+  if (ts >= 0) v[ts] = anim.checked ? t : 0;
+  fs.clearFilters(inst, 'after');
+  fs.setFilter(inst, 'after', s.name, v[0] || 0, v[1] || 0, v[2] || 0, v[3] || 0, v[4] || 0);
+  const c = chainSpec();
+  if (c && c.name !== s.name) {
+    const cv = c.params.map(p => p.def);
+    const cts = timeSlot(c);
+    if (cts >= 0) cv[cts] = anim.checked ? t : 0;
+    fs.setFilter(inst, 'after', c.name, cv[0] || 0, cv[1] || 0, cv[2] || 0, cv[3] || 0, cv[4] || 0);
+  }
+}
+
+chainSel.addEventListener('change', () => pushFilters(perfNowSec()));
+anim.addEventListener('change', () => pushFilters(perfNowSec()));
+selectFilter(current);
+
+// ---- backend choice: WebGPU when available, CPU otherwise ------------------
+let gpu = false;
+try {
+  if (navigator.gpu) {
+    const gInit = mod.cwrap('fs_webgpu_init', null, ['string']);
+    const gStatus = mod.cwrap('fs_webgpu_status', 'number', []);
+    const gError = mod.cwrap('fs_webgpu_error', 'string', []);
+    fs.gRender = mod.cwrap('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']);
+    gInit('#v');
+    bar.textContent = 'waiting for WebGPU device…';
+    gpu = await new Promise(resolve => {
+      const t0 = performance.now();
+      (function poll() {
+        const s = gStatus();
+        if (s === 1) return resolve(true);
+        if (s === -1) { console.error('filters: WebGPU init failed:', gError()); return resolve(false); }
+        if (performance.now() - t0 > 5000) { console.error('filters: WebGPU init timeout'); return resolve(false); }
+        requestAnimationFrame(poll);
+      })();
+    });
+  }
+} catch (e) {
+  console.error('filters: WebGPU unavailable, using CPU renderer:', e);
+  gpu = false;
+}
+if (!gpu) {
+  if (navigator.gpu) {
+    // a failed WebGPU attempt may have claimed the canvas — a claimed
+    // canvas returns null from getContext('2d'), so start from a fresh node
+    const fresh = canvas.cloneNode(false);
+    fresh.width = 1280; fresh.height = 720;
+    canvas.replaceWith(fresh);
+    canvas = fresh;
+  }
+  ctx = canvas.getContext('2d');
+}
+fs.gStatus = gpu ? mod.cwrap('fs_webgpu_status', 'number', []) : () => -1;
+
+function fallbackToCpu(why) {
+  if (!gpu) return;
+  gpu = false;
+  console.error('filters: falling back to CPU renderer:', why);
+  const fresh = canvas.cloneNode(false);
+  fresh.width = 1280; fresh.height = 720;
+  canvas.replaceWith(fresh);
+  canvas = fresh;
+  hookWipe(canvas);
+  ctx = canvas.getContext('2d');
+}
+
+// ---- wipe ------------------------------------------------------------------
+function setWipe(s) {
+  s = Math.max(0, Math.min(stageW, s));
+  fs.setParamVec2(inst, 'wipe_win', s - 640, 360);
+  fs.setParamVec2(inst, 'wipe_inv', 1920 - s, 360);
+  fs.setParamVec2(inst, 'divider', s, 360);
+}
+let dragging = false;
+function hookWipe(el) {
+  el.addEventListener('pointerdown', e => {
+    dragging = true; el.setPointerCapture(e.pointerId);
+    const r = el.getBoundingClientRect();
+    setWipe((e.clientX - r.left) / r.width * stageW);
+    e.preventDefault();
+  });
+  el.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const r = el.getBoundingClientRect();
+    setWipe((e.clientX - r.left) / r.width * stageW);
+  });
+  el.addEventListener('pointerup', () => { dragging = false; });
+}
+hookWipe(canvas);
+
+// ---- webcam ----------------------------------------------------------------
+const res = new URLSearchParams(location.search).get('res');
+if (res && /^\d+x\d+$/.test(res)) {
+  const [rw, rh] = res.split('x').map(Number);
+  canvas.width = rw; canvas.height = rh;
+}
+let CAM_W = 1280, CAM_H = 720;
+const grab = document.createElement('canvas');
+const grabCtx = grab.getContext('2d', { willReadFrequently: true });
+let video = null;
+try {
+  const stream = await navigator.mediaDevices.getUserMedia(
+      { video: { width: { ideal: CAM_W }, height: { ideal: CAM_H } }, audio: false });
+  video = document.createElement('video');
+  video.srcObject = stream; video.muted = true;
+  await video.play();
+  CAM_W = video.videoWidth || CAM_W;
+  CAM_H = video.videoHeight || CAM_H;
+  grab.width = CAM_W;
+  grab.height = CAM_H;
+} catch (e) {
+  bar.textContent = 'webcam: ' + e + ' (needs https or localhost)';
+}
+
+// ---- render loop -----------------------------------------------------------
+let last = performance.now(), frames = 0, fpsShown = 0;
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+if (!res && gpu && DPR > 1) { canvas.width = 1280 * DPR; canvas.height = 720 * DPR; }
+const LADDER = [[1280, 720], [1024, 576], [854, 480], [640, 360]];
+let rung = 0;
+setInterval(() => {
+  fpsShown = frames; frames = 0;
+  if (res || gpu) return;
+  if (fpsShown > 0 && fpsShown < 24 && rung < LADDER.length - 1) ++rung;
+  const [w, h] = LADDER[rung];
+  if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
+}, 1000);
+
+function tick() {
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+
+  if (video && video.readyState >= 2) {
+    grabCtx.drawImage(video, 0, 0, CAM_W, CAM_H);
+    const data = grabCtx.getImageData(0, 0, CAM_W, CAM_H).data;
+    const ptr = fs.imageBuffer(inst, 'camera', CAM_W, CAM_H);
+    mod.HEAPU8.set(data, ptr);
+    fs.commitImage(inst, 'camera', CAM_W, CAM_H);
+  }
+  if (anim.checked && animated()) pushFilters(now / 1000);
+
+  if (gpu) {
+    if (fs.gStatus() !== 1) {
+      fallbackToCpu('device left ready state');
+    } else if (!fs.gRender(inst, dt, canvas.width, canvas.height)) {
+      fallbackToCpu('fs_render_webgpu failed');
+    }
+  }
+  if (!gpu) {
+    const px = fs.render(inst, dt, canvas.width, canvas.height);
+    const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
+    if (w === canvas.width && stride === w * 4) {
+      const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
+      ctx.putImageData(new ImageData(view, w, h), 0, 0);
+    }
+  }
+  ++frames;
+  pill.textContent = `${fpsShown} fps · ${gpu ? 'webgpu' : 'cpu'} · ${canvas.width}×${canvas.height}`;
+  bar.textContent = `右=${current}${chainSel.value && chainSel.value !== current ? ' → ' + chainSel.value : ''}` +
+      ' — 映像はタブの外に出ません';
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</html>

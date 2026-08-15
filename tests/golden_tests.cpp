@@ -290,6 +290,120 @@ void sceneLsd(Renderer& r) {
     g_max_diff_limit = saved_limit;
 }
 
+// Ntsc demodulates a subcarrier (trig per tap) and Crt makes hard mask /
+// branch selections — both flip isolated texels under CPU/GPU drift, so
+// they take the LSD waiver: over_ratio alone carries the guard. Tiles:
+// signal defaults, worst-case artifacts+RF noise, tube grille, tube slot
+// mask with heavy curvature, and the full ntsc→crt chain.
+void sceneTv(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Ntsc());
+    stage.image(view).frame({170, 10, 150, 130})
+        .filter(Ntsc().time(0.5f).artifacts(1.0f).fringing(1.0f).noise(0.2f));
+    stage.image(view).frame({330, 10, 140, 130}).filter(Crt());
+    stage.image(view).frame({10, 160, 150, 130})
+        .filter(Crt().mask(2.0f).curvature(0.3f).scan(1.2f).converge(1.5f));
+    stage.image(view).frame({170, 160, 150, 130})
+        .filter(Ntsc().time(1.0f)).filter(Crt());
+    // Non-integer tile scales park mask/scanline floor() boundaries a ULP
+    // from pixel centers, so whole stripes flip between backends (~4%
+    // measured). 5% still catches a real break (a torn body is >50%).
+    const int saved_limit = g_max_diff_limit;
+    const double saved_ratio = g_over_ratio_limit;
+    g_max_diff_limit = 255;
+    g_over_ratio_limit = 0.05;
+    checkScene("tv", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
+    g_over_ratio_limit = saved_ratio;
+}
+
+// Fractal raymarches a chaotic fold — Lyapunov growth turns rounding drift
+// into whole-pixel differences along silhouettes, so it takes the LSD
+// waiver: over_ratio alone carries the guard. Tiles cover the static frame
+// (t=0), flight+morph over time, glow extremes, and the video-blend path.
+void sceneFractal(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Fractal());
+    stage.image(view).frame({170, 10, 150, 130}).filter(Fractal().time(3.7f));
+    stage.image(view).frame({330, 10, 140, 130}).filter(
+        Fractal().time(9.2f).morph(1.8f).glow(2.0f));
+    stage.image(view).frame({10, 160, 150, 130}).filter(
+        Fractal().time(5.5f).flight(2.5f).glow(0.0f));
+    stage.image(view).frame({170, 160, 150, 130}).filter(
+        Fractal().time(13.1f).blend(1.0f));
+    const int saved_limit = g_max_diff_limit;
+    const double saved_ratio = g_over_ratio_limit;
+    g_max_diff_limit = 255;
+    g_over_ratio_limit = 0.05;
+    checkScene("fractal", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
+    g_over_ratio_limit = saved_ratio;
+}
+
+// Oilpaint picks the least-variant of four quadrants — a hard selection, so
+// a whisker of CPU/GPU drift near a variance tie flips a whole daub. Same
+// waiver as LSD/notebook: over_ratio carries the guard.
+void sceneOilpaint(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Oilpaint());
+    stage.image(view).frame({170, 10, 150, 130})
+        .filter(Oilpaint().radius(8.0f));
+    stage.image(view).frame({330, 10, 140, 130})
+        .filter(Oilpaint().radius(6.0f).levels(16.0f));
+    stage.image(view).frame({10, 160, 150, 130})
+        .filter(Oilpaint().jitter(0.0f));
+    stage.image(view).frame({170, 160, 150, 130})
+        .filter(Oilpaint().radius(7.0f).jitter(1.4f)).filter(Median());
+    const int saved_limit = g_max_diff_limit;
+    g_max_diff_limit = 255;
+    checkScene("oilpaint", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
+}
+
+void sceneBokeh(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Bokeh());
+    stage.image(view).frame({170, 10, 150, 130})
+        .filter(Bokeh().radius(14.0f).blades(6.0f));
+    stage.image(view).frame({330, 10, 140, 130})
+        .filter(Bokeh().radius(14.0f).blades(3.0f).rotation(30.0f));
+    stage.image(view).frame({10, 160, 150, 130})
+        .filter(Bokeh().radius(20.0f).highlight(2.0f));
+    stage.image(view).frame({170, 160, 150, 130})
+        .filter(Bokeh().radius(6.0f).blades(5.0f).highlight(0.0f));
+    checkScene("bokeh", r.render(stage, 0.0f));
+}
+
+// Notebook shares LSD's waiver, for the same reason: the stroke convolution
+// reads gradients at hash-jittered positions, so ~1e-4 of CPU/GPU drift can
+// flip an isolated texel across a stroke edge at full contrast. The
+// over_ratio limit alone guards the regression.
+void sceneNotebook(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Notebook());
+    stage.image(view).frame({170, 10, 150, 130}).filter(Notebook().time(2.4f));
+    stage.image(view).frame({330, 10, 140, 130})
+        .filter(Notebook().chroma(0.0f).grid(0.0f));   // plain graphite
+    stage.image(view).frame({10, 160, 150, 130})
+        .filter(Notebook().scale(0.25f).wobble(0.0f)); // still, fine strokes
+    stage.image(view).frame({170, 160, 150, 130})
+        .filter(Notebook().time(7.9f).chroma(1.0f).scale(0.8f));
+    const int saved_limit = g_max_diff_limit;
+    g_max_diff_limit = 255;
+    checkScene("notebook", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
+}
+
 void sceneAnimation(Renderer& r) {
     // §13-6: "the screen at t = 0.15 s" must be reproducible.
     Stage stage(320, 200);
@@ -427,6 +541,11 @@ int main(int argc, char** argv) {
     sceneFilters(r);
     sceneBeauty(r);
     sceneLsd(r);
+    sceneFractal(r);
+    sceneNotebook(r);
+    sceneBokeh(r);
+    sceneOilpaint(r);
+    sceneTv(r);
     sceneAnimation(r);
     sceneImagePaste(r);
     sceneUi(r);

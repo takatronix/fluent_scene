@@ -1396,8 +1396,9 @@ int main(int argc, char** argv) {
     std::vector<Tile> tiles;
     {
         const int cols = 6;
+        const int rows = (static_cast<int>(table.size()) + cols - 1) / cols;
         const float tile_w = (kW - 16.0f) / cols;
-        const float tile_h = (kH - bar_h - 14.0f) / 5;
+        const float tile_h = (kH - bar_h - 14.0f) / static_cast<float>(rows);
         for (size_t i = 0; i < table.size(); ++i) {
             const float x = 8 + (i % cols) * tile_w;
             const float y = bar_h + 8 + (i / cols) * tile_h;
@@ -1603,6 +1604,17 @@ int main(int argc, char** argv) {
     // ---- render loop (owns the Stage) -------------------------------------
     WaterSim water;
     uint64_t seen_seq[2] = {0, 0};
+    // wall economics (2026-08-16): 38 filtered tiles re-uploading the full
+    // 1280x720 frame and re-recording every filter EVERY tick was the load
+    // (67% of a core, GPU only 27% — the shaders were never the problem).
+    // The wall now (a) shares ONE quarter-res copy of the camera, refreshed
+    // only when a new frame actually arrived, and (b) refreshes the
+    // parameter "breathing" round-robin; only time-driven filters re-apply
+    // every frame.
+    uint64_t cam_stamp = 1;   // bumped whenever cam_rgba's content changes
+    uint64_t wall_stamp = 0;  // last cam_stamp the wall consumed
+    std::vector<uint8_t> wall_rgba;
+    uint32_t wall_w = 0, wall_h = 0;
     bool have_ros = false;
     bool have_pip = false;
     Vec2 mouse{-10000, -10000};
@@ -1639,6 +1651,7 @@ int main(int argc, char** argv) {
                     water.reset(cam_w, cam_h);
                 }
                 have_ros = true;
+                ++cam_stamp;
             } else {
                 pip_w = w;
                 pip_h = h;
@@ -1651,6 +1664,7 @@ int main(int argc, char** argv) {
 #endif
         if (!have_ros) {
             cam_rgba = makeTestPattern(cam_w, cam_h, tick);
+            ++cam_stamp;
         }
         if (water.width() != cam_w) {
             water.reset(cam_w, cam_h);
@@ -1700,23 +1714,50 @@ int main(int argc, char** argv) {
         // ---- per-scene live updates ---------------------------------------
         if (scene == 0) {
             // Every filter at once; parameters breathe, and the tile under
-            // the pointer zooms up out of the wall.
-            for (Tile& tile : tiles) {
-                tile.img->setImage(camView());
-                Filter f{tile.spec->mode, {}};
-                for (size_t p = 0; p < tile.spec->params.size() && p < 5; ++p) {
-                    f.values[p] = tile.spec->params[p].default_value;
+            // the pointer zooms up out of the wall. See the wall-economics
+            // note above: one shared quarter-res image, refreshed per new
+            // camera frame; breathing refreshes round-robin.
+            const bool fresh = wall_stamp != cam_stamp;
+            if (fresh) {
+                wall_stamp = cam_stamp;
+                wall_w = std::max(1u, cam_w / 4);
+                wall_h = std::max(1u, cam_h / 4);
+                wall_rgba.resize(static_cast<size_t>(wall_w) * wall_h * 4);
+                for (uint32_t y = 0; y < wall_h; ++y) {
+                    const uint8_t* src = &cam_rgba[(static_cast<size_t>(y) * 4) * cam_w * 4];
+                    uint8_t* dst = &wall_rgba[static_cast<size_t>(y) * wall_w * 4];
+                    for (uint32_t x = 0; x < wall_w; ++x) {
+                        std::memcpy(&dst[x * 4], &src[static_cast<size_t>(x) * 16], 4);
+                    }
                 }
-                if (!tile.spec->params.empty()) {
-                    const float def = tile.spec->params[0].default_value;
-                    const float wave = std::sin(t * 0.8f + tile.phase);
-                    f.values[0] = def != 0 ? def * (0.7f + 0.3f * wave) : 0.4f * wave;
+            }
+            const ImageView wallView{wall_w, wall_h, wall_rgba.data(), 0};
+            for (size_t i = 0; i < tiles.size(); ++i) {
+                Tile& tile = tiles[i];
+                if (fresh) {
+                    tile.img->setImage(wallView);
                 }
-                if (tile.spec->mode == FS_LSD) {
-                    f.values[1] = t;  // lsd animates through its `time` slot
+                // time-driven filters (lsd/notebook/ntsc/fractal…) animate
+                // through their `time` slot — recognized by name, so new
+                // catalog entries join without touching this file
+                const bool timed = tile.spec->params.size() > 1 &&
+                    std::strcmp(tile.spec->params[1].name, "time") == 0;
+                if (timed || i % 6 == tick % 6) {
+                    Filter f{tile.spec->mode, {}};
+                    for (size_t p = 0; p < tile.spec->params.size() && p < 5; ++p) {
+                        f.values[p] = tile.spec->params[p].default_value;
+                    }
+                    if (!tile.spec->params.empty()) {
+                        const float def = tile.spec->params[0].default_value;
+                        const float wave = std::sin(t * 0.8f + tile.phase);
+                        f.values[0] = def != 0 ? def * (0.7f + 0.3f * wave) : 0.4f * wave;
+                    }
+                    if (timed) {
+                        f.values[1] = t;
+                    }
+                    tile.img->clearFilters();
+                    tile.img->filter(f);
                 }
-                tile.img->clearFilters();
-                tile.img->filter(f);
                 const float dx = tile.home.x - mouse.x;
                 const float dy = tile.home.y - mouse.y;
                 const float want = std::hypot(dx, dy) < 130 ? 1.35f : 1.0f;
@@ -1744,12 +1785,16 @@ int main(int argc, char** argv) {
                 pip_pos.y += (target.y - pip_pos.y) * 0.04f;
                 pip.position(pip_pos);
             }
-            // lsd is time-driven: while selected, its filter re-applies every
-            // frame with `time` (slot 1) advancing, the fx::Ripple pattern.
-            const bool sel_lsd = sel_effect > 0 &&
-                                 sel_effect <= static_cast<int>(table.size()) &&
-                                 table[static_cast<size_t>(sel_effect - 1)].mode == FS_LSD;
-            if (fx_dirty || sel_lsd) {
+            // time-driven filters (slot 1 named `time`: lsd/notebook/ntsc/
+            // fractal…) re-apply every frame with time advancing, the
+            // fx::Ripple pattern.
+            const bool sel_timed = sel_effect > 0 &&
+                sel_effect <= static_cast<int>(table.size()) &&
+                table[static_cast<size_t>(sel_effect - 1)].params.size() > 1 &&
+                std::strcmp(
+                    table[static_cast<size_t>(sel_effect - 1)].params[1].name,
+                    "time") == 0;
+            if (fx_dirty || sel_timed) {
                 fx_dirty = false;
                 video.clearFilters();
                 if (sel_effect > 0 && sel_effect <= static_cast<int>(table.size())) {
@@ -1762,7 +1807,8 @@ int main(int argc, char** argv) {
                         const float def = spec.params[0].default_value;
                         f.values[0] = def != 0 ? 2 * def * sel_param : sel_param;
                     }
-                    if (spec.mode == FS_LSD) {
+                    if (spec.params.size() > 1 &&
+                        std::strcmp(spec.params[1].name, "time") == 0) {
                         f.values[1] = t;
                     }
                     video.filter(f);

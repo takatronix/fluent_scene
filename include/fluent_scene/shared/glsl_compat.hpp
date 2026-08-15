@@ -89,6 +89,11 @@ inline vec3 max_(vec3 a, vec3 b) { return {max_(a.x, b.x), max_(a.y, b.y), max_(
 inline float radians_(float deg) { return deg * 0.01745329252f; }
 inline float abs_(float v) { return v < 0 ? -v : v; }
 inline vec2 abs_(vec2 v) { return {abs_(v.x), abs_(v.y)}; }
+inline vec3 abs3_(vec3 v) { return {abs_(v.x), abs_(v.y), abs_(v.z)}; }
+inline float tanh_(float v) { return std::tanh(v); }
+inline vec3 cos3_(vec3 v) { return {std::cos(v.x), std::cos(v.y), std::cos(v.z)}; }
+inline vec2 normalize2_(vec2 v) { return v / length(v); }
+inline vec3 normalize3_(vec3 v) { return v / length(v); }
 inline vec2 min2_(vec2 a, vec2 b) { return {min_(a.x, b.x), min_(a.y, b.y)}; }
 inline vec2 max2_(vec2 a, vec2 b) { return {max_(a.x, b.x), max_(a.y, b.y)}; }
 
@@ -109,6 +114,11 @@ inline float floor(float v) { return floorf_(v); }
 inline float abs(float v) { return abs_(v); }
 inline float sqrt(float v) { return std::sqrt(v); }
 inline vec2 abs(vec2 v) { return abs_(v); }
+inline vec3 abs(vec3 v) { return abs3_(v); }
+inline float tanh(float v) { return tanh_(v); }
+inline vec3 cos(vec3 v) { return cos3_(v); }
+inline vec2 normalize(vec2 v) { return normalize2_(v); }
+inline vec3 normalize(vec3 v) { return normalize3_(v); }
 inline vec2 min(vec2 a, vec2 b) { return min2_(a, b); }
 inline vec2 max(vec2 a, vec2 b) { return max2_(a, b); }
 

@@ -79,7 +79,7 @@ const inst = mod.cwrap('fs_create', 'number', ['number'])(
 | **Robots (ROS 2)** | `scene_node` (.fvs+.fvb → topics → render → Image publish), `scene_web` live editing, `fvsc` CLI | in production |
 | **Web apps** | `fluent_scene.mjs` + `.wasm` (self-contained ES module), CPU or WebGPU | live (demos above) |
 | **Desktop** | C++17 library + `stage_web` / `scene_web` / `fvsc` | in production |
-| **Mobile** | the same portable C++17 core + the flat C ABI (the wasm/api.cpp surface); iOS / Android bindings | on the roadmap |
+| **Mobile** | the same portable C++17 core + the flat C ABI (the wasm/api.cpp surface); iOS / Android bindings — [plan (ja)](docs/design/mobile_support.ja.md) | on the roadmap |
 
 Core dependencies: freetype + harfbuzz. Without a GPU, the CPU reference
 renderer is itself production quality.
@@ -109,9 +109,14 @@ three backends to the same reference images.
 - **CALayer-style attributes** — frame / position / anchor / rotation /
   scale / opacity / shadow / border / background / cornerRadius /
   masksToBounds / blend. One coordinate system: top-left origin, +y down
-- **32 filters** — blur / bilateral / color_transform / toon / halftone /
-  ripple / beauty (smoothing + whitening + NR) / lut (3D LUT) / lsd … —
-  applicable to any layer or to a group's composited result
+- **38 filters** — blur / bilateral / color_transform / toon / halftone /
+  ripple / beauty (smoothing + whitening + NR) / lut (3D LUT) / lsd /
+  bokeh (polygonal iris) / oilpaint (Kuwahara) / ntsc + crt (real composite
+  modulation → tube, after MAME ntsc.fx BSD-3, Lottes PD, Cathode-Retro MIT)
+  / fractal (endless KIFS flight) /
+  notebook (pencil sketch, after [flockaroo's XtVGD1](https://www.shadertoy.com/view/XtVGD1),
+  CC BY-NC-SA — that one filter is **non-commercial**; everything else stays
+  MIT) … — applicable to any layer or to a group's composited result
 
   ![Filter catalog (filters_tour output)](docs/images/filters_tour.png)
 

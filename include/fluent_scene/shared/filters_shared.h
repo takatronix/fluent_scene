@@ -63,6 +63,12 @@ const int FS_BEAUTY = 30;
 const int FS_LSD = 31;
 const int FS_LUT = 32;
 const int FS_FACE = 33;
+const int FS_NOTEBOOK = 34;
+const int FS_BOKEH = 35;
+const int FS_OILPAINT = 36;
+const int FS_NTSC = 37;
+const int FS_CRT = 38;
+const int FS_FRACTAL = 39;
 
 #ifdef FS_SAMPLE
 
@@ -462,6 +468,57 @@ vec3 fs_zoom_blur(vec2 uv, float strength) {
     return accum / 9.0;
 }
 
+// Lens bokeh: out-of-focus blur whose kernel is the shape of a camera IRIS,
+// not a gaussian. Three things make it read as photography instead of blur:
+//   - the kernel is a flat (edge-weighted) disc — highlights become discs,
+//     they don't melt;
+//   - `blades` cuts that disc into the aperture polygon (3 = triangle,
+//     6 = hexagon…; below 3 = round iris), `rotation` turns it;
+//   - averaging runs on pseudo-HDR values (pow-up, blur, pow-down) so
+//     specular points OUTSHINE their surroundings the way real sensor
+//     clipping does — without it a white dot averages away to grey mush.
+// Classic polar-grid gather (24 directions × 8 rings); no borrowed code.
+vec3 fs_bokeh(vec2 uv, float radius_px, float blades, float rotation_degrees,
+              float highlight) {
+    float h = 1.0 + 3.0 * clamp(highlight, 0.0, 2.0);   // pseudo-HDR exponent
+    float n = floor(blades + 0.5);
+    float rot = radians(rotation_degrees);
+    vec2 clamp_lo = FS_TEXEL * 3.0;
+    vec2 clamp_hi = vec2(1.0, 1.0) - FS_TEXEL * 3.0;
+    vec3 acc = vec3(0.0, 0.0, 0.0);
+    float wsum = 0.0;
+    for (int i = 0; i < 24; ++i) {
+        for (int j = 1; j <= 8; ++j) {
+            // golden-ratio stagger de-phases the rings so the 24 spokes
+            // don't line up into gear teeth on the aperture's rim
+            float st = float(j) * 0.38197;
+            st = st - floor(st);
+            float ang = 6.2831853 * ((float(i) + st) / 24.0) + rot;
+            // polygon polar radius: how far the iris extends along this
+            // spoke. r(θ) = cos(π/n)/cos(θ mod 2π/n − π/n); 1 for a circle
+            float apt = 1.0;
+            if (n >= 3.0) {
+                float seg = 6.2831853 / n;
+                float th = ang - rot + 0.5 * seg;   // vertex-up orientation
+                th = th - seg * floor(th / seg);
+                apt = cos(0.5 * seg) / cos(th - 0.5 * seg);
+            }
+            vec2 dir = vec2(cos(ang), sin(ang));
+            float t = float(j) / 8.0;
+            vec2 p = uv + dir * (t * apt * radius_px) * FS_TEXEL;
+            vec3 c = FS_SAMPLE(clamp(p, clamp_lo, clamp_hi));
+            // r² ring weight = equal AREA per ring — a flat disc, the
+            // signature of bokeh (gaussian would weight the center)
+            float w = t * t;
+            acc += vec3(pow(c.x, h), pow(c.y, h), pow(c.z, h)) * w;
+            wsum += w;
+        }
+    }
+    vec3 m = acc / wsum;
+    float ih = 1.0 / h;
+    return vec3(pow(m.x, ih), pow(m.y, ih), pow(m.z, ih));
+}
+
 // A water-surface refraction wave: the sampling position is displaced by a
 // damped sinusoid concentrated around an expanding wavefront, so the image
 // beneath genuinely bends (this is the real ripple — the classic GL demo,
@@ -644,6 +701,618 @@ vec3 fs_lsd(vec2 uv, float trip, float time_s, float drift, float geometry, floa
     return col;
 }
 
+// Oil painting: the Kuwahara filter (Kuwahara et al., 1976 — a classic,
+// no borrowed shader code). Around each pixel four overlapping quadrant
+// windows are measured; the pixel takes the MEAN of the LEAST-VARIANT
+// quadrant. Averaging never crosses an edge (the variant quadrants lose),
+// so regions flatten into brush daubs while contours stay crisp — the
+// painterly look. Two strokes of style on top:
+//   - `jitter` rotates each pixel's quadrant frame by a smooth noise angle,
+//     breaking the axis-aligned boxiness into wandering brush direction;
+//   - `levels` posterizes the result per channel — dabs of mixed paint
+//     rather than continuous gradients (0 = off).
+// Like fs_bilateral, the window is a fixed 4×4 per quadrant and `radius`
+// stretches its sample spacing.
+vec3 fs_oilpaint(vec2 uv, float radius_px, float levels, float jitter) {
+    float spacing = max(radius_px, 1.0) / 3.0;
+    // brush-direction field: one smooth angle per neighborhood
+    vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
+    float ang = (fs_lsd_vnoise(px * (0.35 / max(radius_px, 1.0))) - 0.5)
+              * (2.4 * clamp(jitter, 0.0, 1.5));
+    float ca = cos(ang);
+    float sa = sin(ang);
+    vec3 best = FS_SAMPLE(uv);
+    float best_v = 1e9;
+    for (int q = 0; q < 4; ++q) {
+        vec2 qdir = vec2(q == 0 || q == 2 ? -1.0 : 1.0,
+                         q == 0 || q == 1 ? -1.0 : 1.0);
+        vec3 sum = vec3(0.0, 0.0, 0.0);
+        float sum_l = 0.0;
+        float sum_l2 = 0.0;
+        for (int j = 0; j < 4; ++j) {
+            for (int i = 0; i < 4; ++i) {
+                vec2 o = vec2(float(i), float(j)) * qdir * spacing;
+                vec2 ro = vec2(o.x * ca - o.y * sa, o.x * sa + o.y * ca);
+                vec3 s = FS_SAMPLE(uv + FS_TEXEL * ro);
+                float l = fs_luma(s);
+                sum += s;
+                sum_l += l;
+                sum_l2 += l * l;
+            }
+        }
+        float v = sum_l2 - sum_l * sum_l / 16.0;   // luma variance ×16
+        if (v < best_v) {
+            best_v = v;
+            best = sum / 16.0;
+        }
+    }
+    if (levels >= 2.0) {
+        float n = floor(levels + 0.5);
+        best = floor(best * n + vec3(0.5)) * (1.0 / n);
+    }
+    return best;
+}
+
+// ---- generative ------------------------------------------------------------
+// fs_fractal — eternal flight through a self-morphing kaleidoscopic IFS.
+// Design: docs/design/fractal_filter.ja.md. Original composition; the
+// technique families (KIFS folding per Knighty/fractalforums 2010, sphere
+// tracing per Hart 1996, orbit-trap coloring, quasi-periodic parameter
+// drive) are public knowledge — no Shadertoy code is ported.
+//
+// Everything is a pure function of `time` (host-driven, fs_lsd contract):
+// no randomness, no frame state. Every time-varying knob rides a bank of
+// mutually incommensurate sines, so the parameter orbit is dense on a
+// torus — strictly aperiodic. Chaos in the folds amplifies that drift into
+// endless structural novelty: the mood persists, the frame never repeats.
+// The camera advances along z, which the 2-unit space tiling makes exactly
+// periodic — wrapping z each tile keeps float32 sharp forever.
+
+// Three incommensurate sines (golden-ratio frequency spread). Range ±3.
+float fs_fr_osc(float t, float f, float ph) {
+    return sin(t * f + ph) + sin(t * f * 1.6180339887 + ph * 2.0) +
+           sin(t * f * 0.3819660113 + ph * 4.0);
+}
+
+vec3 fs_fr_pal(float x, vec3 phase, float amp) {
+    return vec3(0.5, 0.5, 0.5) + amp * cos(vec3(6.2831853 * x, 6.2831853 * x, 6.2831853 * x) + phase);
+}
+
+// Distance estimate + orbit traps. Returns (d, trap@7, trap@6, trap@5):
+// the same min-|z| trap cut at three consecutive fold depths — their gaps
+// become the R/G/B phase offsets of the iridescent fringes (a 2D trick
+// from the inversion-IFS family, recomposed here in 3D).
+// The change itself is fractal: every fold DEPTH carries its own clock,
+// and the deeper (finer) the level, the faster it runs — so the fine
+// filigree seethes on a seconds scale while the great halls drift on a
+// minutes scale. One global deformation would read as a single slow
+// morph; this reads as a world alive at every magnification.
+vec4 fs_fr_de(vec3 p, float a1, float a2, float sc, vec3 off, float t, float m, float wInv) {
+    // infinite tiling: fold all of space into one 2-unit mirror cell
+    vec3 w = p * 0.5;
+    w = w - floor(w);
+    vec3 z = abs(1.0 - w * 2.0);
+    float ks = 1.0;
+    float d = 1000.0;
+    float t0 = 1000.0;
+    float t1 = 1000.0;
+    float t2 = 1000.0;
+    for (int n = 0; n < 7; ++n) {
+        float fn = float(n);
+        float aa = a1 + 0.11 * m * sin(t * (0.20 + 0.17 * fn) + fn * 2.4);
+        float bb = a2 + 0.08 * m * sin(t * (0.16 + 0.21 * fn) + fn * 1.7);
+        float c1 = cos(aa);
+        float s1 = sin(aa);
+        float c2 = cos(bb);
+        float s2 = sin(bb);
+        float rx = c1 * z.x + s1 * z.y;
+        float ry = c1 * z.y - s1 * z.x;
+        z.x = rx;
+        z.y = ry;
+        z = abs(z);
+        float tmp = 0.0;
+        if (z.x < z.y) { tmp = z.x; z.x = z.y; z.y = tmp; }
+        if (z.x < z.z) { tmp = z.x; z.x = z.z; z.z = tmp; }
+        if (z.y < z.z) { tmp = z.y; z.y = z.z; z.z = tmp; }
+        float ry2 = c2 * z.y + s2 * z.z;
+        float rz = c2 * z.z - s2 * z.y;
+        z.y = ry2;
+        z.z = rz;
+        // family morph: a blendable sphere-inversion fold. At 0 the fold
+        // stack is pure Menger — rectilinear, architectural. As it rises
+        // the space curves and the grid melts into bubbled, lace-like
+        // Apollonian forms. Continuously driveable, so the architecture
+        // itself dissolves and re-crystallizes over time.
+        float r2i = dot(z, z);
+        float fi = 1.0 + wInv * (1.35 / max(r2i, 0.35) - 1.0);
+        fi = clamp(fi, 0.6, 3.2);
+        z = z * fi;
+        ks = ks * fi;
+        z = z * sc - off * (sc - 1.0);
+        float zf = off.z * (sc - 1.0);
+        if (z.z < -0.5 * zf) { z.z = z.z + zf; }
+        ks = ks * sc;
+        float r = length(z) / ks;
+        d = min(d, r);
+        if (n < 5) { t2 = min(t2, r); }
+        if (n < 6) { t1 = min(t1, r); }
+        t0 = min(t0, r);
+    }
+    return vec4(d - 0.0012, t0, t1, t2);
+}
+
+vec3 fs_fractal(vec2 uv, float flight, float time_s, float morph, float glow, float blend) {
+    vec3 src = FS_SAMPLE(uv);
+    float t = time_s;
+    float m = clamp(morph, 0.0, 2.0);
+
+    // the drive bank — every knob on its own incommensurate clock. The
+    // clocks are FAST enough that the geometry visibly reorganizes within
+    // seconds (the owner's brief: the SHAPE must never stop becoming);
+    // the fold angles, the scale, and the offset vector — the very family
+    // of the fractal — are all in flight at once.
+    float a1b = 3.55 + 0.85 * m * fs_fr_osc(t, 0.061, 0.7);
+    float a2b = 0.50 * m * fs_fr_osc(t, 0.047, 2.3);
+    float sc = 3.02 + 0.20 * m * fs_fr_osc(t, 0.033, 4.1);
+    sc = clamp(sc, 2.5, 3.5);
+    vec3 off = vec3(0.96 + 0.055 * m * fs_fr_osc(t, 0.043, 1.1),
+                    0.90 + 0.055 * m * fs_fr_osc(t, 0.037, 3.9),
+                    0.34 + 0.030 * m * fs_fr_osc(t, 0.029, 5.5));
+    float wInv = clamp(0.30 + 0.30 * fs_fr_osc(t, 0.0165, 5.9), 0.0, 0.9) * clamp(m, 0.0, 1.5);
+    float nlp = 0.11 * m * (1.0 + 0.45 * fs_fr_osc(t, 0.011, 1.9));
+    float hue = 0.075 * t + 0.30 * fs_fr_osc(t, 0.007, 3.3);
+    float roll = 0.22 * fs_fr_osc(t, 0.009, 0.2);
+
+    // the weather layer — mood clocks slower than the geometry, so the
+    // piece passes through seasons: vividness swells and drains, the
+    // channel spread collapses to near-monochrome and blooms back to full
+    // rainbow, the two lights trade warm for cold, the fog thickens and
+    // clears, the glow ebbs. A time teleport jumps the weather with it.
+    float mA = 0.50 + 0.093 * fs_fr_osc(t, 0.0043, 2.9);
+    float spr = 0.68 + 0.24 * fs_fr_osc(t, 0.0037, 4.7);
+    float hb = hue * 6.2831853;
+    vec3 mph = vec3(hb, hb + 2.1 * spr, hb + 4.2 * spr);
+    // fast shimmer: the hues themselves flicker on a seconds scale
+    mph = mph + vec3(0.11 * sin(t * 0.31 + 1.0), 0.11 * sin(t * 0.41 + 3.0),
+                     0.11 * sin(t * 0.55 + 5.0));
+    float fogd = clamp(0.16 + 0.05 * fs_fr_osc(t, 0.0047, 3.8), 0.06, 0.30);
+    float gw = 0.10 + 0.02 * fs_fr_osc(t, 0.0059, 1.2);
+    vec3 keyC = mix(vec3(1.0, 0.93, 0.82), fs_fr_pal(0.05, mph, 0.5), 0.45);
+    vec3 filC = mix(vec3(0.22, 0.32, 0.52), fs_fr_pal(0.55, mph, 0.5), 0.45);
+
+    // matter: what the world is MADE of wanders too — stone (matte mass),
+    // glass (reflection, rim light, hard sparkle), pure light (the surface
+    // dissolves and only the glow remains). ~2 min per lap, and a time
+    // teleport lands mid-substance: the same geometry keeps returning as a
+    // different material.
+    float pm = t * 0.021 + 0.13 * fs_fr_osc(t, 0.005, 2.2);
+    float mu = pm - floor(pm / 3.0) * 3.0;
+    float dSt = min(abs(mu), 3.0 - abs(mu));
+    float dGl = min(abs(mu - 1.0), 3.0 - abs(mu - 1.0));
+    float dLi = min(abs(mu - 2.0), 3.0 - abs(mu - 2.0));
+    float wSt = 1.0 - smoothstep(0.45, 1.15, dSt);
+    float wGl = 1.0 - smoothstep(0.45, 1.15, dGl);
+    float wLi = 1.0 - smoothstep(0.45, 1.15, dLi);
+    float wS = wSt + wGl + wLi + 0.0001;
+    wSt = wSt / wS;
+    wGl = wGl / wS;
+    wLi = wLi / wS;
+    // light-matter runs vivid: a pale palette there washes the frame white
+    mA = clamp(mA + 0.25 * wLi, 0.2, 0.85);
+
+    // camera: forward flight, z wrapped on the tile so it can fly forever
+    float zraw = 1.30 * clamp(flight, -4.0, 4.0) * t;
+    float z0 = 2.0 * (zraw - floor(zraw));
+    vec3 ro = vec3(0.09 * fs_fr_osc(t, 0.023, 5.1), 0.09 * fs_fr_osc(t, 0.019, 1.3), z0);
+    vec2 d0 = uv - vec2(0.5, 0.5);
+    vec2 pc = vec2(d0.x * (FS_TEXEL.y / FS_TEXEL.x), d0.y);
+    float cr = cos(roll);
+    float sr = sin(roll);
+    vec2 pr = vec2(cr * pc.x - sr * pc.y, sr * pc.x + cr * pc.y);
+    vec3 rd = normalize(vec3(pr.x, pr.y, 0.95));
+
+    // march: sphere tracing with a glow integral riding along. The glow
+    // kernel d/(d² + ε²) peaks a skin's depth off every surface and dies
+    // both on contact and at range — the wet halo, without a break.
+    float tt = 0.02 + 0.006 * fs_lsd_hash(uv * 913.7);
+    float run = 1.0;
+    float hitT = -1.0;
+    float used = 0.0;
+    vec3 pos = ro;
+    vec3 dir = rd;
+    vec4 h = vec4(1000.0, 1000.0, 1000.0, 1000.0);
+    vec3 gacc = vec3(0.0, 0.0, 0.0);
+    for (int i = 0; i < 46; ++i) {
+        if (run > 0.5) {
+            // non-linear perspective: the ray bends with distance traveled
+            float ba = tt * nlp;
+            float cb = cos(ba);
+            float sb = sin(ba);
+            dir = vec3(rd.x, cb * rd.y - sb * rd.z, sb * rd.y + cb * rd.z);
+            pos = ro + dir * tt;
+            h = fs_fr_de(pos, a1b, a2b, sc, off, t, m, wInv);
+            float d = h.x;
+            // line integral of a Lorentzian shell density around surfaces:
+            // step length × ε/(d²+ε²) — converges, halo stays a halo
+            float ds = max(d, 0.0) * 0.72;
+            // light-matter narrows the halo: broad wash becomes filament
+            float ge = 0.006 - 0.0051 * wLi;
+            gacc += fs_fr_pal(0.35 * tt + 2.2 * h.y, mph, mA) *
+                    (ds * 0.075 / (d * d + ge));
+            float prec = 0.0012 * tt;
+            tt += ds;
+            used += 1.0;
+            if (d < prec) { hitT = tt; run = 0.0; }
+            if (tt > 22.0) { run = 0.0; }
+        }
+    }
+
+    vec3 col = vec3(0.004, 0.005, 0.010);
+    if (hitT > 0.0) {
+        // tetrahedron normal (4 taps)
+        float ep = 0.0009 * max(hitT, 0.08);
+        vec3 e1 = vec3(1.0, -1.0, -1.0);
+        vec3 e2 = vec3(-1.0, -1.0, 1.0);
+        vec3 e3 = vec3(-1.0, 1.0, -1.0);
+        vec3 e4 = vec3(1.0, 1.0, 1.0);
+        vec3 n = e1 * fs_fr_de(pos + e1 * ep, a1b, a2b, sc, off, t, m, wInv).x +
+                 e2 * fs_fr_de(pos + e2 * ep, a1b, a2b, sc, off, t, m, wInv).x +
+                 e3 * fs_fr_de(pos + e3 * ep, a1b, a2b, sc, off, t, m, wInv).x +
+                 e4 * fs_fr_de(pos + e4 * ep, a1b, a2b, sc, off, t, m, wInv).x;
+        n = normalize(n);
+        // warm key + cool fill, orbit-trap iridescence, trap + step AO
+        vec3 l1 = normalize(vec3(0.55, 0.72, -0.42));
+        vec3 l2 = normalize(vec3(-0.48, -0.30, 0.62));
+        float kd = clamp(dot(n, l1), 0.0, 1.0);
+        float fd = clamp(0.2 + 0.8 * dot(n, l2), 0.0, 1.0);
+        vec3 irid = vec3(0.5, 0.5, 0.5) +
+                    0.5 * cos(vec3(12.0 * h.y, 12.4 * h.z, 12.8 * h.w) + mph);
+        vec3 alb = mix(fs_fr_pal(1.7 * h.y + 0.13, mph, mA), irid, 0.55);
+        float aoT = pow(clamp(h.y * 2.6, 0.0, 1.0), 1.25);
+        float aoS = clamp(1.15 - used / 46.0, 0.0, 1.0);
+        vec3 ref = dir - 2.0 * dot(n, dir) * n;
+        vec3 env = mix(vec3(0.10, 0.06, 0.16), vec3(0.55, 0.65, 0.90), 0.5 + 0.5 * ref.y);
+        float spe = pow(clamp(dot(ref, l1), 0.0, 1.0), 28.0);
+        float rim = pow(clamp(1.0 + dot(n, dir), 0.0, 1.0), 3.0);
+        float surfW = wSt + 0.45 * wGl + 0.30 * wLi;
+        float envW = 0.10 * wSt + 0.50 * wGl + 0.06 * wLi;
+        float speW = 1.1 * wSt + 2.8 * wGl + 0.4 * wLi;
+        float spe2 = mix(spe, spe * spe, wGl);
+        vec3 surf = alb * (vec3(0.04, 0.04, 0.06) + keyC * (1.05 * kd) + filC * fd);
+        surf = surf * (surfW * aoT * aoS * aoS) + env * (envW * aoT) +
+               fs_fr_pal(0.3, mph, 0.5) * (rim * (0.85 * wGl + 0.25 * wLi)) +
+               vec3(1.0, 1.0, 1.0) * (spe2 * speW * aoS);
+        col = surf * exp(-fogd * hitT);
+    }
+    float gwm = wSt + 1.7 * wGl + 1.4 * wLi;
+    col = col + gacc * (gw * gwm * clamp(glow, 0.0, 3.0));
+    col = mix(col, col * (vec3(0.30, 0.30, 0.30) + src * 1.7), clamp(blend, 0.0, 1.0));
+    return vec3(tanh(col.x * 1.25), tanh(col.y * 1.25), tanh(col.z * 1.25));
+}
+
+// ---- hand drawing ----------------------------------------------------------
+// fs_notebook — a pencil sketch on squared notebook paper.
+//
+// After "notebook drawings" by Florian Berger (flockaroo), shadertoy.com/
+// view/XtVGD1, CC BY-NC-SA 3.0 — NON-COMMERCIAL; this filter inherits that
+// license and must not ship in a commercial build. The core idea is his:
+// convolve arc-shaped strokes along a few fixed directions, inking a pixel
+// where the luminance gradient runs PARALLEL to the stroke — edges become
+// pencil lines, and the quadratic cross-term bends each line into the arc a
+// wrist actually draws. Deviations from the original, on purpose:
+//   - the noise texture is the hash kit above (self-contained build);
+//   - the baked-in vignette and the source-specific green desaturation are
+//     dropped — compose `vignette` / grading filters instead;
+//   - page wobble, the squared-paper grid and the crayon layer are
+//     parameters (`wobble`, `grid`, `chroma`), and the host drives `time`
+//     like fs_lsd (a still frame is a still drawing).
+
+// Grain noise. VALUE noise, not raw hash, for the same reason the LSD kit
+// spells it out: it is continuous everywhere, so CPU/GPU rounding drift
+// cannot flip a speckle across the screening threshold and break golden
+// parity. The original sampled a noise texture bilinearly — also continuous.
+vec3 fs_nb_rand3(vec2 p) {
+    return vec3(fs_lsd_vnoise(p),
+                fs_lsd_vnoise(p + vec2(17.13, 3.71)),
+                fs_lsd_vnoise(p + vec2(41.7, 29.3)));
+}
+
+// Source color at a POINT IN PIXELS that may run beyond the image: outside
+// it fades to white over ~5% of the frame, so strokes trail off the page
+// instead of smearing the clamped edge texel. min() keeps paper from ever
+// reading as pure white next to the karo lines.
+vec3 fs_nb_col(vec2 px) {
+    vec2 uv = vec2(px.x * FS_TEXEL.x, px.y * FS_TEXEL.y);
+    vec2 cuv = clamp(uv, FS_TEXEL * 3.0, vec2(1.0, 1.0) - FS_TEXEL * 3.0);
+    vec3 c = FS_SAMPLE(cuv);
+    float e = smoothstep(-0.05, 0.0, uv.x) * smoothstep(-0.05, 0.0, uv.y)
+            * smoothstep(-0.05, 0.0, 1.0 - uv.x)
+            * smoothstep(-0.05, 0.0, 1.0 - uv.y);
+    c = mix(vec3(1.0, 1.0, 1.0), c, e);
+    return min(c, vec3(0.7, 0.7, 0.7));
+}
+
+float fs_nb_val(vec2 px) { return fs_luma(fs_nb_col(px)); }
+
+vec2 fs_nb_grad(vec2 px, float eps) {
+    return vec2(fs_nb_val(px + vec2(eps, 0.0)) - fs_nb_val(px - vec2(eps, 0.0)),
+                fs_nb_val(px + vec2(0.0, eps)) - fs_nb_val(px - vec2(0.0, eps)))
+           * (0.5 / eps);
+}
+
+// Crayon layer: stochastic screening — color quantized against white noise
+// reads as the uneven pressure of a colored pencil. The noise lives in
+// STROKE space (sc·px) so its speckle scales with the strokes, not the image.
+vec3 fs_nb_colht(vec2 px, float sc) {
+    vec3 c = fs_nb_col(px) * 0.8 + vec3(0.2, 0.2, 0.2)
+           + fs_nb_rand3(px * (0.7 * sc));
+    return vec3(smoothstep(0.95, 1.05, c.x),
+                smoothstep(0.95, 1.05, c.y),
+                smoothstep(0.95, 1.05, c.z));
+}
+
+vec3 fs_notebook(vec2 uv, float scale, float time_s, float wobble, float grid,
+                 float chroma) {
+    float res_y = 1.0 / FS_TEXEL.y;
+    float u = res_y / 400.0;               // logical unit: 1 at 400px height
+    // stop-motion shiver: the page is "redrawn" a few pixels off each frame
+    vec2 jit = vec2(sin(time_s), sin(time_s * 1.7)) * (4.0 * u * wobble);
+    // The original's `zoom` both magnified the view AND the strokes; a
+    // filter must leave the view alone, so `pos` stays in true image
+    // pixels and only the stroke GEOMETRY (step, curvature, probe, grain,
+    // grid) is magnified by 1/scale. Smaller scale = bolder pencil.
+    float sc = clamp(scale, 0.05, 1.0);
+    float mag = 1.0 / sc;
+    vec2 pos = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y) + jit;
+
+    float ink = 0.0;                       // accumulated graphite
+    vec3 tint = vec3(0.0, 0.0, 0.0);       // crayon layer numerator
+    float wsum = 0.0;
+    for (int i = 0; i < 3; ++i) {          // 3 stroke directions, axis-free
+        float ang = 6.2831853 / 3.0 * (float(i) + 0.8);
+        vec2 v = vec2(cos(ang), sin(ang)); // stroke NORMAL (gradient to ink)
+        vec2 w = vec2(v.y, -v.x);          // stroke direction
+        for (int j = 0; j < 16; ++j) {
+            // linear term walks along the stroke; the j² term drifts it
+            // sideways — that curvature is the whole hand-drawn look
+            vec2 dpos = w * (float(j) * u * mag);
+            vec2 dpos2 = v * (float(j * j) / 16.0 * 0.5 * u * mag);
+            for (int k = 0; k < 2; ++k) {  // both ends of the stroke
+                float sgn = float(k) * 2.0 - 1.0;
+                vec2 o = dpos * sgn + dpos2;
+                vec2 g = fs_nb_grad(pos + o, 0.4 * mag);
+                float gv = dot(g, v);
+                float gw = dot(g, w);
+                // parallel edges ink, skew edges are penalized, and the
+                // clamp is the ink limit of a single pass of the pencil
+                float fact = clamp(gv - 0.5 * abs(gw), 0.0, 0.05);
+                ink += fact * (1.0 - float(j) / 16.0);   // strokes taper
+                // crayon weight rides the PERPENDICULAR component, sampled
+                // at the mirrored offset — color hatches across the lines.
+                // The epsilon is flockaroo's, and it is LOAD-BEARING: where
+                // the gradient vanishes (flat paper) it aims the unit vector
+                // at +x, so |w.x| still banks paper-colored samples there —
+                // without it the crayon layer divides noise by noise
+                vec2 gp = g + vec2(1e-4, 0.0);
+                float f2 = abs(dot(gp, w)) / length(gp);
+                tint += fs_nb_colht(pos + vec2(o.y, -o.x) * 2.0, sc) * f2;
+                wsum += f2;
+            }
+        }
+    }
+    ink = ink * (sqrt(res_y) / 36.0);      // = /(3·16 · 0.75/√resY)
+    tint = tint / max(wsum, 1e-4);
+
+    float grain = 0.6 + 0.8 * fs_nb_rand3(pos * (0.7 * sc)).x;  // paper tooth
+    float tone = 1.0 - ink * grain;
+    tone = tone * tone * tone;             // light strokes vanish into paper
+
+    // karo (squared paper): thin gaussian lines robbed mostly of red,
+    // spaced in stroke space so the grid scales with the pencil
+    float kf = 0.1 * sc / sqrt(u);
+    vec2 s2 = vec2(sin(pos.x * kf), sin(pos.y * kf));
+    float lines = exp(-s2.x * s2.x * 80.0) + exp(-s2.y * s2.y * 80.0);
+    vec3 karo = vec3(1.0, 1.0, 1.0)
+              - vec3(0.25, 0.1, 0.1) * (0.5 * lines * clamp(grid, 0.0, 1.0));
+
+    vec3 shade = mix(vec3(1.0, 1.0, 1.0), tint, clamp(chroma, 0.0, 1.0));
+    return vec3(tone, tone, tone) * shade * karo;
+}
+
+// ---- analog television -----------------------------------------------------
+// fs_ntsc — the composite video signal, actually modulated and demodulated.
+//
+// This is what separates a real "old TV" from scanline cosmetics: NTSC
+// crams color into the luma wire by amplitude-modulating I/Q onto a
+// 3.58 MHz subcarrier, and the receiver can never fully un-mix them.
+// Everything people remember about the look IS that failure:
+//   - color bleed    — chroma gets ~0.6 MHz where luma gets 4.2: I/Q come
+//                      back through a much narrower low-pass than Y;
+//   - rainbowing     — fine luma detail lands in the chroma band and
+//                      demodulates as phantom color (`artifacts`);
+//   - fringing       — chroma left inside Y rings edges with subcarrier
+//                      checker (`fringing`);
+//   - dot crawl      — the subcarrier phase advances per scanline and per
+//                      frame, so the checker CRAWLS (host drives `time`).
+// Implementation: per output pixel a 25-tap horizontal FIR (windowed-sinc,
+// MAME ntsc.fx's single-pass structure — BSD-3; the artifacts/fringing
+// cross-feed matrix follows the ntsc-adaptive formulation, reimplemented).
+// Signal-domain noise rides the composite before demodulation (`noise`),
+// so static tints and tears the picture the way RF interference does,
+// instead of sprinkling RGB grain on top.
+// One emulated scanline = one SOURCE pixel row; retro content should be
+// fed at its native resolution.
+
+vec3 fs_ntsc_yiq(vec3 c) {
+    return vec3(dot(c, vec3(0.299, 0.587, 0.114)),
+                dot(c, vec3(0.5959, -0.2746, -0.3213)),
+                dot(c, vec3(0.2115, -0.5227, 0.3112)));
+}
+
+// windowed sinc: 2fc·sinc(2πfc·k)·Hamming(k/K) — the workhorse low-pass
+float fs_ntsc_lp(float k, float fc) {
+    float w = 0.54 + 0.46 * cos(3.14159265 * k / 12.0);
+    float x = 6.2831853 * fc * k;
+    float s = k == 0.0 ? 1.0 : sin(x) / x;
+    return 2.0 * fc * s * w;
+}
+
+vec3 fs_ntsc(vec2 uv, float sharpness, float time_s, float artifacts,
+             float fringing, float noise) {
+    vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
+    float line = floor(px.y);
+    // subcarrier: 1/4 cycle per source pixel; phase flips π per scanline
+    // and steps a third of a cycle per frame — the dot-crawl clock
+    float fp = floor(time_s * 59.94);
+    // phase bookkeeping in TURNS, wrapped to [0,1) before the trig — large
+    // sin/cos arguments are where fast GPU trig and the CPU part company
+    float line_turns = 0.5 * (line - 2.0 * floor(line / 2.0))
+                     + (fp - 3.0 * floor(fp / 3.0)) / 3.0;
+    float fc_y = 0.21 * clamp(sharpness, 0.3, 2.0);
+    float fc_i = 0.065 * clamp(sharpness, 0.3, 2.0);
+    float fc_q = 0.045 * clamp(sharpness, 0.3, 2.0);
+    vec2 clamp_lo = FS_TEXEL * 3.0;
+    vec2 clamp_hi = vec2(1.0, 1.0) - FS_TEXEL * 3.0;
+
+    float acc_y = 0.0;
+    float acc_i = 0.0;
+    float acc_q = 0.0;
+    float norm_y = 0.0;
+    for (int k = -12; k <= 12; ++k) {
+        float fk = float(k);
+        vec2 p = vec2(uv.x + fk * FS_TEXEL.x, uv.y);
+        vec3 yiq = fs_ntsc_yiq(FS_SAMPLE(clamp(p, clamp_lo, clamp_hi)));
+        float turns = 0.25 * (px.x + fk) + line_turns;
+        float ph = 6.2831853 * (turns - floor(turns));
+        float cs = cos(ph);
+        float sn = sin(ph);
+        // the two wires: luma, and chroma riding the subcarrier
+        float luma = yiq.x;
+        float chroma = yiq.y * cs + yiq.z * sn;
+        // RF static lives in the SIGNAL: it lands on both wires and the
+        // demodulator will paint it as luma sparkle AND phantom color
+        float rf = (fs_lsd_vnoise(vec2((px.x + fk) * 1.9,
+                                       line * 3.7 + fp * 17.1)) - 0.5)
+                 * (2.0 * clamp(noise, 0.0, 1.0));
+        luma += rf;
+        chroma += rf;
+        float wy = fs_ntsc_lp(fk, fc_y);
+        float wi = fs_ntsc_lp(fk, fc_i);
+        float wq = fs_ntsc_lp(fk, fc_q);
+        // cross-feed: fringing = chroma the luma notch fails to reject;
+        // artifacts = luma detail the chroma demodulator mistakes for color
+        acc_y += (luma + chroma * clamp(fringing, 0.0, 1.0)) * wy;
+        acc_i += (chroma + luma * clamp(artifacts, 0.0, 1.0)) * 2.0 * cs * wi;
+        acc_q += (chroma + luma * clamp(artifacts, 0.0, 1.0)) * 2.0 * sn * wq;
+        norm_y += wy;
+    }
+    acc_y = acc_y / max(norm_y, 1e-4);
+    // chroma keeps its true filter gain (dividing by the luma norm would
+    // undo the bandwidth limit that makes color bleed)
+    vec3 c = vec3(acc_y + 0.956 * acc_i + 0.619 * acc_q,
+                  acc_y - 0.272 * acc_i - 0.647 * acc_q,
+                  acc_y - 1.106 * acc_i + 1.703 * acc_q);
+    return clamp(c, 0.0, 1.0);
+}
+
+// fs_crt — the tube itself, downstream of fs_ntsc (chain them: the signal
+// degrades in the cable, THEN the phosphor draws it). Public-domain lineage:
+// beam/mask/warp math after Timothy Lottes' CRT (PD), structure informed by
+// Cathode-Retro (MIT). All light math runs in LINEAR space — royale, guest
+// and Megatron all shout this: gamma-space scanlines read as thin gray
+// lines, linear ones glow.
+//   - scanline: each SOURCE row is one beam sweep with a gaussian cross
+//     section whose width follows brightness (bright = fat beam — the
+//     tube's own "bloom");
+//   - deconvergence: R and B guns land a touch off-center;
+//   - mask: 1 = aperture grille (Trinitron verticals), 2 = slot mask —
+//     drawn at 3 stripes per source pixel (feed native-res content);
+//   - glow: wide low bloom lifted from the 3×7 neighborhood already read;
+//   - curvature: barrel warp + rounded-corner falloff + vignette.
+vec3 fs_crt(vec2 uv, float curvature, float scan, float mask, float glow,
+            float converge) {
+    // barrel: displace along the radius, stronger on x (a 4:3 tube's glass)
+    vec2 d = uv - vec2(0.5, 0.5);
+    float r2 = dot(d, d);
+    float k = clamp(curvature, 0.0, 0.4);
+    vec2 wuv = vec2(0.5, 0.5) + d * (1.0 + k * r2 * vec2(1.0, 1.25));
+    // rounded-corner gate, smooth so the bezel edge doesn't alias
+    vec2 edge = vec2(0.5, 0.5) - abs(wuv - vec2(0.5, 0.5));
+    float gate = smoothstep(0.0, 0.01, edge.x) * smoothstep(0.0, 0.01, edge.y);
+
+    // Beam lattice in PRE-warp space, same anti-moiré reasoning as the mask
+    // below; the row CONTENT is still fetched through the warp, so the
+    // picture bends while the sweep pitch stays regular on screen.
+    float py = uv.y / FS_TEXEL.y;
+    float row0 = floor(py - 0.5) + 0.5;     // nearest beam center below
+    float hard = 4.0 + 10.0 * clamp(scan, 0.0, 1.5);
+    float cx = clamp(converge, 0.0, 3.0) * FS_TEXEL.x * 0.5;
+    vec2 clamp_lo = FS_TEXEL * 3.0;
+    vec2 clamp_hi = vec2(1.0, 1.0) - FS_TEXEL * 3.0;
+
+    vec3 beam = vec3(0.0, 0.0, 0.0);
+    vec3 halo = vec3(0.0, 0.0, 0.0);
+    float halo_n = 0.0;
+    for (int j = 0; j < 3; ++j) {
+        // content row: the beam-lattice offset re-anchored on the warped y
+        float ry = wuv.y + (row0 + float(j) - 1.0 - py) * FS_TEXEL.y;
+        float dy = py - (row0 + float(j) - 1.0);
+        for (int i = -3; i <= 3; ++i) {
+            float rx = wuv.x + float(i) * FS_TEXEL.x;
+            // deconvergence: three guns, three horizontal aims
+            vec2 pr = clamp(vec2(rx + cx, ry), clamp_lo, clamp_hi);
+            vec2 pg = clamp(vec2(rx, ry), clamp_lo, clamp_hi);
+            vec2 pb = clamp(vec2(rx - cx, ry), clamp_lo, clamp_hi);
+            vec3 s = vec3(FS_SAMPLE(pr).x, FS_SAMPLE(pg).y, FS_SAMPLE(pb).z);
+            vec3 lin = s * s;               // cheap linearize (γ≈2)
+            float wx = exp(-float(i * i) * 0.55);
+            // luma-fattened beam: bright rows widen, dim rows pinch
+            float width = 1.0 + 1.2 * fs_luma(lin);
+            float wy = exp(-dy * dy * hard / width);
+            beam += lin * (wx * wy);
+            halo += lin * wx;
+            halo_n += wx;
+        }
+    }
+    beam = beam / 2.39;                     // Σ exp(-i²·0.55), i=-3..3
+    halo = halo / max(halo_n, 1e-4);
+    vec3 lit = beam + halo * (0.5 * clamp(glow, 0.0, 2.0));
+
+    // Phosphor mask. One stripe per SOURCE pixel (a triad spans three) —
+    // finer would be truer to glass, but a mask below the sampling rate
+    // beats against the output grid as rainbow moiré (the trap crt-royale
+    // spends two whole passes resampling around). At 1:1 this stays clean;
+    // upscaled retro content gets visibly chunky triads, which is the point.
+    // The mask lives in PRE-warp coordinates: warping its lattice makes it
+    // beat against the output grid as concentric rainbow moiré (the glass
+    // bends the picture; the viewer-facing stripe pitch stays regular).
+    float m = floor(mask + 0.5);
+    if (m >= 1.0) {
+        float mx = uv.x / FS_TEXEL.x;
+        if (m >= 2.0) {                     // slot: half-period stagger
+            float col = floor(mx / 3.0);
+            float phase = col - 2.0 * floor(col / 2.0);
+            float my = uv.y / FS_TEXEL.y + 0.5 * phase;
+            float slot = 0.8 + 0.2 * cos(3.14159265 * my);
+            lit = lit * slot;
+        }
+        float stripe = mx - 3.0 * floor(mx / 3.0);
+        vec3 grille = vec3(0.5, 0.5, 0.5);
+        if (stripe < 1.0)      grille = vec3(1.0, 0.5, 0.5);
+        else if (stripe < 2.0) grille = vec3(0.5, 1.0, 0.5);
+        else                   grille = vec3(0.5, 0.5, 1.0);
+        // mask eats light; win most of it back so the picture stays bright
+        // (the Megatron idea, minus the HDR display)
+        lit = lit * grille * 1.45;
+    }
+
+    float vign = 1.0 - 0.9 * k * r2;
+    lit = lit * (gate * max(vign, 0.0));
+    // back to display gamma (per channel — the C++ shim has no vec3 sqrt)
+    return vec3(sqrt(max(lit.x, 0.0)), sqrt(max(lit.y, 0.0)),
+                sqrt(max(lit.z, 0.0)));
+}
+
 // ---- dispatch --------------------------------------------------------------
 // The only place slot values (p0..p4, in table order) meet parameter names.
 // Returns rgba; alpha is 1 except for filters that define it.
@@ -685,6 +1354,12 @@ vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p
 #endif
     else if (mode == FS_RIPPLE)          c = fs_ripple(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_LSD)             c = fs_lsd(uv, p0, p1, p2, p3, p4);
+    else if (mode == FS_NOTEBOOK)        c = fs_notebook(uv, p0, p1, p2, p3, p4);
+    else if (mode == FS_FRACTAL)         c = fs_fractal(uv, p0, p1, p2, p3, p4);
+    else if (mode == FS_BOKEH)           c = fs_bokeh(uv, p0, p1, p2, p3);
+    else if (mode == FS_OILPAINT)        c = fs_oilpaint(uv, p0, p1, p2);
+    else if (mode == FS_NTSC)            c = fs_ntsc(uv, p0, p1, p2, p3, p4);
+    else if (mode == FS_CRT)             c = fs_crt(uv, p0, p1, p2, p3, p4);
     return vec4(clamp(c, 0.0, 1.0), alpha);
 }
 

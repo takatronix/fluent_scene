@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.10.1 — 2026-08-16 (フィルタ大量追加: 34〜39)
+
+- **bokeh** (`FS_BOKEH=35`): レンズボケ。絞り形状指定 (blades: 0=円形,
+  3+=多角形)・回転・擬似HDRハイライト。黄金比スタガの極座標ギャザー、
+  独自実装 (MIT)
+- **oilpaint** (`FS_OILPAINT=36`): Kuwahara (1976) の油絵調。最小分散
+  象限平均+筆方向ジッタ+ポスタライズ。仕上げは `median` をチェーン。
+  独自実装 (MIT)
+- **ntsc** (`FS_NTSC=37`): NTSCコンポジット信号の変調→復調を実物理で。
+  色にじみ・レインボー (artifacts)・フリンジ (fringing)・ドットクロール
+  (time駆動)・RFノイズ (信号領域に注入)。MAME ntsc.fx (BSD-3) の
+  単一パス構造 + ntsc-adaptive のクロスフィード定式を独自実装
+- **crt** (`FS_CRT=38`): ブラウン管。リニア光の輝度依存ビーム走査線・
+  フォスフォーマスク (グリル/スロット、歪み前空間配置でモアレ根治)・
+  グロー・デコンバージェンス・曲率+角丸+ビネット。Lottes (PD) +
+  Cathode-Retro (MIT) 系譜、GPLコード不使用。
+  `filter(Ntsc().time(t)).filter(Crt())` で「超絶リアル」チェーン
+- **fractal** (`FS_FRACTAL=39`): 永遠に反復しない自己変形KIFSフラクタル
+  飛行ジェネレータ (flight/time/morph/glow/blend, host駆動time,
+  WebGPUデモ wasm/fractal.html)
+- **notebook** (`FS_NOTEBOOK=34`): 方眼ノートに鉛筆スケッチ。
+  flockaroo の "notebook drawings" (shadertoy XtVGD1) 移植 —
+  **CC BY-NC-SA 3.0 のため非商用限定**(このフィルタのみ。他は MIT のまま)。
+  弧状ストローク畳み込み+色鉛筆の確率スクリーニング+方眼紙。
+  パラメータ: scale / time(ホスト駆動) / wobble / grid / chroma。
+  原作からの意図的変更: ノイズテクスチャ→value noise(CPU/GPU golden 一致の
+  規範)、ビネット・緑退色は削除(既存フィルタで合成)、zoom の視点移動を
+  廃してストローク寸法のみ拡大
+- 設計書 draft: `docs/design/persistent_buffers.ja.md` — フレーム間永続
+  バッファ+複数パス宣言 (lowpoly JFA / reaction-diffusion / CRT残光の
+  共通基盤)。設計凍結までコード無し
+
 ## 0.10.0 — 2026-08-14 (Phase L4: Scene で UI が動く)
 
 - **UI コントロールの Scene 語彙**: `button`(label) / `switch`(on) /

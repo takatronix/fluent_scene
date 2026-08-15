@@ -195,6 +195,50 @@ FS_FILTER(ZoomBlur, zoom_blur, FS_ZOOM_BLUR, "zoom blur")
 FS_PARAM(0, strength, 0.15f, Scalar)
 FS_END(ZoomBlur)
 
+FS_FILTER(Bokeh, bokeh, FS_BOKEH,
+          "lens bokeh — aperture-shaped highlight blur (blades: 0 = round "
+          "iris, 3+ = polygon)")
+FS_PARAM(0, radius, 8.0f, Length)
+FS_PARAM(1, blades, 0.0f, Scalar)
+FS_PARAM(2, rotation, 0.0f, Scalar)
+FS_PARAM(3, highlight, 1.0f, Scalar)
+FS_END(Bokeh)
+
+FS_FILTER(Oilpaint, oilpaint, FS_OILPAINT,
+          "oil painting (Kuwahara) — edge-preserving brush daubs; chain "
+          "`median` after it for a varnished finish")
+FS_PARAM(0, radius, 4.0f, Length)
+FS_PARAM(1, levels, 0.0f, Scalar)
+FS_PARAM(2, jitter, 0.6f, Scalar)
+FS_END(Oilpaint)
+
+// ---- analog television -----------------------------------------------------
+// The pair reads: signal first, tube second —
+//   layer.filter(Ntsc().time(t)).filter(Crt())
+// Own implementations: NTSC after MAME ntsc.fx (BSD-3) & the ntsc-adaptive
+// cross-feed formulation; CRT after Timothy Lottes (public domain) and
+// Cathode-Retro (MIT). No GPL code.
+
+FS_FILTER(Ntsc, ntsc, FS_NTSC,
+          "NTSC composite signal — color bleed, rainbowing, dot crawl "
+          "(host drives `time`); chain `crt` after it")
+FS_PARAM(0, sharpness, 1.0f, Scalar)
+FS_PARAM(1, time, 0.0f, Scalar)
+FS_PARAM(2, artifacts, 0.6f, Scalar)
+FS_PARAM(3, fringing, 0.4f, Scalar)
+FS_PARAM(4, noise, 0.0f, Scalar)
+FS_END(Ntsc)
+
+FS_FILTER(Crt, crt, FS_CRT,
+          "CRT tube — linear-light scanline beam, phosphor mask (1 = "
+          "grille, 2 = slot), glow, deconvergence, curvature")
+FS_PARAM(0, curvature, 0.12f, Scalar)
+FS_PARAM(1, scan, 0.6f, Scalar)
+FS_PARAM(2, mask, 1.0f, Scalar)
+FS_PARAM(3, glow, 0.35f, Scalar)
+FS_PARAM(4, converge, 0.5f, Scalar)
+FS_END(Crt)
+
 FS_FILTER(Halftone, halftone, FS_HALFTONE, "halftone dots")
 FS_PARAM(0, spacing, 8.0f, Length)
 FS_END(Halftone)
@@ -217,6 +261,32 @@ FS_PARAM(2, drift, 1.0f, Scalar)
 FS_PARAM(3, geometry, 0.5f, Scalar)
 FS_PARAM(4, chroma, 1.0f, Scalar)
 FS_END(Lsd)
+
+// ---- generative ------------------------------------------------------------
+
+FS_FILTER(Fractal, fractal, FS_FRACTAL,
+          "eternal fractal flight (self-morphing KIFS raymarch, orbit-trap "
+          "iridescence; host drives `time`)")
+FS_PARAM(0, flight, 1.0f, Scalar)
+FS_PARAM(1, time, 0.0f, Scalar)
+FS_PARAM(2, morph, 1.0f, Scalar)
+FS_PARAM(3, glow, 1.0f, Scalar)
+FS_PARAM(4, blend, 0.0f, Scalar)
+FS_END(Fractal)
+
+// ---- hand drawing ----------------------------------------------------------
+// After flockaroo's "notebook drawings" (shadertoy XtVGD1), CC BY-NC-SA 3.0
+// — NON-COMMERCIAL use only; see fs_notebook in filters_shared.h.
+
+FS_FILTER(Notebook, notebook, FS_NOTEBOOK,
+          "pencil sketch on squared paper (after flockaroo XtVGD1, "
+          "CC BY-NC-SA — non-commercial; host drives `time`)")
+FS_PARAM(0, scale, 0.5f, Scalar)
+FS_PARAM(1, time, 0.0f, Scalar)
+FS_PARAM(2, wobble, 1.0f, Scalar)
+FS_PARAM(3, grid, 1.0f, Scalar)
+FS_PARAM(4, chroma, 1.0f, Scalar)
+FS_END(Notebook)
 
 #ifdef FS_FILTER_IMG_DEFAULTED
 #undef FS_FILTER_IMG

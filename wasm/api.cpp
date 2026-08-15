@@ -331,4 +331,59 @@ const char* fs_drain_events(FsInstance* inst) {
 EMSCRIPTEN_KEEPALIVE
 void fs_destroy(FsInstance* inst) { delete inst; }
 
+/// Clears the layer's filter chain (fs_layer_set_filter appends/replaces;
+/// this is the only way back to "no filter").
+EMSCRIPTEN_KEEPALIVE
+int fs_layer_clear_filters(FsInstance* inst, const char* layer_id) {
+    Layer* target = inst->scene->stage().find(layer_id);
+    if (target == nullptr) {
+        return 0;
+    }
+    target->clearFilters();
+    return 1;
+}
+
+/// The filter catalog as JSON — the same single-source filterTable() that
+/// feeds Scene parsing, so a page can build its UI without a hand-kept copy.
+/// [{"name":..,"mode":..,"summary":..,"params":[{"name":..,"def":..,
+///   "unit":"scalar"|"length"|"coord_x"|"coord_y"}]}]
+EMSCRIPTEN_KEEPALIVE
+const char* fs_filters_json() {
+    static std::string json;
+    if (json.empty()) {
+        auto esc = [](const char* s) {
+            std::string o;
+            for (; *s; ++s) {
+                if (*s == '"' || *s == '\\') o += '\\';
+                o += *s;
+            }
+            return o;
+        };
+        json = "[";
+        bool first = true;
+        for (const FilterSpec& spec : filterTable()) {
+            if (!first) json += ",";
+            first = false;
+            json += "{\"name\":\"" + esc(spec.name) + "\",\"mode\":" +
+                    std::to_string(spec.mode) + ",\"summary\":\"" +
+                    esc(spec.summary) + "\",\"params\":[";
+            bool pfirst = true;
+            for (const FilterParamSpec& p : spec.params) {
+                if (!pfirst) json += ",";
+                pfirst = false;
+                const char* unit = p.unit == FilterUnit::Length   ? "length"
+                                   : p.unit == FilterUnit::CoordX ? "coord_x"
+                                   : p.unit == FilterUnit::CoordY ? "coord_y"
+                                                                  : "scalar";
+                json += "{\"name\":\"" + esc(p.name) + "\",\"def\":" +
+                        std::to_string(p.default_value) + ",\"unit\":\"" +
+                        unit + "\"}";
+            }
+            json += "]}";
+        }
+        json += "]";
+    }
+    return json.c_str();
+}
+
 }  // extern "C"
