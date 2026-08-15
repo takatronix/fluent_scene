@@ -143,8 +143,7 @@ layers:
   fs.commitImage(inst, 'seed', 2, 2);
   const bg = document.getElementById('bg');
   fs.gInit('#bg');
-  const GOOD = [[150, 298], [624, 728], [852, 974], [978, 1198], [1776, 1896],
-                [2084, 2338], [2800, 2910], [2914, 2970]];
+  const GOOD = [[155,248],[640,762],[902,975],[1048,1178],[1792,1867],[1886,1939],[2190,2328],[2548,2597]];
   const pick = () => {
     const iv = GOOD[(Math.random() * GOOD.length) | 0];
     return iv[0] + 2 + Math.random() * (iv[1] - iv[0] - 4);

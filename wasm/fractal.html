@@ -170,17 +170,40 @@ let rampUntil = 0;
 // ---- measured-good landing catalogue ---------------------------------------
 // A CPU sweep (0..3000 s, 2 s steps) rendered and scored every epoch with
 // the same probe metrics; these are the stable stretches that LOOKED good
-// (median coherence < 0.6). Warps, rescues, and idle page-turns land here —
+// (median coherence < 0.6) AND, from a separate DE sweep, where the camera
+// provably flies in open air (clearance > 0.06 — at bad epochs the tile is
+// SOLID and no path could help). Warps, rescues, and idle page-turns land here —
 // guaranteed structure. Blinks still jump free-range nearby: novelty for
 // the deliberate, certainty for the automatic.
-const GOOD = [[0,44],[48,54],[62,68],[72,94],[100,104],[150,298],[306,322],[326,334],[342,350],[380,400],[404,432],[436,446],[466,470],[478,488],[494,508],[512,526],[532,540],[550,568],[624,728],[744,764],[818,848],[852,974],[978,1198],[1238,1254],[1260,1278],[1282,1312],[1354,1362],[1368,1430],[1434,1446],[1478,1504],[1508,1512],[1568,1572],[1626,1632],[1660,1664],[1732,1736],[1756,1772],[1776,1896],[1910,1944],[1972,1980],[2000,2004],[2010,2014],[2018,2080],[2084,2338],[2358,2362],[2382,2390],[2396,2402],[2410,2416],[2424,2448],[2452,2460],[2466,2476],[2490,2494],[2536,2558],[2584,2632],[2636,2648],[2742,2748],[2758,2796],[2800,2910],[2914,2970],[2986,2998]];
+// The FLIGHT PLAN: te-windows measured safe for EVERY camera z-phase
+// (2D CPU sweep, 1 s × 8 phases, ~24k renders, 1 s trimmed off each edge).
+// The camera's world-clock rides te at 1 s/s while z has its own integral,
+// so "safe at all phases" means safe for the whole dwell, not just the
+// landing instant. 33 windows, 1394 s of certified sky.
+const GOOD = [[2,44],[156,190],[190,248],[258,267],[274,293],[412,438],[640,706],[707,726],[753,760],[816,847],[902,975],[982,998],[1020,1045],[1048,1178],[1381,1424],[1494,1502],[1792,1803],[1816,1867],[1870,1884],[1886,1894],[1912,1939],[2056,2077],[2084,2122],[2122,2142],[2142,2189],[2190,2328],[2548,2557],[2585,2597],[2600,2609],[2764,2780],[2819,2832],[2857,2865],[2870,2900],[2918,2934],[2935,2946],[2950,2969],[2986,2998]];
+// window containing te, or null
+function planAt(te) {
+  for (const iv of GOOD) { if (te >= iv[0] && te <= iv[1]) return iv; }
+  return null;
+}
+// pick a window weighted by its LENGTH — the 249 s plains host most of the
+// journey, the 6 s ledges are visited, not lived on
+const PLANW = (() => { let c = 0;
+  return GOOD.map(iv => (c += Math.max(4, iv[1] - iv[0]), c)); })();
+function pickWindow() {
+  const r = Math.random() * PLANW[PLANW.length - 1];
+  for (let i = 0; i < PLANW.length; ++i) { if (r < PLANW[i]) return GOOD[i]; }
+  return GOOD[0];
+}
 function catalogOff(tNow, awayFromTe) {
   for (let i = 0; i < 12; ++i) {
-    const iv = GOOD[(Math.random() * GOOD.length) | 0];
-    const te = iv[0] + 1 + Math.random() * Math.max(1, iv[1] - iv[0] - 2);
+    const iv = pickWindow();
+    // land with runway: at least ~10 s of window ahead when it has any
+    const span = Math.max(1, iv[1] - iv[0] - 12);
+    const te = iv[0] + 1 + Math.random() * span;
     if (awayFromTe === undefined || Math.abs(te - awayFromTe) > 60) return te - tNow;
   }
-  const iv = GOOD[(Math.random() * GOOD.length) | 0];
+  const iv = pickWindow();
   return iv[0] + 2 - tNow;
 }
 // ---- landing audition ------------------------------------------------------
@@ -209,7 +232,12 @@ function auditionOff(cur, tNow, lo, hi) {
   let best = cur + logu(lo, hi), bs = Infinity;
   for (let i = 0; i < 14; ++i) {
     const cand = cur + logu(lo, hi);
-    const s = calmScore(tNow + cand);
+    let s = calmScore(tNow + cand);
+    // strongly prefer landings inside a certified window with ≥6 s left —
+    // improvised (blink) cuts join the flight plan instead of gambling
+    const iv = planAt(tNow + cand);
+    if (!iv) s += 40;
+    else if (iv[1] - (tNow + cand) < 6) s += 20;
     if (s < bs) { bs = s; best = cand; }
   }
   return best;
@@ -495,6 +523,16 @@ function tickBody() {
   wantWarp = wantShift = false;
   // no face to blink for us? the piece still turns its own pages
   if (auto && !tracking && now - lastShiftAt > 25000) { transition(t); }
+  // THE FLIGHT PLAN: the front universe's clock is leaving its certified
+  // window — dissolve to the next one BEFORE anything ugly reaches the
+  // screen. This replaces reactive avoidance (the shivering steering the
+  // owner vetoed): the route is decided by measurement, not correction.
+  // 2.8 s horizon = 1.8 s dissolve + margin; outside any window, go now.
+  if (!fade.active) {
+    const teF = t + (front === 'A' ? offA : offB);
+    const ivF = planAt(teF);
+    if (!ivF || ivF[1] - teF < 2.8) { transition(t); }
+  }
 
   // post-landing grace: the fresh universe's clocks run at 0.35× and ease
   // up to full speed over 2.5 s (flight speed is untouched — z rides its
