@@ -650,8 +650,14 @@ vec3 fs_lsd(vec2 uv, float trip, float time_s, float drift, float geometry, floa
     float w0 = R0 * 0.5 - floor(R0 * 0.5);
     float w1 = R1 * 0.5 - floor(R1 * 0.5);
     float w2 = R2 * 0.5 - floor(R2 * 0.5);
-    vec3 acc = vec3(1.0 - abs(2.0 * w2 - 1.0), 1.0 - abs(2.0 * w1 - 1.0),
-                    1.0 - abs(2.0 * w0 - 1.0));
+    // iridescence is a rim phenomenon, not a paint job: collapse the three
+    // depth-bands mostly onto their shared luminance and keep only 35% of
+    // the channel separation — pearl with rainbow edges, never solid
+    // magenta fields
+    vec3 accRaw = vec3(1.0 - abs(2.0 * w2 - 1.0), 1.0 - abs(2.0 * w1 - 1.0),
+                       1.0 - abs(2.0 * w0 - 1.0));
+    float accL = (accRaw.x + accRaw.y + accRaw.z) * 0.3333;
+    vec3 acc = vec3(accL, accL, accL) + (accRaw - vec3(accL, accL, accL)) * 0.35;
 
     // drifting & breathing: read the source through the noise field's lens.
     // Less than one radial period fits the view and the phase is noised,
@@ -684,15 +690,17 @@ vec3 fs_lsd(vec2 uv, float trip, float time_s, float drift, float geometry, floa
     col = fs_hue_rotate(col, 28.0 * k * sin(t * 0.31));
 
     // organic <-> digital (the SIGN of `geometry`): digital quantizes the
-    // field into terraces and hardens every edge; organic leaves it smooth
-    vec3 f3 = acc;
+    // band into terraces and hardens every edge; organic leaves it smooth
+    float fL = accL;
     if (digital > 0.5) {
-        f3 = floor(f3 * 7.0 + vec3(0.5)) * (1.0 / 7.0);
+        fL = floor(fL * 7.0 + 0.5) * (1.0 / 7.0);
     }
-    float lo = 0.5 - 0.04 * digital;
-    float hi = 0.68 - 0.12 * digital;
-    vec3 gm = vec3(smoothstep(lo, hi, f3.x), smoothstep(lo, hi, f3.y),
-                   smoothstep(lo, hi, f3.z));
+    // ignition happens on the shared band's crest only — sparse filigree.
+    // The body of the lace is pearl; the three depth-bands survive as a
+    // faint iridescent blur on its rim, never as solid colour fields.
+    float band = smoothstep(0.38 - 0.04 * digital, 0.66 - 0.07 * digital, fL);
+    vec3 gm = clamp(vec3(0.82, 0.80, 0.85) + (accRaw - vec3(accL, accL, accL)) * 1.3,
+                    0.0, 1.0) * band;
     // rides on weak retinal drive, densest at the fixed center
     float gate = clamp(amt, 0.0, 1.5) * k * (0.25 + 0.75 * (1.0 - fs_luma(col)));
     float focus = 0.65 + 0.45 * (1.0 - smoothstep(0.05, 0.95, r));

@@ -676,14 +676,18 @@ function tick() {
   blinkPulse = Math.max(0, blinkPulse - dt * 1.6);
   const onset = Math.min(1, t / ONSET);
   const come = onset * onset;                    // slow at first, then arrives
+  // one geometry at a time: as the 3D body rises, the filter's built-in
+  // geometric overlay steps aside (never fully — dark scenes keep a trace)
+  const bmix = mode === 'gpu'
+      ? Math.min(0.7, (0.12 + 0.30 * eff.trip) * lift) * (1 - closedLevel) : 0;
+  const geomDuck = 1 - 0.85 * bmix;
   fs.layerSetFilter(inst, 'live', 'lsd',
-      Math.min(1.5, come * (eff.trip + 0.35 * contactLevel) + 0.5 * blinkPulse),
+      Math.min(1.5, come * (eff.trip + 0.35 * contactLevel) + 0.22 * blinkPulse),
       t, come * eff.drift,
-      styleSign * (come * eff.geometry + 0.6 * blinkPulse), eff.chroma);
+      styleSign * (come * eff.geometry * geomDuck + 0.25 * blinkPulse), eff.chroma);
 
   // 4.5) the 3D glowing body — GPU only, breathing with the trip
   if (mode === 'gpu') {
-    const bmix = Math.min(0.7, (0.12 + 0.30 * eff.trip) * lift) * (1 - closedLevel);
     fs.setPf(inst, 'bodymix', bmix);
     fs.layerSetFilter(inst, 'body', 'fractal',
         0.4, bodyEpoch + t * 0.55, 0.5 + 0.45 * lift, 0.8 + 0.6 * contactLevel, 0);
