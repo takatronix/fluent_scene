@@ -62,7 +62,7 @@ if [[ $WEBGPU == 1 ]]; then
 fi
 
 mkdir -p wasm/dist
-em++ -O2 -std=c++17 -I include \
+em++ -O2 -std=c++17 -msimd128 -I include \
   src/stage.cpp src/text_atlas.cpp src/cpu_renderer.cpp src/ui.cpp src/effects.cpp \
   src/fvs/diagnostics.cpp src/fvs/sha256.cpp src/fvs/yaml_parser.cpp \
   src/fvs/schema.cpp src/fvs/parser.cpp src/fvs/writer.cpp src/fvs/compiler.cpp \

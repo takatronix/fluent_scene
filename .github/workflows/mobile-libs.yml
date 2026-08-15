@@ -1,0 +1,92 @@
+# モバイルライブラリの自動ビルド（docs/design/mobile_support.ja.md M3-CI）。
+# バインディングより先に「各プラットフォームでコアがビルドできる」ことを
+# 常時保証する。依存(freetype+harfbuzz)は FS_FETCH_TEXT=ON でソースから
+# ビルド（クロスコンパイル時は CMakeLists が自動で ON にする）。
+# Vulkan バックエンドは glslc の無いランナーでは自動的に外れ、CPU
+# リファレンスレンダラのみのライブラリになる — それで本番品質（§L0）。
+name: mobile-libs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'CMakeLists.txt'
+      - 'src/**'
+      - 'include/**'
+      - 'backend/**'
+      - '.github/workflows/mobile-libs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        abi: [arm64-v8a]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (NDK ${{ matrix.abi }})
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-26 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFS_FETCH_TEXT=ON -DFS_BUILD_TOOLS=OFF
+      - name: Build
+        run: cmake --build build -j
+      - name: Package (lib + headers)
+        run: |
+          mkdir -p out/lib out/include
+          cp build/libfluent_scene.a build/libfs_harfbuzz.a \
+             build/_deps/freetype-build/libfreetype.a out/lib/
+          cp -r include/fluent_scene out/include/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fluent_scene-android-${{ matrix.abi }}
+          path: out
+
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (device arm64)
+        run: |
+          cmake -S . -B build-dev \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFS_FETCH_TEXT=ON -DFS_BUILD_TOOLS=OFF
+          cmake --build build-dev -j
+      - name: Build (simulator arm64)
+        run: |
+          cmake -S . -B build-sim \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFS_FETCH_TEXT=ON -DFS_BUILD_TOOLS=OFF
+          cmake --build build-sim -j
+      - name: Merge deps and create xcframework
+        run: |
+          for d in build-dev build-sim; do
+            libtool -static -o $d/libfluent_scene_all.a \
+              $d/libfluent_scene.a $d/libfs_harfbuzz.a \
+              $d/_deps/freetype-build/libfreetype.a
+          done
+          xcodebuild -create-xcframework \
+            -library build-dev/libfluent_scene_all.a -headers include \
+            -library build-sim/libfluent_scene_all.a -headers include \
+            -output fluent_scene.xcframework
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fluent_scene-ios-xcframework
+          path: fluent_scene.xcframework

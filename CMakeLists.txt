@@ -12,8 +12,55 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(FS_TEXT REQUIRED IMPORTED_TARGET freetype2 harfbuzz)
+# ---- text stack: pkg-config on desktop, built from source when cross- -------
+# compiling (Android NDK / iOS have no system freetype+harfbuzz to find).
+# HarfBuzz is compiled from its single-file amalgamation (src/harfbuzz.cc,
+# the upstream-supported embedding path) so its own build system — and its
+# find_package(Freetype), which cannot see an in-tree FreeType — never runs.
+if(CMAKE_CROSSCOMPILING)
+  set(FS_FETCH_TEXT_DEFAULT ON)
+  set(FS_BUILD_TOOLS_DEFAULT OFF)
+else()
+  set(FS_FETCH_TEXT_DEFAULT OFF)
+  set(FS_BUILD_TOOLS_DEFAULT ON)
+endif()
+option(FS_FETCH_TEXT "Build freetype+harfbuzz from source (mobile cross builds)"
+       ${FS_FETCH_TEXT_DEFAULT})
+option(FS_BUILD_TOOLS "Build examples, CLI tools and tests"
+       ${FS_BUILD_TOOLS_DEFAULT})
+
+if(FS_FETCH_TEXT)
+  include(FetchContent)
+  set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)   # bundled gzip code instead
+  set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+  set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+  set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+  set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+  set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+  FetchContent_Declare(freetype
+    URL https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.xz
+    URL_HASH SHA256=0550350666d427c74daeb85d5ac7bb353acba5f76956395995311a9c6f063289)
+  # SOURCE_SUBDIR points at a directory with no CMakeLists.txt, so
+  # MakeAvailable populates the tree without running harfbuzz's build.
+  FetchContent_Declare(harfbuzz
+    URL https://github.com/harfbuzz/harfbuzz/releases/download/10.2.0/harfbuzz-10.2.0.tar.xz
+    URL_HASH SHA256=620e3468faec2ea8685d32c46a58469b850ef63040b3565cde05959825b48227
+    SOURCE_SUBDIR do-not-build)
+  FetchContent_MakeAvailable(freetype harfbuzz)
+
+  add_library(fs_harfbuzz STATIC ${harfbuzz_SOURCE_DIR}/src/harfbuzz.cc)
+  target_compile_definitions(fs_harfbuzz PRIVATE HAVE_FREETYPE=1)
+  target_include_directories(fs_harfbuzz PUBLIC ${harfbuzz_SOURCE_DIR}/src)
+  target_link_libraries(fs_harfbuzz PUBLIC freetype)
+
+  add_library(fs_text INTERFACE)
+  target_link_libraries(fs_text INTERFACE fs_harfbuzz freetype)
+  set(FS_TEXT_LIB fs_text)
+else()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(FS_TEXT REQUIRED IMPORTED_TARGET freetype2 harfbuzz)
+  set(FS_TEXT_LIB PkgConfig::FS_TEXT)
+endif()
 
 add_library(fluent_scene
   src/stage.cpp
@@ -34,7 +81,7 @@ add_library(fluent_scene
   src/fvs/binding.cpp
 )
 target_include_directories(fluent_scene PUBLIC include)
-target_link_libraries(fluent_scene PRIVATE PkgConfig::FS_TEXT)
+target_link_libraries(fluent_scene PRIVATE ${FS_TEXT_LIB})
 target_compile_options(fluent_scene PRIVATE -Wall -Wextra)
 
 # ---- Vulkan backend (L1): shaders are compiled to SPIR-V at build time ------
@@ -81,6 +128,10 @@ else()
 endif()
 
 # ---- examples (all buildable and runnable; §12-3) ---------------------------
+# Everything below is host tooling — mobile cross builds stop at the library.
+if(NOT FS_BUILD_TOOLS)
+  return()
+endif()
 
 add_executable(hud_basic examples/hud_basic.cpp)
 target_link_libraries(hud_basic PRIVATE fluent_scene)
