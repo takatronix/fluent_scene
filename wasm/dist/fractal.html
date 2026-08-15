@@ -93,6 +93,8 @@ const fs = {
   gStatus: c('fs_webgpu_status', 'number', []),
   gError: c('fs_webgpu_error', 'string', []),
   gRender: c('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']),
+  gReadBegin: c('fs_webgpu_read_begin', 'number', ['number', 'number', 'number', 'number']),
+  gReadPixels: c('fs_webgpu_read_pixels', 'number', []),
   setPf: c('fs_set_param_f32', 'number', ['number', 'string', 'number']),
   layerSetFilter: c('fs_layer_set_filter', 'number',
       ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
@@ -178,43 +180,44 @@ function instantCut(tNow, lo, hi) {
 let postCutUntil = 0;
 
 // ---- boredom rescue --------------------------------------------------------
-// The clocks can fly the camera into a hollow (or a wall): rays hit
-// nothing and the frame flattens to fog. The clock audition cannot see
-// that — so watch the PICTURE instead: every 1.5 s render a 96×54 probe
-// through the existing readback path and measure luma variance. A flat or
-// black frame twice in a row means nobody would keep watching — blink on
-// the viewer's behalf, farther than a normal blink, until structure returns.
-let probeBusy = false, flatStreak = 0, lastRescueAt = -1e9, lastProbeAt = 0;
+// The clocks can fly the camera into a hollow (fog) or a churn (sand-storm
+// speckle). The clock audition cannot see either — so watch the PICTURE:
+// every 1.5 s downsample the visible canvas into a tiny 2D canvas (no
+// second render, no GPU readback machinery, no pipeline stall) and measure
+// two things: luma variance (fog and blackness have almost none) and
+// spatial coherence (speckle has variance but no form — neighbor
+// difference over sigma runs near white noise's ~1.13; real structure
+// 0.1–0.5). Bad twice running — or once, right after a landing — means
+// nobody would keep watching: cut away. And rescues that keep failing
+// stop after three and return to the last landing that looked good,
+// instead of strobing through bad universes forever.
+let flatStreak = 0, lastRescueAt = -1e9, lastProbeAt = 0, probeDead = 0;
+let lastGoodOff = null, rescueChain = 0;
+const probeCv = document.createElement('canvas');
+probeCv.width = 96; probeCv.height = 54;
+const probeCtx = probeCv.getContext('2d', { willReadFrequently: true });
 function probeFrame(now) {
-  if (mode !== 'gpu' || probeBusy || fade.active || now - lastProbeAt < 1500) return;
-  lastProbeAt = now; probeBusy = true;
-  if (!fs.gReadBegin(inst, 0, 96, 54)) { probeBusy = false; return; }
-  const poll = () => {
-    const p = fs.gReadPixels();
-    if (!p) {
-      if (fs.gStatus() === -1) { probeBusy = false; return; }
-      requestAnimationFrame(poll); return;
-    }
+  if (probeDead >= 2 || mode === 'boot' || fade.active) return;
+  if (now - lastProbeAt < 1500 || now - t0 < 3000) return;
+  lastProbeAt = now;
+  try {
+    probeCtx.drawImage(canvas, 0, 0, 96, 54);
+    const d = probeCtx.getImageData(0, 0, 96, 54).data;
     const n = 96 * 54;
     let s = 0, s2 = 0, sg = 0, prevL = 0;
     for (let i = 0; i < n; ++i) {
-      const o = p + i * 4;
-      const l = 0.299 * mod.HEAPU8[o] + 0.587 * mod.HEAPU8[o + 1] +
-                0.114 * mod.HEAPU8[o + 2];
+      const o = i * 4;
+      const l = 0.299 * d[o] + 0.587 * d[o + 1] + 0.114 * d[o + 2];
       s += l; s2 += l * l;
       if (i % 96 !== 0) sg += Math.abs(l - prevL);
       prevL = l;
     }
     const mean = s / n, va = s2 / n - mean * mean;
-    // two opposite failure modes, two yardsticks: fog is LOW variance;
-    // sand-storm speckle is HIGH variance but spatially incoherent —
-    // neighbor-difference over sigma runs ~1.13 for white noise, 0.1–0.5
-    // for anything with actual form
     const ratio = (sg / (n - 54)) / Math.max(Math.sqrt(va), 1e-3);
-    flatStreak = (va < 180 || mean < 6 || ratio > 0.85) ? flatStreak + 1 : 0;
-    probeBusy = false;
-  };
-  requestAnimationFrame(poll);
+    const bad = va < 180 || mean < 6 || ratio > 0.85;
+    flatStreak = bad ? flatStreak + 1 : 0;
+    if (!bad) { lastGoodOff = front === 'A' ? offA : offB; rescueChain = 0; }
+  } catch (e) { console.warn('probe disabled:', e); probeDead = 2; }
 }
 function transition(tNow, lo, hi) {
   if (fade.active) return;
@@ -381,7 +384,16 @@ let cpuCtx = null;
 const t0 = performance.now();
 let last = t0, frames = 0, fps = 0, fpsAt = t0;
 
+// the loop must be unkillable: any exception is reported on the bar and the
+// next frame still runs; a wedged probe or a dead present path degrades
+// features instead of freezing the art
+let renderOkAt = performance.now();
 function tick() {
+  try { tickBody(); }
+  catch (e) { console.error(e); bar.textContent = '⚠ ' + (e && e.message ? e.message : e); }
+  requestAnimationFrame(tick);
+}
+function tickBody() {
   const now = performance.now();
   const dt = Math.min((now - last) / 1000, 0.1);
   last = now;
@@ -389,10 +401,10 @@ function tick() {
 
   if (mode === 'boot') {
     const st = fs.gStatus();
-    if (st === 1) { mode = 'gpu'; }
+    if (st === 1) { mode = 'gpu'; renderOkAt = now; }
     else if (st === 0 && now - t0 < 6000) {
       bar.textContent = `WebGPU 初期化中… ${((now - t0) / 1000) | 0}s`;
-      requestAnimationFrame(tick); return;
+      return;
     } else {
       mode = 'cpu';
       canvas.width = portrait ? 180 : 320;
@@ -419,13 +431,24 @@ function tick() {
 
   // boredom rescue: flat fog or sand-storm twice running — or once, right
   // after a landing — means nobody would keep watching; jump for them
+  // (the probe reads the visible canvas, one frame stale — fine)
   probeFrame(now);
   const fastFail = now < postCutUntil && flatStreak >= 1;
   if ((flatStreak >= 2 || fastFail) && !fade.active &&
       now - lastRescueAt > (fastFail ? 900 : 2500)) {
-    lastRescueAt = now; flatStreak = 0;
-    lastCutAt = -1e9;                       // rescue overrides the blink guard
-    instantCut(t, 60, 1500);
+    flatStreak = 0;
+    if (rescueChain >= 3 && lastGoodOff !== null) {
+      // three bad landings in a row: stop strobing, go home to beauty
+      if (front === 'A') { offA = lastGoodOff + 2; zA = 0; }
+      else { offB = lastGoodOff + 2; zB = 0; }
+      rampUntil = now + 2500; cutPulse = 1; rescueChain = 0;
+      lastRescueAt = now + 8000;            // and hold all rescues a while
+    } else {
+      lastRescueAt = now;
+      ++rescueChain;
+      lastCutAt = -1e9;                     // rescue overrides the blink guard
+      instantCut(t, 60, 1500);
+    }
   }
 
   // post-landing grace: the fresh universe's clocks run at 0.35× and ease
@@ -468,7 +491,11 @@ function tick() {
   if (bVisible) fs.layerSetFilter(inst, 'b', 'fractal', zB / teB, teB, morphV, glowV, 0);
 
   if (mode === 'gpu') {
-    if (fs.gRender(inst, dt, canvas.width, canvas.height)) ++frames;
+    if (fs.gRender(inst, dt, canvas.width, canvas.height)) { ++frames; renderOkAt = now; }
+    else if (now - renderOkAt > 4000) {
+      probeDead = 2;                        // prime suspect: the readback probe
+      if (now - renderOkAt > 9000) location.reload();   // last resort: rebirth
+    }
   } else {
     const px = fs.render(inst, dt, canvas.width, canvas.height);
     const w = fs.renderW(inst), h = fs.renderH(inst);
@@ -484,7 +511,6 @@ function tick() {
   const eye = !gazechk.checked ? '' : !tracking ? ' · 👁…'
       : contactLevel > 0.5 ? ' · 👁凝視' : ' · 👁';
   bar.textContent = `${mode} · ${fps} fps · ${phase}${eye} · 飛行 ${hh}h${String(mm).padStart(2, '0')}m${String(ss).padStart(2, '0')}s`;
-  requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
 </script>
