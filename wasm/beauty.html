@@ -1,42 +1,69 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>fluent scene — beauty filter</title>
+<title>fluent scene — beauty studio</title>
 <style>
   html, body { height: 100%; }
   body { margin: 0; display: flex; flex-direction: column; align-items: center;
          justify-content: center; gap: 12px;
          background: radial-gradient(120% 120% at 50% 0%, #1a141b 0%, #0a070b 70%);
          color: #e8dfe6; font: 14px/1.5 system-ui, sans-serif; }
-  #v { display: block; width: min(96vw, calc(78vh * 16 / 9), 1280px);
+  #wrap { position: relative; }
+  #v { display: block; width: min(96vw, calc(74vh * 16 / 9), 1280px);
        aspect-ratio: 16 / 9;
        background: #000; border-radius: 14px;
        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.5);
-       touch-action: none; user-select: none; cursor: ew-resize; }
-  #panel { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center;
+       touch-action: none; user-select: none; }
+  #pts { position: absolute; inset: 0; width: 100%; height: 100%;
+         pointer-events: none; }
+  #modes { display: flex; gap: 6px; padding: 4px; border-radius: 999px;
+           background: rgba(255,255,255,0.06); }
+  #modes button { border: 0; border-radius: 999px; padding: 7px 20px; cursor: pointer;
+                  font: 600 13px system-ui, sans-serif; color: #b9a8b5;
+                  background: transparent; transition: 0.15s; }
+  #modes button.on { background: #d98d9e; color: #26141a; }
+  .panel { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center;
            padding: 10px 22px; border-radius: 12px; background: rgba(255,255,255,0.05); }
-  #panel label { display: flex; flex-direction: column; align-items: center; gap: 2px;
+  .panel[hidden] { display: none; }
+  .panel label { display: flex; flex-direction: column; align-items: center; gap: 2px;
                  font-size: 12px; color: #b9a8b5; }
-  #panel output { font-family: ui-monospace, monospace; font-size: 11px; color: #7c6a78; }
+  .panel output { font-family: ui-monospace, monospace; font-size: 11px; color: #7c6a78; }
   input[type=range] { width: 130px; accent-color: #d98d9e; }
   #bar { font-family: ui-monospace, monospace; color: #8a7886; font-size: 12px;
-         white-space: pre-wrap; text-align: center; }
+         white-space: pre-wrap; text-align: center; max-width: 96vw; }
 </style>
-<canvas id="v" width="1280" height="720"></canvas>
-<div id="panel">
+<div id="wrap">
+  <canvas id="v" width="1280" height="720"></canvas>
+  <canvas id="pts" width="1280" height="720"></canvas>
+</div>
+<div id="modes">
+  <button data-mode="wipe" class="on">美肌比較</button>
+  <button data-mode="face">フェイス</button>
+  <button data-mode="gaze">視線フォーカス</button>
+</div>
+<div class="panel" id="panel-wipe">
   <label>美肌 <input id="smoothing" type="range" min="0" max="1" step="0.01" value="0.8"><output>0.80</output></label>
   <label>美白 <input id="whiten" type="range" min="0" max="1" step="0.01" value="0.25"><output>0.25</output></label>
   <label>シャープ <input id="sharpen" type="range" min="0" max="1" step="0.01" value="0.15"><output>0.15</output></label>
   <label>ノイズリダクション <input id="denoise" type="range" min="0" max="1" step="0.01" value="0.35"><output>0.35</output></label>
   <label>半径 <input id="radius" type="range" min="2" max="24" step="1" value="10"><output>10</output></label>
 </div>
+<div class="panel" id="panel-face" hidden>
+  <label>デカ目 <input id="eye" type="range" min="0" max="1" step="0.01" value="0.5"><output>0.50</output></label>
+  <label>小顔 <input id="slim" type="range" min="0" max="1" step="0.01" value="0.35"><output>0.35</output></label>
+  <label>リップ <input id="lip" type="range" min="0" max="1" step="0.01" value="0.5"><output>0.50</output></label>
+  <label>チーク <input id="cheek" type="range" min="0" max="1" step="0.01" value="0.35"><output>0.35</output></label>
+  <label>美肌 <input id="fsmooth" type="range" min="0" max="1" step="0.01" value="0.5"><output>0.50</output></label>
+</div>
 <div id="bar">loading wasm…</div>
 <a href="https://x.com/takatronix" target="_blank" rel="noopener" style="position:fixed;right:12px;bottom:10px;z-index:9;font:11px ui-monospace,monospace;color:rgba(255,255,255,0.6);text-decoration:none;background:rgba(0,0,0,0.35);padding:4px 10px;border-radius:999px;backdrop-filter:blur(4px)">fluent_scene · by <b style="color:rgba(255,255,255,0.85)">@takatronix</b></a>
 <script type="module">
-// Beauty filter demo — the gpupixel/FaceBetter smoothing core (variance-gated
-// local Wiener filter + red-channel skin gate) as a fluent_scene filter,
-// running entirely in this tab. Drag the divider to wipe original vs beauty;
-// the sliders drive the filter parameters live through fs_layer_set_filter.
+// BEAUTY STUDIO — three demos, ONE scene. The variance-gated beauty filter
+// (wipe compare), the landmark-driven face warp + makeup, and the gaze-focus
+// analyzer all live as layers of a single Scene document; the mode buttons
+// only flip bool params (hidden:) and re-point the sliders. Everything —
+// warp, smoothing, LUT grade, focus window, HUD text — is rendered by the
+// same C++ core in this tab; nothing leaves the browser.
 import createFluentScene from './fluent_scene.mjs';
 
 const SCENE = `
@@ -45,19 +72,29 @@ stage: { size: [1280, 720] }
 inputs:
   camera: { type: image.rgba8, update: per_frame }
   grade: { type: image.rgba8 }
+  facepts: { type: image.rgba8, update: per_frame }
 params:
+  wipe_off: { type: bool, default: false, runtime_mutable: true }
+  focus_off: { type: bool, default: true, runtime_mutable: true }
+  contact_off: { type: bool, default: true, runtime_mutable: true }
   wipe_win: { type: vec2, default: [0, 360], runtime_mutable: true,
               animate: { duration: 0.1, ease: ease_out } }
   wipe_inv: { type: vec2, default: [1280, 360], runtime_mutable: true,
               animate: { duration: 0.1, ease: ease_out } }
   divider: { type: vec2, default: [640, 360], runtime_mutable: true,
              animate: { duration: 0.1, ease: ease_out } }
+  gaze: { type: vec2, default: [640, 360], runtime_mutable: true,
+          animate: { duration: 0.15, ease: ease_out } }
+  gaze_inv: { type: vec2, default: [160, 160], runtime_mutable: true,
+              animate: { duration: 0.15, ease: ease_out } }
 layers:
   - id: after
     content: { image: { source: $inputs.camera, fit: cover } }
-    filters: [ { beauty: { smoothing: 0.8, whiten: 0, radius: 10, sharpen: 0.15, denoise: 0.35 } },
+    filters: [ { face: { points: $inputs.facepts, eye: 0, slim: 0, lip: 0, cheek: 0 } },
+               { beauty: { smoothing: 0.8, whiten: 0, radius: 10, sharpen: 0.15, denoise: 0.35 } },
                { lut: { source: $inputs.grade, amount: 1, skin: 1 } } ]
   - id: before_win
+    hidden: $params.wipe_off
     bounds: [0, 0, 1280, 720]
     masks_to_bounds: true
     position: $params.wipe_win
@@ -66,46 +103,84 @@ layers:
         position: $params.wipe_inv
         content: { image: { source: $inputs.camera, fit: cover } }
   - id: divider_line
+    hidden: $params.wipe_off
     position: $params.divider
     content: { rect: { size: [3, 720], color: [1, 1, 1, 0.55] } }
+  - id: cap_l
+    hidden: $params.wipe_off
+    content: { text: { text: "original", position: [24, 682], size: 15,
+                       color: [1, 1, 1, 0.65] } }
+  - id: cap_r
+    hidden: $params.wipe_off
+    content: { text: { text: "beauty", position: [1190, 682], size: 15,
+                       color: [1, 1, 1, 0.65] } }
+  - id: defocus
+    hidden: $params.focus_off
+    content: { image: { source: $inputs.camera, fit: cover } }
+    filters: [ { blur: { radius: 9 } } ]
+  - id: focus_win
+    hidden: $params.focus_off
+    bounds: [0, 0, 320, 320]
+    corner_radius: 160
+    masks_to_bounds: true
+    position: $params.gaze
+    sublayers:
+      - bounds: [0, 0, 1280, 720]
+        position: $params.gaze_inv
+        content: { image: { source: $inputs.camera, fit: cover } }
+  - id: dot
+    hidden: $params.focus_off
+    position: $params.gaze
+    content: { rect: { rect: [-7, -7, 14, 14], corner_radius: 7, color: [0.3, 0.95, 0.65, 0.85] } }
   - id: hud
     position: [28, 24]
     opacity: 0.94
     shadow: {}
     sublayers:
-      - content: { rect: { size: [420, 64], corner_radius: 16, color: [0, 0, 0, 0.42] } }
-      - content: { text: { text: "BEAUTY FILTER", position: [20, 8], size: 30 } }
-      - content: { text: { text: "gpupixel algorithm on fluent_scene, in wasm", position: [20, 40],
-                           size: 15, color: [1, 1, 1, 0.55] } }
-  - content: { text: { text: "original", position: [24, 682], size: 15,
-                       color: [1, 1, 1, 0.65] } }
-  - content: { text: { text: "beauty", position: [1190, 682], size: 15,
-                       color: [1, 1, 1, 0.65] } }
+      - content: { rect: { size: [480, 64], corner_radius: 16, color: [0, 0, 0, 0.42] } }
+      - content: { text: { text: "BEAUTY STUDIO", position: [20, 8], size: 30 } }
+      - content: { text: { text: "smoothing + face warp + gaze - one scene, in wasm",
+                           position: [20, 40], size: 15, color: [1, 1, 1, 0.55] } }
+  - id: contact
+    hidden: $params.contact_off
+    position: [640, 46]
+    sublayers:
+      - content: { rect: { rect: [-110, 0, 220, 44], corner_radius: 22, color: [0.12, 0.55, 0.35, 0.75] } }
+      - content: { text: { text: "EYE CONTACT", position: [0, 10], size: 20, align: center } }
 `;
 
 const bar = document.getElementById('bar');
 let canvas = document.getElementById('v');
 let ctx = null;  // 2d context only on the CPU path (a webgpu canvas can't have one)
 
+const q = new URLSearchParams(location.search);
+const GAIN = parseFloat(q.get('gain') || '700');
+const SYAW = parseFloat(q.get('syaw') || '1');
+const SPITCH = parseFloat(q.get('spitch') || '-1');
+const EYEGAIN = parseFloat(q.get('eyegain') || '1.6');
+const SEYEV = parseFloat(q.get('seyev') || '-1');
+
 const mod = await createFluentScene();
+const c = (n, r, a) => mod.cwrap(n, r, a);
 const fs = {
-  create: mod.cwrap('fs_create', 'number', ['number']),
-  error: mod.cwrap('fs_error', 'string', []),
-  stageW: mod.cwrap('fs_stage_width', 'number', ['number']),
-  stageH: mod.cwrap('fs_stage_height', 'number', ['number']),
-  imageBuffer: mod.cwrap('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
-  commitImage: mod.cwrap('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
-  render: mod.cwrap('fs_render', 'number', ['number', 'number', 'number', 'number']),
-  renderW: mod.cwrap('fs_render_width', 'number', ['number']),
-  renderH: mod.cwrap('fs_render_height', 'number', ['number']),
-  renderStride: mod.cwrap('fs_render_stride', 'number', ['number']),
-  setParamVec2: mod.cwrap('fs_set_param_vec2', 'number', ['number', 'string', 'number', 'number']),
-  layerSetFilter: mod.cwrap('fs_layer_set_filter', 'number',
+  create: c('fs_create', 'number', ['number']),
+  error: c('fs_error', 'string', []),
+  backend: c('fs_backend', 'string', []),
+  stageW: c('fs_stage_width', 'number', ['number']),
+  stageH: c('fs_stage_height', 'number', ['number']),
+  imageBuffer: c('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
+  commitImage: c('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
+  render: c('fs_render', 'number', ['number', 'number', 'number', 'number']),
+  renderW: c('fs_render_width', 'number', ['number']),
+  renderH: c('fs_render_height', 'number', ['number']),
+  renderStride: c('fs_render_stride', 'number', ['number']),
+  setParamVec2: c('fs_set_param_vec2', 'number', ['number', 'string', 'number', 'number']),
+  setParamBool: c('fs_set_param_bool', 'number', ['number', 'string', 'number']),
+  setFilter: c('fs_layer_set_filter', 'number',
       ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
 };
 
-const yamlPtr = mod.stringToNewUTF8(SCENE);
-const inst = fs.create(yamlPtr);
+const inst = fs.create(mod.stringToNewUTF8(SCENE));
 if (!inst) {
   bar.textContent = 'scene rejected:\n' + fs.error();
   throw new Error(fs.error());
@@ -113,15 +188,13 @@ if (!inst) {
 const stageW = fs.stageW(inst), stageH = fs.stageH(inst);
 
 // ---- backend choice: WebGPU when the browser has it, CPU otherwise --------
-// (the demo.html pattern: probe, init against the canvas, fall back on any
-// failure — the page never blackscreens)
 let gpu = false;
 try {
   if (navigator.gpu) {
-    const gInit = mod.cwrap('fs_webgpu_init', null, ['string']);
-    const gStatus = mod.cwrap('fs_webgpu_status', 'number', []);
-    const gError = mod.cwrap('fs_webgpu_error', 'string', []);
-    fs.gRender = mod.cwrap('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']);
+    const gInit = c('fs_webgpu_init', null, ['string']);
+    const gStatus = c('fs_webgpu_status', 'number', []);
+    const gError = c('fs_webgpu_error', 'string', []);
+    fs.gRender = c('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']);
     gInit('#v');
     bar.textContent = 'waiting for WebGPU device…';
     gpu = await new Promise(resolve => {
@@ -129,36 +202,52 @@ try {
       (function poll() {
         const s = gStatus();
         if (s === 1) return resolve(true);
-        if (s === -1) { console.error('beauty: WebGPU init failed:', gError()); return resolve(false); }
-        if (performance.now() - t0 > 5000) { console.error('beauty: WebGPU init timeout'); return resolve(false); }
+        if (s === -1) { console.error('WebGPU init failed:', gError()); return resolve(false); }
+        if (performance.now() - t0 > 5000) return resolve(false);
         requestAnimationFrame(poll);
       })();
     });
   }
-} catch (e) {
-  console.error('beauty: WebGPU unavailable, using CPU renderer:', e);
-  gpu = false;
-}
+} catch (e) { gpu = false; }
 if (!gpu) ctx = canvas.getContext('2d');
-fs.gStatus = gpu ? mod.cwrap('fs_webgpu_status', 'number', []) : () => -1;
+fs.gStatus = gpu ? c('fs_webgpu_status', 'number', []) : () => -1;
 
 function fallbackToCpu(why) {
   if (!gpu) return;
   gpu = false;
-  console.error('beauty: falling back to CPU renderer:', why);
+  console.error('beauty studio: falling back to CPU renderer:', why);
   const fresh = canvas.cloneNode(false);
   fresh.width = 1280;   // drop any retina-scaled backing — CPU can't afford it
   fresh.height = 720;
   canvas.replaceWith(fresh);
   canvas = fresh;
-  hookWipe(canvas);
+  hookPointer(canvas);
   ctx = canvas.getContext('2d');
 }
 
+// ---- modes ------------------------------------------------------------------
+// One scene, three demos: the buttons flip the hidden: bool params and decide
+// which sliders drive the shared 'after' layer. The engine does the rest.
+let uiMode = 'wipe';
+const modeBtns = [...document.querySelectorAll('#modes button')];
+const panels = { wipe: document.getElementById('panel-wipe'),
+                 face: document.getElementById('panel-face') };
+function switchMode(m) {
+  uiMode = m;
+  for (const b of modeBtns) b.classList.toggle('on', b.dataset.mode === m);
+  panels.wipe.hidden = m !== 'wipe';
+  panels.face.hidden = m !== 'face';
+  fs.setParamBool(inst, 'wipe_off', m === 'wipe' ? 0 : 1);
+  if (m !== 'gaze') {
+    fs.setParamBool(inst, 'focus_off', 1);
+    fs.setParamBool(inst, 'contact_off', 1);
+    ptsCtx.clearRect(0, 0, 1280, 720);
+  }
+  applyFilters();
+}
+for (const b of modeBtns) b.addEventListener('click', () => switchMode(b.dataset.mode));
+
 // ---- the wipe: original on the left of the divider, beauty on the right ----
-// before_win is a full-stage masked window slid left so it covers [s-1280, s];
-// the inner camera image is counter-shifted so its pixels stay aligned with
-// the filtered layer beneath. Positions are layer centers.
 function setWipe(s) {
   s = Math.max(0, Math.min(stageW, s));
   fs.setParamVec2(inst, 'wipe_win', s - 640, 360);
@@ -166,33 +255,43 @@ function setWipe(s) {
   fs.setParamVec2(inst, 'divider', s, 360);
 }
 
+// Focus window center + counter-shift (window 320px, R = 160).
+function setGaze(x, y) {
+  x = Math.max(80, Math.min(stageW - 80, x));
+  y = Math.max(80, Math.min(stageH - 80, y));
+  fs.setParamVec2(inst, 'gaze', x, y);
+  fs.setParamVec2(inst, 'gaze_inv', 800 - x, 520 - y);
+}
+
 let dragging = false;
-function hookWipe(el) {
+function hookPointer(el) {
   el.addEventListener('pointerdown', e => {
+    if (uiMode !== 'wipe') return;
     dragging = true; el.setPointerCapture(e.pointerId);
     const r = el.getBoundingClientRect();
     setWipe((e.clientX - r.left) / r.width * stageW);
     e.preventDefault();
   });
   el.addEventListener('pointermove', e => {
-    if (!dragging) return;
     const r = el.getBoundingClientRect();
-    setWipe((e.clientX - r.left) / r.width * stageW);
+    if (uiMode === 'wipe' && dragging) {
+      setWipe((e.clientX - r.left) / r.width * stageW);
+    } else if (uiMode === 'gaze' && analyzerMode === 'pointer') {
+      setGaze((e.clientX - r.left) / r.width * stageW,
+              (e.clientY - r.top) / r.height * stageH);
+      fs.setParamBool(inst, 'focus_off', 0);
+    }
   });
   el.addEventListener('pointerup', () => { dragging = false; });
 }
-hookWipe(canvas);
+hookPointer(canvas);
 
 // ---- the whiten grade: gpupixel's real LUT chain, baked ---------------------
-// base = the chain at strength 0, full = at strength 1; the original's
-// whiten w is exactly mix(base(c), full(c), w), which in LUT domain is a
-// per-texel blend of the two atlases. w = 0 bypasses the chain entirely
-// (identity), faithfully reproducing gpupixel's own 0→ε discontinuity.
 const LUT_W = 512;
 async function loadAtlas(url) {
   const bmp = await createImageBitmap(await (await fetch(url)).blob());
-  const c = new OffscreenCanvas(LUT_W, LUT_W);
-  const cx = c.getContext('2d');
+  const cnv = new OffscreenCanvas(LUT_W, LUT_W);
+  const cx = cnv.getContext('2d');
   cx.drawImage(bmp, 0, 0);
   return cx.getImageData(0, 0, LUT_W, LUT_W).data;
 }
@@ -201,7 +300,7 @@ const [lutBase, lutFull] = await Promise.all(
 
 function pushWhiten(w) {
   if (w <= 0) {
-    fs.layerSetFilter(inst, 'after', 'lut', 0, 1, 0, 0, 0);  // amount 0 = identity
+    fs.setFilter(inst, 'after', 'lut', 0, 1, 0, 0, 0);  // amount 0 = identity
     return;
   }
   const ptr = fs.imageBuffer(inst, 'grade', LUT_W, LUT_W);
@@ -210,38 +309,45 @@ function pushWhiten(w) {
     heap[ptr + i] = lutBase[i] + (lutFull[i] - lutBase[i]) * w;
   }
   fs.commitImage(inst, 'grade', LUT_W, LUT_W);
-  // amount 1, skin 1: gpupixel's real chain, but scoped to skin chroma —
-  // shirts and background keep their color (the original whitens everything).
-  fs.layerSetFilter(inst, 'after', 'lut', 1, 1, 0, 0, 0);
+  fs.setFilter(inst, 'after', 'lut', 1, 1, 0, 0, 0);
 }
-pushWhiten(0.25);
 
 // ---- sliders → live filter parameters --------------------------------------
-const sliders = ['smoothing', 'whiten', 'sharpen', 'denoise', 'radius']
+const wipeSliders = ['smoothing', 'whiten', 'sharpen', 'denoise', 'radius']
     .map(id => document.getElementById(id));
-function pushFilter() {
-  const [sm, wh, sh, dn, ra] = sliders.map(s => Number(s.value));
-  for (const s of sliders) {
-    s.nextElementSibling.textContent = s.id === 'radius' ? s.value : Number(s.value).toFixed(2);
+const faceSliders = ['eye', 'slim', 'lip', 'cheek', 'fsmooth']
+    .map(id => document.getElementById(id));
+function applyFilters() {
+  for (const s of [...wipeSliders, ...faceSliders]) {
+    s.nextElementSibling.textContent =
+        s.id === 'radius' ? s.value : Number(s.value).toFixed(2);
   }
-  // filters_def.h slot order: smoothing, whiten, radius, sharpen, denoise —
-  // the procedural whiten stays 0; the real LUT chain carries whitening now.
-  fs.layerSetFilter(inst, 'after', 'beauty', sm, 0, ra, sh, dn);
-  pushWhiten(wh);
+  if (uiMode === 'wipe') {
+    const [sm, wh, sh, dn, ra] = wipeSliders.map(s => Number(s.value));
+    fs.setFilter(inst, 'after', 'face', 0, 0, 0, 0, 0);
+    // filters_def.h slot order: smoothing, whiten, radius, sharpen, denoise —
+    // procedural whiten stays 0; the real LUT chain carries whitening.
+    fs.setFilter(inst, 'after', 'beauty', sm, 0, ra, sh, dn);
+    pushWhiten(wh);
+  } else if (uiMode === 'face') {
+    const [ey, sl, li, ch, sm] = faceSliders.map(s => Number(s.value));
+    fs.setFilter(inst, 'after', 'face', ey, sl, li, ch, 0);
+    fs.setFilter(inst, 'after', 'beauty', sm, 0, 10, 0.15, 0.35);
+    pushWhiten(0);
+  } else {           // gaze: the base layer shows the camera untouched
+    fs.setFilter(inst, 'after', 'face', 0, 0, 0, 0, 0);
+    fs.setFilter(inst, 'after', 'beauty', 0, 0, 10, 0, 0);
+    pushWhiten(0);
+  }
 }
-for (const s of sliders) s.addEventListener('input', pushFilter);
+for (const s of [...wipeSliders, ...faceSliders]) s.addEventListener('input', applyFilters);
 
-// ---- webcam → wasm heap ----------------------------------------------------
-const res = new URLSearchParams(location.search).get('res');
+// ---- webcam, mirrored (selfie) ---------------------------------------------
+const res = q.get('res');
 if (res && /^\d+x\d+$/.test(res)) {
   const [rw, rh] = res.split('x').map(Number);
   canvas.width = rw; canvas.height = rh;
 }
-// 720p capture: the 640x480 feed upscaled 2x was half the softness — the
-// filter can only keep detail the camera delivered. `ideal` is a request,
-// not a promise: the grab canvas takes the ACTUAL video size afterwards,
-// so a camera that answers 4:3 is never stretched to 16:9 (the scene's
-// cover fit does the aspect-correct crop instead).
 let CAM_W = 1280, CAM_H = 720;
 const grab = document.createElement('canvas');
 const grabCtx = grab.getContext('2d', { willReadFrequently: true });
@@ -256,15 +362,203 @@ try {
   CAM_H = video.videoHeight || CAM_H;
   grab.width = CAM_W;
   grab.height = CAM_H;
+  grabCtx.setTransform(-1, 0, 0, 1, CAM_W, 0);   // mirror once, at capture
 } catch (e) {
   bar.textContent = 'webcam: ' + e + ' (needs https or localhost)';
 }
 
+// camera-normalized → stage-uv under cover fit (the face filter's own space)
+const covScale = Math.max(1280 / CAM_W, 720 / CAM_H);
+const covOx = (CAM_W * covScale - 1280) / 2, covOy = (CAM_H * covScale - 720) / 2;
+const toUV = (nx, ny) => [(nx * CAM_W * covScale - covOx) / 1280,
+                          (ny * CAM_H * covScale - covOy) / 720];
+const ASPECT = 1280 / 720;
+const adist = (a, b) => Math.hypot((a[0] - b[0]) * ASPECT, a[1] - b[1]);
+
+// ---- analyzer: MediaPipe Face Landmarker, shared by face + gaze modes ------
+let analyzerMode = 'pointer';
+let landmarker = null;
+let lastSeen = 0;
+let status = { yaw: 0, pitch: 0, contact: false, blink: false };
+
+// Neutral-gaze bias ("c" or double-click recalibrates — look at center).
+let bias = { yaw: 0, pitch: 0 };
+try { const b = JSON.parse(localStorage.getItem('gaze_bias')); if (b) bias = b; } catch (e) {}
+let calibSamples = localStorage.getItem('gaze_bias') ? null : [];
+function startCalib() { calibSamples = []; }
+addEventListener('keydown', e => { if (e.key === 'c' || e.key === 'C') startCalib(); });
+addEventListener('dblclick', startCalib);
+
+// Landmark point overlay ("p" toggles; gaze mode only).
+const ptsCanvas = document.getElementById('pts');
+const ptsCtx = ptsCanvas.getContext('2d');
+let showPts = true;
+addEventListener('keydown', e => {
+  if (e.key === 'p' || e.key === 'P') {
+    showPts = !showPts;
+    if (!showPts) ptsCtx.clearRect(0, 0, 1280, 720);
+  }
+});
+function drawPoints(lm) {
+  ptsCtx.clearRect(0, 0, 1280, 720);
+  if (!showPts || !lm) return;
+  ptsCtx.fillStyle = 'rgba(120, 215, 255, 0.55)';
+  for (let i = 0; i < 468; i++) {
+    const [u, v] = toUV(lm[i].x, lm[i].y);
+    ptsCtx.fillRect(u * 1280 - 1, v * 720 - 1, 2, 2);
+  }
+  ptsCtx.fillStyle = 'rgba(80, 255, 170, 0.95)';   // iris points
+  for (let i = 468; i < 478 && i < lm.length; i++) {
+    const [u, v] = toUV(lm[i].x, lm[i].y);
+    ptsCtx.beginPath(); ptsCtx.arc(u * 1280, v * 720, 3, 0, Math.PI * 2); ptsCtx.fill();
+  }
+}
+
+const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+try {
+  const vision = await import(`${MP}/vision_bundle.mjs`);
+  const files = await vision.FilesetResolver.forVisionTasks(`${MP}/wasm`);
+  const make = delegate => vision.FaceLandmarker.createFromOptions(files, {
+    baseOptions: {
+      modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+      delegate,
+    },
+    outputFacialTransformationMatrixes: true,
+    runningMode: 'VIDEO',
+    numFaces: 1,
+  });
+  try { landmarker = await make('GPU'); }
+  catch (e) { console.error('GPU delegate failed, retrying on CPU:', e); landmarker = await make('CPU'); }
+  analyzerMode = 'iris';
+} catch (e) {
+  console.error('MediaPipe unavailable:', e);
+}
+
+// 44-value control strip (16-bit fixed point in a 44x1 image) — the face
+// filter's points input, the same channel a robot-side analyzer would use.
+const vals = new Float32Array(44);
+function commitStrip() {
+  const fb = fs.imageBuffer(inst, 'facepts', 44, 1);
+  for (let i = 0; i < 44; ++i) {
+    const v = Math.max(0, Math.min(65535, Math.round(vals[i] * 65535)));
+    mod.HEAPU8[fb + i * 4] = v >> 8;
+    mod.HEAPU8[fb + i * 4 + 1] = v & 255;
+    mod.HEAPU8[fb + i * 4 + 2] = 0;
+    mod.HEAPU8[fb + i * 4 + 3] = 255;
+  }
+  fs.commitImage(inst, 'facepts', 44, 1);
+}
+commitStrip();   // zeros = pass-through until a face arrives
+
+function fillStrip(lm) {
+  const P = i => toUV(lm[i].x, lm[i].y);
+  // eyes: iris centers + half the eye width (aspect-corrected uv metric)
+  const eR = P(468), eL = P(473);
+  const rR = adist(P(33), P(133)) * 0.5, rL = adist(P(362), P(263)) * 0.5;
+  vals[0] = eR[0]; vals[1] = eR[1]; vals[2] = rR;
+  vals[3] = eL[0]; vals[4] = eL[1]; vals[5] = rL;
+  // mouth: corners set the width, outer lips the height
+  const c61 = P(61), c291 = P(291);
+  vals[6] = (c61[0] + c291[0]) / 2; vals[7] = (c61[1] + c291[1]) / 2;
+  vals[8] = adist(c61, c291) * 0.62; vals[9] = adist(P(0), P(17)) * 0.62;
+  // cheeks: under the eyes, radius from face width
+  const chL = P(50), chR = P(280);
+  vals[11] = chL[0]; vals[12] = chL[1]; vals[13] = chR[0]; vals[14] = chR[1];
+  vals[15] = adist(P(234), P(454)) * 0.16;
+  // jaw pairs: three per side, pulled toward the mid-face point
+  const mid = P(5);
+  const JAW = [172, 136, 150, 397, 365, 379];
+  for (let k = 0; k < 6; ++k) {
+    const o = P(JAW[k]);
+    vals[16 + k * 4] = o[0]; vals[17 + k * 4] = o[1];
+    vals[18 + k * 4] = o[0] + (mid[0] - o[0]) * 0.15;
+    vals[19 + k * 4] = o[1] + (mid[1] - o[1]) * 0.15;
+  }
+  commitStrip();
+}
+
+// gaze estimation (iris offset + head pose, gaze.html's Phase A analyzer)
+function irisOffset(lm, inner, outer, top, bottom, iris) {
+  const w = lm[outer].x - lm[inner].x;
+  const h = lm[bottom].y - lm[top].y;
+  if (Math.abs(w) < 1e-4) return null;
+  const open = Math.abs(h / w);
+  return {
+    hx: (lm[iris].x - lm[inner].x) / w - 0.5,
+    vy: Math.abs(h) > 1e-4 ? (lm[iris].y - lm[top].y) / h - 0.5 : 0,
+    open,
+  };
+}
+function headPoseFromMatrix(m) {
+  const zx = m[8], zy = m[9], zz = m[10];
+  return {
+    yaw: Math.atan2(zx, Math.abs(zz)),
+    pitch: Math.atan2(zy, Math.hypot(zx, zz)),
+  };
+}
+function analyzeGaze(lm, r) {
+  let head = { yaw: 0, pitch: 0 };
+  if (r.facialTransformationMatrixes && r.facialTransformationMatrixes.length)
+    head = headPoseFromMatrix(r.facialTransformationMatrixes[0].data);
+  const R = irisOffset(lm, 133, 33, 159, 145, 468);
+  const L = irisOffset(lm, 362, 263, 386, 374, 473);
+  let eyeYaw = 0, eyePitch = 0, blink = false;
+  if (R && L) {
+    blink = (R.open + L.open) / 2 < 0.09;
+    if (!blink) {
+      eyeYaw = ((R.hx + L.hx) / 2) * EYEGAIN;
+      eyePitch = SEYEV * ((R.vy + L.vy) / 2) * EYEGAIN * 0.5;
+    }
+  }
+  const rawYaw = head.yaw + eyeYaw;
+  const rawPitch = head.pitch + eyePitch;
+  if (calibSamples !== null && !blink) {
+    calibSamples.push([rawYaw, rawPitch]);
+    if (calibSamples.length >= 15) {
+      bias.yaw = calibSamples.reduce((s, v) => s + v[0], 0) / calibSamples.length;
+      bias.pitch = calibSamples.reduce((s, v) => s + v[1], 0) / calibSamples.length;
+      localStorage.setItem('gaze_bias', JSON.stringify(bias));
+      calibSamples = null;
+    }
+  }
+  const clampA = a => Math.max(-0.9, Math.min(0.9, a));
+  const yaw = clampA(SYAW * (rawYaw - bias.yaw));
+  const pitch = clampA(SPITCH * (rawPitch - bias.pitch));
+  status = { yaw, pitch, contact: false, blink };
+  if (!blink) {
+    const [u, v] = toUV(lm[168].x, lm[168].y);
+    setGaze(u * 1280 + Math.tan(yaw) * GAIN, v * 720 + Math.tan(pitch) * GAIN);
+    status.contact = Math.abs(yaw) < 0.17 && Math.abs(pitch) < 0.17;
+  }
+  fs.setParamBool(inst, 'focus_off', 0);
+  fs.setParamBool(inst, 'contact_off', status.contact ? 0 : 1);
+  drawPoints(lm);
+}
+
+function analyze() {
+  if (!video || video.readyState < 2 || !landmarker) return;
+  if (uiMode === 'wipe') return;
+  grabCtx.drawImage(video, 0, 0, CAM_W, CAM_H);
+  const r = landmarker.detectForVideo(grab, performance.now());
+  if (!(r.faceLandmarks && r.faceLandmarks.length)) {
+    if (performance.now() - lastSeen > 800) {
+      if (uiMode === 'face') { vals.fill(0); commitStrip(); }
+      if (uiMode === 'gaze') {
+        fs.setParamBool(inst, 'focus_off', 1);
+        fs.setParamBool(inst, 'contact_off', 1);
+        ptsCtx.clearRect(0, 0, 1280, 720);
+      }
+    }
+    return;
+  }
+  lastSeen = performance.now();
+  const lm = r.faceLandmarks[0];
+  if (uiMode === 'face') fillStrip(lm);
+  else if (uiMode === 'gaze') analyzeGaze(lm, r);
+}
+setInterval(analyze, 66);   // ~15 Hz; the scene's animate smooths to 60 fps
+
 // ---- render resolution ------------------------------------------------------
-// On the GPU the canvas renders at device pixels (a 1280 CSS-px canvas on a
-// retina display needs 2560 backing pixels to look sharp — SDF rendering is
-// resolution-independent, so this is free crispness). The adaptive ladder
-// only exists for the CPU fallback.
 let last = performance.now(), frames = 0, fpsShown = 0;
 const DPR = Math.min(window.devicePixelRatio || 1, 2);
 if (!res && gpu && DPR > 1) { canvas.width = 1280 * DPR; canvas.height = 720 * DPR; }
@@ -273,11 +567,26 @@ let rung = 0;
 setInterval(() => {
   fpsShown = frames; frames = 0;
   if (res || gpu) return;
-  // Down only — see lsd.html: the up-step made the rung oscillate visibly.
   if (fpsShown > 0 && fpsShown < 24 && rung < LADDER.length - 1) ++rung;
   const [w, h] = LADDER[rung];
   if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
 }, 1000);
+
+const deg = r => (r * 180 / Math.PI).toFixed(0);
+function hint() {
+  if (uiMode === 'wipe') return 'ドラッグで境界を動かす。左が原画、右が美肌';
+  if (uiMode === 'face') {
+    const tracking = performance.now() - lastSeen < 800;
+    return `analyzer: ${analyzerMode}${tracking ? ' · TRACKING' : ' · no face'}`;
+  }
+  return `analyzer: ${analyzerMode}` +
+      (analyzerMode === 'iris'
+        ? ` · gaze ${deg(status.yaw)}°/${deg(status.pitch)}°` +
+          (calibSamples !== null ? ' · CALIBRATING (中央を見て)' : '') +
+          (status.blink ? ' · blink' : '') + (status.contact ? ' · EYE CONTACT' : '') +
+          '\n"c" = 再キャリブレーション · "p" = 点表示'
+        : ' — ポインタで焦点を動かす');
+}
 
 function tick() {
   const now = performance.now();
@@ -293,11 +602,8 @@ function tick() {
   }
 
   if (gpu) {
-    if (fs.gStatus() !== 1) {
-      fallbackToCpu('device left ready state');
-    } else if (!fs.gRender(inst, dt, canvas.width, canvas.height)) {
-      fallbackToCpu('fs_render_webgpu failed');
-    }
+    if (fs.gStatus() !== 1) fallbackToCpu('device left ready state');
+    else if (!fs.gRender(inst, dt, canvas.width, canvas.height)) fallbackToCpu('fs_render_webgpu failed');
   }
   if (!gpu) {
     const px = fs.render(inst, dt, canvas.width, canvas.height);
@@ -308,8 +614,9 @@ function tick() {
     }
   }
   ++frames;
-  bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · wasm/${gpu ? 'webgpu' : 'cpu'} — ドラッグで境界を動かす。左が原画、右が美肌`;
+  bar.textContent = `${canvas.width}x${canvas.height} · ${fpsShown} fps · wasm/${gpu ? 'webgpu' : 'cpu'} · ${hint()}`;
   requestAnimationFrame(tick);
 }
+applyFilters();
 requestAnimationFrame(tick);
 </script>

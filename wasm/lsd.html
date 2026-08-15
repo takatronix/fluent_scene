@@ -658,12 +658,20 @@ function tick() {
       // moment the page went WebGPU, while the ~8 fps CPU path kept them
       // ("CPUのほうがトリップ感ある" — the owner was right).
       fbCtx.globalAlpha = Math.pow(persist, Math.min(dt, 0.5) * 8);
+      // a whisper of blur per echo GENERATION: at 60 fps the buffer gets
+      // resampled 7× more often than the old CPU path, and the zoom+rotate
+      // interpolation error accumulated into visible stripes ("エフェクトが
+      // バッファに残ってる" — the owner's read). 0.4 px per pass dissolves
+      // the moiré before it can stack, and softens trails the dreamy way.
+      fbCtx.filter = 'blur(0.4px)';
+      fbCtx.imageSmoothingQuality = 'high';
       fbCtx.translate(gazePivot.x, gazePivot.y);
       fbCtx.scale(s, s);
       fbCtx.rotate(a);
       fbCtx.translate(-gazePivot.x, -gazePivot.y);
       fbCtx.drawImage(prevOut, 0, 0);
       fbCtx.setTransform(1, 0, 0, 1, 0, 0);
+      fbCtx.filter = 'none';
       fbCtx.globalCompositeOperation = 'source-over';
       fbCtx.globalAlpha = 1;
     }

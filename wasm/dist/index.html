@@ -36,22 +36,39 @@
   p.sub { margin: 14px 0 0; color: rgba(230, 224, 245, 0.82); text-align: center;
           max-width: 560px; text-wrap: balance; }
   p.sub small { color: rgba(170, 162, 190, 0.8); }
+  .stats { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
+           margin-top: 22px; max-width: 720px; }
+  .stats span { font-size: 12px; color: rgba(200, 220, 245, 0.9);
+                border: 1px solid rgba(126, 232, 250, 0.28); border-radius: 999px;
+                padding: 3px 13px; background: rgba(20, 30, 50, 0.35);
+                backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  p.lead { margin: 40px 0 0; font-size: 13px; letter-spacing: 0.14em;
+           color: rgba(190, 182, 215, 0.85); text-transform: uppercase;
+           font-family: ui-monospace, monospace; }
+  p.lead small { display: block; margin-top: 6px; letter-spacing: 0;
+                 text-transform: none; font-family: inherit;
+                 color: rgba(160, 152, 182, 0.9); }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-          gap: 14px; width: 100%; max-width: 920px; margin-top: 44px; }
-  a.card { display: block; padding: 18px 18px 15px; border-radius: 16px;
-           text-decoration: none; color: inherit;
-           background: rgba(14, 11, 26, 0.55);
-           border: 1px solid rgba(255, 255, 255, 0.08);
-           backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-           transition: 0.18s; }
-  a.card:hover { transform: translateY(-3px);
-                 border-color: rgba(200, 140, 255, 0.55);
-                 box-shadow: 0 6px 30px rgba(140, 90, 255, 0.25);
-                 background: rgba(24, 17, 44, 0.65); }
+          gap: 14px; width: 100%; max-width: 920px; margin-top: 18px; }
+  .card { display: block; position: relative; padding: 18px 18px 15px;
+          border-radius: 16px; text-decoration: none; color: inherit;
+          background: rgba(14, 11, 26, 0.55);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+          transition: 0.18s; }
+  .card:hover { transform: translateY(-3px);
+                border-color: rgba(200, 140, 255, 0.55);
+                box-shadow: 0 6px 30px rgba(140, 90, 255, 0.25);
+                background: rgba(24, 17, 44, 0.65); }
   .card b { font-size: 17px; }
   .card span { display: block; margin-top: 5px; color: rgba(170, 162, 190, 0.95);
                font-size: 13px; line-height: 1.55; }
-  .card span a { color: #9fd8ff; }
+  .card a.fill { display: block; text-decoration: none; color: inherit; }
+  .card a.lang { position: absolute; top: 18px; right: 16px; font-size: 11px;
+                 color: #9fd8ff; text-decoration: none;
+                 border: 1px solid rgba(159, 216, 255, 0.4);
+                 border-radius: 999px; padding: 1px 9px; }
+  .card a.lang:hover { background: rgba(159, 216, 255, 0.15); }
   .card em { font-style: normal; font-size: 11px; color: #7ee8fa;
              border: 1px solid rgba(126, 232, 250, 0.4); border-radius: 999px;
              padding: 1px 8px; margin-left: 8px; vertical-align: 2px; }
@@ -63,8 +80,16 @@
 <canvas id="bg" width="960" height="540"></canvas>
 <main>
   <h1>fluent_scene</h1>
-  <p class="sub">映像は、流れる。C++ single-header の Scene / Stage / Layer 描画エンジン。<br>
-  <small>CPU / Vulkan / WebGPU / WASM — どこでも同じ絵。背景で泳いでいるのも実機の <code>fractal</code> フィルタです。</small></p>
+  <p class="sub">映像は、流れる。ロボットで実運用中の C++ Scene / Stage / Layer 描画エンジン。<br>
+  <small>CPU / Vulkan / WebGPU / WASM — どのバックエンドでも同じ絵(±1LSB)。背景で泳いでいるのも実機の <code>fractal</code> フィルタです。</small></p>
+  <div class="stats">
+    <span>フィルタ38種</span>
+    <span>3バックエンド同一ピクセル</span>
+    <span>wasm 2.8MB 自己完結</span>
+    <span>映像はタブの外に出ない</span>
+  </div>
+  <p class="lead">Live Demos
+  <small>下のデモはすべて、ロボットで動いているものと同じ C++ コアがこのページの中で描画しています</small></p>
   <div class="grid">
     <a class="card" href="fractal.html"><b>🌀 fractal</b><em>NEW</em>
       <span>永遠フラクタル飛行 — 二度と同じ画が来ない自己変容KIFS。瞬きで世界が切り替わる</span></a>
@@ -72,18 +97,11 @@
       <span>全38フィルタをWebカメラで試すカタログ — NTSC→CRT・鉛筆・油絵・多角形ボケ</span></a>
     <a class="card" href="lsd.html"><b>👁 LSD</b>
       <span>サイケデリック視覚現象の再現。視線・瞬きで世界が動く</span></a>
-    <a class="card" href="lsd_report.html"><b>📄 LSDシェーダーの科学</b>
-      <span>なぜああ見えるのか — 薬理学から書いた解説記事 (<a href="lsd_report.en.html">EN</a>)</span></a>
-    <a class="card" href="beauty.html"><b>✨ beauty</b>
-      <span>分散ゲート美肌 + 美白 — 顔検出なしで肌だけ滑らかに</span></a>
-    <a class="card" href="face.html"><b>🙂 face studio</b>
-      <span>ランドマーク駆動の顔ワープ・メイク</span></a>
-    <a class="card" href="gaze.html"><b>🎯 gaze</b>
-      <span>視線フォーカスのプロトタイプ</span></a>
-    <a class="card" href="playground.html"><b>🧪 playground</b>
-      <span>ライブラリ一式が手元のタブで動くポートレート演出デモ</span></a>
-    <a class="card" href="webgpu.html"><b>🔬 webgpu = cpu?</b>
-      <span>WebGPUバックエンドがCPU参照と一致することをその場で検証</span></a>
+    <div class="card"><a class="fill" href="lsd_report.html"><b>📄 LSDシェーダーの科学</b>
+      <span>なぜああ見えるのか — 薬理学から書いた解説記事</span></a>
+      <a class="lang" href="lsd_report.en.html">EN</a></div>
+    <a class="card" href="beauty.html"><b>✨ beauty studio</b><em>NEW</em>
+      <span>美肌比較・顔ワープ&メイク・視線フォーカス — 3つのデモがひとつのSceneに同居。ボタンはパラメータを切り替えるだけ</span></a>
   </div>
 </main>
 <footer>github: <a href="https://github.com/takatronix/fluent_scene">takatronix/fluent_scene</a> · by <a href="https://x.com/takatronix">@takatronix</a></footer>
