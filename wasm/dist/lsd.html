@@ -652,7 +652,12 @@ function tick() {
       const s = Math.exp(eff.zoom * dt * 4);
       const a = eff.rot * dt * 4;
       fbCtx.globalCompositeOperation = trailmode.value;
-      fbCtx.globalAlpha = persist;
+      // dt-normalized like zoom/rot above: the slider means retention per
+      // 1/8 s of WALL time. A constant per-frame alpha made trail life
+      // depend on frame rate — 0.55^60/s at 60 fps killed the tracers the
+      // moment the page went WebGPU, while the ~8 fps CPU path kept them
+      // ("CPUのほうがトリップ感ある" — the owner was right).
+      fbCtx.globalAlpha = Math.pow(persist, Math.min(dt, 0.5) * 8);
       fbCtx.translate(gazePivot.x, gazePivot.y);
       fbCtx.scale(s, s);
       fbCtx.rotate(a);
