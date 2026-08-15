@@ -309,7 +309,7 @@ const smooth = x => x * x * (3 - 2 * x);
 function conducted(t) {
   if (t > nextDrift) {
     regime = { ...targetNow(t) };
-    target = { flight: logu(0.2, 2.6), morph: 0.35 + Math.random() * 1.15,
+    target = { flight: logu(0.18, 1.5), morph: 0.35 + Math.random() * 1.15,
                glow: logu(0.5, 2.2) };
     drift = { t0: t, dur: 3 + Math.random() * 4 };
     nextDrift = t + drift.dur + logu(8, 25);
@@ -517,7 +517,7 @@ function tickBody() {
   const gzFlight = 1 - 0.4 * contactLevel;
   const gzMorph = 1 + 0.15 * contactLevel;
   const gzGlow = (1 + 0.7 * contactLevel) * (1 + 0.5 * cutPulse);
-  const flEff = knob('flight') * cc.flight * gzFlight;
+  const flEff = 0.6 * knob('flight') * cc.flight * gzFlight;
   const morphV = knob('morph') * cc.morph * gzMorph;
   const glowV = knob('glow') * cc.glow * gzGlow * swell;
   const teA = t + offA, teB = t + offB;

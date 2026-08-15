@@ -619,38 +619,39 @@ vec3 fs_lsd(vec2 uv, float trip, float time_s, float drift, float geometry, floa
     float n1 = fs_lsd_vnoise(qw0);
     float n2 = fs_lsd_vnoise(qw0 * 1.9 + vec2(7.7, 3.1));
     vec2 warp = vec2(n1 - 0.5, n2 - 0.5);
-    float zp = t * 0.5;                                    // flight speed
-    float zf = zp - floor(zp);
-    // prism misregistration on the coarse rungs: R reads forward and B
-    // backward along a slowly turning axis while G stays centered — the
-    // primaries land slightly apart, overlaps make yellow/cyan/white, and
-    // R+B without G (purple) almost never occurs. Only pure colours.
-    vec2 poff = vec2(cos(t * 0.9), sin(t * 0.9)) * (0.05 * clamp(chroma, 0.0, 3.0));
+    // THE GLOWING BODY — the hallucination geometry is a circle-inversion
+    // IFS (the 2D cousin of fs_fractal's folds; design doc §8): each point
+    // orbits "invert outside the unit circle, then rotate·scale·shift",
+    // and a leaky accumulator of orbit radii is read at three consecutive
+    // depths. Folding those three into bands puts R/G/B a breath apart in
+    // phase — iridescent fringes along every equal-orbit contour, nothing
+    // straight, nothing repeated. The fold angle, scale and shift ride
+    // slow incommensurate clocks: same contract, pure function of `time`.
     float amt = abs(geometry);
     float digital = geometry < 0.0 ? 1.0 : 0.0;            // sign picks texture
-    vec3 acc = vec3(0.0, 0.0, 0.0);
-    float norm = 0.0;
-    for (int n = 0; n < 6; ++n) {
-        float en = float(n) - zf;                          // ladder position
-        float sc = exp2(en);
-        float mm = float(n) + floor(zp);                   // stable rung id
-        vec2 offn = vec2(fs_lsd_hash(vec2(mm, 1.7)) * 61.3,
-                         fs_lsd_hash(vec2(mm, 9.2)) * 47.7);
-        float w = 0.5 - 0.5 * cos(6.2831853 * (en + 1.0) / 7.0);
-        float fq = 2.6 * sc;
-        vec2 pl = pc * fq + warp * (1.8 * sc) + offn;
-        float g = fs_lsd_vnoise(pl);
-        if (n < 3) {
-            // screen-space prism shift: domain offset scales with frequency
-            acc += vec3(fs_lsd_vnoise(pl + poff * fq), g,
-                        fs_lsd_vnoise(pl - poff * fq)) * w;
-        } else {
-            // fine rungs: the shift is sub-feature there, share one read
-            acc += vec3(g, g, g) * w;
-        }
-        norm += w;
+    vec2 vp = pc * (3.3 + 0.4 * sin(t * 0.011 + 2.7)) + warp * 0.45;
+    vp = vp + vec2(0.13 * sin(t * 0.023), 0.13 * cos(t * 0.029));
+    float ifsa = 0.185 * (sin(t * 0.021) + sin(t * 0.034 + 2.0) + sin(t * 0.0079 + 4.0));
+    float ca2 = 1.34 * cos(ifsa);
+    float sa2 = 1.34 * sin(ifsa);
+    float zsc = 0.63 + 0.08 * sin(t * 0.013 + 1.0);
+    vec2 sh = vec2(0.033 + 0.022 * sin(t * 0.017), 0.14 + 0.022 * cos(t * 0.019));
+    float R0 = 0.0;
+    float R1 = 0.0;
+    float R2 = 0.0;
+    for (int i = 0; i < 32; ++i) {
+        float rr = dot(vp, vp);
+        if (rr > 1.0) { vp = vp / rr; }
+        R0 = R0 * 0.99 + rr;
+        if (i < 31) { R1 = R1 * 0.99 + rr; }
+        if (i < 30) { R2 = R2 * 0.99 + rr; }
+        vp = vec2(ca2 * vp.x + sa2 * vp.y, ca2 * vp.y - sa2 * vp.x) * zsc + sh;
     }
-    acc = acc / max(norm, 0.1);
+    float w0 = R0 * 0.5 - floor(R0 * 0.5);
+    float w1 = R1 * 0.5 - floor(R1 * 0.5);
+    float w2 = R2 * 0.5 - floor(R2 * 0.5);
+    vec3 acc = vec3(1.0 - abs(2.0 * w2 - 1.0), 1.0 - abs(2.0 * w1 - 1.0),
+                    1.0 - abs(2.0 * w0 - 1.0));
 
     // drifting & breathing: read the source through the noise field's lens.
     // Less than one radial period fits the view and the phase is noised,
