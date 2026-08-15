@@ -124,29 +124,99 @@ let front = 'A';
 let fade = { active: false, t0: 0 };
 let zA = offA, zB = 0;                     // per-universe flight integrals
 let lastShiftAt = -1e9, lastCutAt = -1e9, cutPulse = 0;
+let rampUntil = 0;
+
+// ---- landing audition ------------------------------------------------------
+// A cut must LAND well. These mirror the filter's drive bank (same
+// incommensurate sine sums), so we can ask of any candidate epoch: how fast
+// are its clocks moving (post-landing churn) and are the structure clocks
+// at extremes (sand-storm geometry)? Pure arithmetic, no rendering — a
+// dozen auditions cost nothing, and only the calmest landing is taken.
+const oscJs = (t, f, ph) => Math.sin(t * f + ph) +
+    Math.sin(t * f * 1.6180339887 + ph * 2) + Math.sin(t * f * 0.3819660113 + ph * 4);
+const doscJs = (t, f, ph) => f * (Math.cos(t * f + ph) +
+    1.6180339887 * Math.cos(t * f * 1.6180339887 + ph * 2) +
+    0.3819660113 * Math.cos(t * f * 0.3819660113 + ph * 4));
+function calmScore(te) {
+  const B = [[0.061, 0.7, 1.0], [0.047, 2.3, 0.8], [0.033, 4.1, 0.9],
+             [0.043, 1.1, 0.6], [0.037, 3.9, 0.6], [0.029, 5.5, 0.5],
+             [0.0165, 5.9, 1.2]];
+  let s = 0;
+  for (const [f, ph, w] of B) s += w * Math.abs(doscJs(te, f, ph)) / (3 * f);
+  const wInv = Math.min(0.9, Math.max(0, 0.30 + 0.30 * oscJs(te, 0.0165, 5.9)));
+  s += 1.2 * Math.max(0, wInv - 0.55);            // dusty deep-inversion landings
+  s += 0.4 * Math.abs(oscJs(te, 0.033, 4.1)) / 3; // extreme fold-scale landings
+  return s;
+}
+function auditionOff(cur, tNow, lo, hi) {
+  let best = cur + logu(lo, hi), bs = Infinity;
+  for (let i = 0; i < 14; ++i) {
+    const cand = cur + logu(lo, hi);
+    const s = calmScore(tNow + cand);
+    if (s < bs) { bs = s; best = cand; }
+  }
+  return best;
+}
 // a blink is a hard cut: the visible universe swaps epochs while the eyes
 // are still closed — reopen and the world is already different. No time
 // interpolation, so nothing strobes; the seam is hidden inside the blink.
-function instantCut(jump) {
+function instantCut(tNow, lo, hi) {
   const now = performance.now();
   if (now - lastCutAt < 1000 || fade.active) return;   // double-detect guard only
   lastCutAt = now;
-  if (front === 'A') { offA += jump; zA = 0; }
-  else { offB += jump; zB = 0; }
+  // a blink cuts NEARBY (15–120 s): the slow weather barely moves, so the
+  // mood stays continuous — same universe, different corridor
+  if (front === 'A') { offA = auditionOff(offA, tNow, lo || 15, hi || 120); zA = 0; }
+  else { offB = auditionOff(offB, tNow, lo || 15, hi || 120); zB = 0; }
   cutPulse = 1;                                        // a breath of light on reopen
+  rampUntil = now + 2500;                              // the new place wakes gently
 }
-function transition(jump) {
+
+// ---- boredom rescue --------------------------------------------------------
+// The clocks can fly the camera into a hollow (or a wall): rays hit
+// nothing and the frame flattens to fog. The clock audition cannot see
+// that — so watch the PICTURE instead: every 1.5 s render a 96×54 probe
+// through the existing readback path and measure luma variance. A flat or
+// black frame twice in a row means nobody would keep watching — blink on
+// the viewer's behalf, farther than a normal blink, until structure returns.
+let probeBusy = false, flatStreak = 0, lastRescueAt = -1e9, lastProbeAt = 0;
+function probeFrame(now) {
+  if (mode !== 'gpu' || probeBusy || fade.active || now - lastProbeAt < 1500) return;
+  lastProbeAt = now; probeBusy = true;
+  if (!fs.gReadBegin(inst, 0, 96, 54)) { probeBusy = false; return; }
+  const poll = () => {
+    const p = fs.gReadPixels();
+    if (!p) {
+      if (fs.gStatus() === -1) { probeBusy = false; return; }
+      requestAnimationFrame(poll); return;
+    }
+    const n = 96 * 54;
+    let s = 0, s2 = 0;
+    for (let i = 0; i < n; ++i) {
+      const o = p + i * 4;
+      const l = 0.299 * mod.HEAPU8[o] + 0.587 * mod.HEAPU8[o + 1] +
+                0.114 * mod.HEAPU8[o + 2];
+      s += l; s2 += l * l;
+    }
+    const mean = s / n, va = s2 / n - mean * mean;
+    flatStreak = (va < 180 || mean < 6) ? flatStreak + 1 : 0;
+    probeBusy = false;
+  };
+  requestAnimationFrame(poll);
+}
+function transition(tNow, lo, hi) {
   if (fade.active) return;
   const now = performance.now();
-  if (now - lastShiftAt < 4000) return;    // natural blink cadence guard
+  if (now - lastShiftAt < 4000) return;
   lastShiftAt = now;
   const from = front === 'A' ? offA : offB;
+  const newOff = auditionOff(from, tNow, lo, hi);
   if (front === 'A') {
-    offB = from + jump; zB = 0;            // zB re-seeds on first drive below
+    offB = newOff; zB = 0;                 // zB re-seeds on first drive below
     fs.setPf(inst, 'mixa', 1);
     fs.setPf(inst, 'mixb', 1);
   } else {
-    offA = from + jump; zA = 0;
+    offA = newOff; zA = 0;
     fs.setPf(inst, 'mixa', 1);
     fs.setPf(inst, 'mixb', 0);
   }
@@ -329,11 +399,28 @@ function tick() {
   canvas.style.transform = tracking
       ? `translate(${(-gazeS.yaw * 4).toFixed(2)}%, ${(gazeS.pitch * 4).toFixed(2)}%) scale(1.09)`
       : '';
-  if (wantWarp) { transition(logu(300, 3000)); }       // held eyes: slow dissolve far away
-  else if (wantShift) { instantCut(logu(40, 600)); }   // blink: already elsewhere
+  if (wantWarp) { transition(t, 300, 3000); }          // held eyes: slow dissolve far away
+  else if (wantShift) { instantCut(t); }               // blink: already elsewhere
   wantWarp = wantShift = false;
   // no face to blink for us? the piece still turns its own pages
-  if (auto && !tracking && now - lastShiftAt > 25000) { transition(logu(40, 600)); }
+  if (auto && !tracking && now - lastShiftAt > 25000) { transition(t, 40, 600); }
+
+  // boredom rescue: if the picture has been flat fog twice running, jump
+  probeFrame(now);
+  if (flatStreak >= 2 && now - lastRescueAt > 2500 && !fade.active) {
+    lastRescueAt = now; flatStreak = 0;
+    lastCutAt = -1e9;                       // rescue overrides the blink guard
+    instantCut(t, 60, 1500);
+  }
+
+  // post-landing grace: the fresh universe's clocks run at 0.35× and ease
+  // up to full speed over 2.5 s (flight speed is untouched — z rides its
+  // own integral), so a cut never lands mid-churn
+  if (now < rampUntil && !fade.active) {
+    const k = 1 - (rampUntil - now) / 2500;
+    const rate = 0.35 + 0.65 * smooth(k);
+    if (front === 'A') { offA -= (1 - rate) * dt; } else { offB -= (1 - rate) * dt; }
+  }
 
   // dissolve bookkeeping: when the curtain settles, cull the hidden layer
   let swell = 1;
