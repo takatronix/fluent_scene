@@ -108,6 +108,8 @@
     <span id="params" style="display:contents"></span>
     <span id="tail">
       <label>チェーン <select id="chain"><option value="">なし</option></select></label>
+      <label>⏱ <input id="speed" type="range" min="0" max="2" step="0.05" value="0.6"
+                     style="width:90px"><output id="speedOut">0.60</output></label>
       <label><input id="anim" type="checkbox" checked> アニメ</label>
     </span>
   </div>
@@ -277,8 +279,22 @@ const spec = () => CATALOG.find(f => f.name === current);
 const chainSpec = () => CATALOG.find(f => f.name === chainSel.value) || null;
 let values = [];
 const timeSlot = s => s && s.params.length > 1 && s.params[1].name === 'time' ? 1 : -1;
-const perfNowSec = () => performance.now() / 1000;
 const animated = () => timeSlot(spec()) >= 0 || timeSlot(chainSpec()) >= 0;
+
+// Filter clock: dt accumulated through the ⏱ multiplier, so changing the
+// speed re-paces the animation without jumping it (a scaled wall clock
+// would teleport `time` on every slider move).
+const speed = document.getElementById('speed');
+const speedOut = document.getElementById('speedOut');
+speed.addEventListener('input', () => { speedOut.textContent = Number(speed.value).toFixed(2); });
+let simT = 0, simLast = performance.now();
+function simNow() {
+  const now = performance.now();
+  simT += (now - simLast) / 1000 * Number(speed.value);
+  simLast = now;
+  return simT;
+}
+const perfNowSec = simNow;
 
 function selectFilter(name, overrides = {}) {
   current = name;
@@ -460,7 +476,7 @@ function tick() {
     mod.HEAPU8.set(data, ptr);
     fs.commitImage(inst, 'camera', CAM_W, CAM_H);
   }
-  if (anim.checked && animated()) pushFilters(now / 1000);
+  if (anim.checked && animated()) pushFilters(simNow());
 
   if (gpu) {
     if (fs.gStatus() !== 1) {
