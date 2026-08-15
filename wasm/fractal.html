@@ -170,7 +170,12 @@ function instantCut(tNow, lo, hi) {
   else { offB = auditionOff(offB, tNow, lo || 15, hi || 120); zB = 0; }
   cutPulse = 1;                                        // a breath of light on reopen
   rampUntil = now + 2500;                              // the new place wakes gently
+  // fast landing check: probe ~250 ms after the cut so a bad landing
+  // (fog OR sand-storm) is escaped in well under a second
+  lastProbeAt = now - 1250;
+  postCutUntil = now + 1600;
 }
+let postCutUntil = 0;
 
 // ---- boredom rescue --------------------------------------------------------
 // The clocks can fly the camera into a hollow (or a wall): rays hit
@@ -180,8 +185,11 @@ function instantCut(tNow, lo, hi) {
 // black frame twice in a row means nobody would keep watching — blink on
 // the viewer's behalf, farther than a normal blink, until structure returns.
 let probeBusy = false, flatStreak = 0, lastRescueAt = -1e9, lastProbeAt = 0;
+let probeDead = 0, probeStartAt = 0;   // watchdog: a stuck readback must not stall the piece
 function probeFrame(now) {
   if (mode !== 'gpu' || probeBusy || fade.active || now - lastProbeAt < 1500) return;
+  if (probeDead >= 2 || now - t0 < 3000) return;
+  probeStartAt = now;
   lastProbeAt = now; probeBusy = true;
   if (!fs.gReadBegin(inst, 0, 96, 54)) { probeBusy = false; return; }
   const poll = () => {
@@ -191,15 +199,22 @@ function probeFrame(now) {
       requestAnimationFrame(poll); return;
     }
     const n = 96 * 54;
-    let s = 0, s2 = 0;
+    let s = 0, s2 = 0, sg = 0, prevL = 0;
     for (let i = 0; i < n; ++i) {
       const o = p + i * 4;
       const l = 0.299 * mod.HEAPU8[o] + 0.587 * mod.HEAPU8[o + 1] +
                 0.114 * mod.HEAPU8[o + 2];
       s += l; s2 += l * l;
+      if (i % 96 !== 0) sg += Math.abs(l - prevL);
+      prevL = l;
     }
     const mean = s / n, va = s2 / n - mean * mean;
-    flatStreak = (va < 180 || mean < 6) ? flatStreak + 1 : 0;
+    // two opposite failure modes, two yardsticks: fog is LOW variance;
+    // sand-storm speckle is HIGH variance but spatially incoherent —
+    // neighbor-difference over sigma runs ~1.13 for white noise, 0.1–0.5
+    // for anything with actual form
+    const ratio = (sg / (n - 54)) / Math.max(Math.sqrt(va), 1e-3);
+    flatStreak = (va < 180 || mean < 6 || ratio > 0.85) ? flatStreak + 1 : 0;
     probeBusy = false;
   };
   requestAnimationFrame(poll);
@@ -405,9 +420,12 @@ function tick() {
   // no face to blink for us? the piece still turns its own pages
   if (auto && !tracking && now - lastShiftAt > 25000) { transition(t, 40, 600); }
 
-  // boredom rescue: if the picture has been flat fog twice running, jump
+  // boredom rescue: flat fog or sand-storm twice running — or once, right
+  // after a landing — means nobody would keep watching; jump for them
   probeFrame(now);
-  if (flatStreak >= 2 && now - lastRescueAt > 2500 && !fade.active) {
+  const fastFail = now < postCutUntil && flatStreak >= 1;
+  if ((flatStreak >= 2 || fastFail) && !fade.active &&
+      now - lastRescueAt > (fastFail ? 900 : 2500)) {
     lastRescueAt = now; flatStreak = 0;
     lastCutAt = -1e9;                       // rescue overrides the blink guard
     instantCut(t, 60, 1500);
