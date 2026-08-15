@@ -40,10 +40,13 @@
 <a id="credit" href="https://x.com/takatronix" target="_blank" rel="noopener">fluent_scene · by <b>@takatronix</b></a>
 <script type="module">
 // fs_fractal — eternal flight through a self-morphing KIFS (mode 39).
-// Everything on screen is a pure function of elapsed time: no randomness,
-// no feedback. The filter's parameter orbit rides mutually incommensurate
-// sine clocks, so the flight literally never repeats — leave it running
-// forever and the same frame will not come back.
+// Everything on screen is a pure function of time — no randomness inside
+// the filter, no frame state — so a "transition" can be architecture, not
+// chaos: TWO universe layers, and a shift is a cross-dissolve to a fresh
+// time epoch on the hidden one (the engine's declared-param animation does
+// the easing). Blinking is the shutter: a blink dissolves to a nearby
+// universe; holding the eyes closed wakes far away. No fast-forward, no
+// strobing — one world breathes out while the next breathes in.
 // Design: docs/design/fractal_filter.ja.md.
 import createFluentScene from './fluent_scene.mjs';
 
@@ -56,9 +59,19 @@ schema: fluent.scene/v1alpha2
 stage: { size: [${STAGE_W}, ${STAGE_H}] }
 inputs:
   seed: { type: image.rgba8 }
+params:
+  mixa: { type: f32, default: 1, runtime_mutable: true }
+  mixb: { type: f32, default: 0, runtime_mutable: true,
+          animate: { duration: 1.8, ease: ease_in_out } }
 layers:
-  - id: void
+  - id: a
     frame: [0, 0, ${STAGE_W}, ${STAGE_H}]
+    opacity: $params.mixa
+    content: { image: { source: $inputs.seed, fit: cover } }
+    filters: [ { fractal: { flight: 1, time: 0, morph: 1, glow: 1, blend: 0 } } ]
+  - id: b
+    frame: [0, 0, ${STAGE_W}, ${STAGE_H}]
+    opacity: $params.mixb
     content: { image: { source: $inputs.seed, fit: cover } }
     filters: [ { fractal: { flight: 1, time: 0, morph: 1, glow: 1, blend: 0 } } ]
 `;
@@ -80,6 +93,7 @@ const fs = {
   gStatus: c('fs_webgpu_status', 'number', []),
   gError: c('fs_webgpu_error', 'string', []),
   gRender: c('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']),
+  setPf: c('fs_set_param_f32', 'number', ['number', 'string', 'number']),
   layerSetFilter: c('fs_layer_set_filter', 'number',
       ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
 };
@@ -87,8 +101,8 @@ const fs = {
 const inst = fs.create(mod.stringToNewUTF8(SCENE));
 if (!inst) { bar.textContent = 'scene rejected: ' + fs.error(); throw new Error(fs.error()); }
 
-// The generator ignores its source at blend 0 — a 2×2 black seed satisfies
-// the image binding once and is never touched again.
+// blend 0 ignores the source — a 2×2 OPAQUE black seed satisfies the
+// binding (transparent would compose the whole layer away)
 const sp = fs.imageBuffer(inst, 'seed', 2, 2);
 mod.HEAPU8.fill(0, sp, sp + 16);
 for (let i = 0; i < 4; ++i) mod.HEAPU8[sp + i * 4 + 3] = 255;
@@ -96,19 +110,72 @@ fs.commitImage(inst, 'seed', 2, 2);
 
 document.getElementById('fsb').onclick = () =>
     document.fullscreenElement ? document.exitFullscreen() : document.body.requestFullscreen();
+const knob = id => document.getElementById(id).value / 100;
+const logu = (lo, hi) => Math.exp(Math.log(lo) + Math.random() * (Math.log(hi) - Math.log(lo)));
+
+// ---- two universes and the dissolve ----------------------------------------
+// Layer b is the curtain: a shift loads a fresh epoch into the hidden layer
+// and lets the engine's eased param animation dissolve to it. When the
+// curtain is fully up or down, the covered layer's opacity is zeroed so the
+// renderer culls it — idle cost is ONE raymarch, two only mid-dissolve.
+const FADE = 1.8;
+let offA = logu(50, 15000), offB = 0;      // every load opens somewhere new
+let front = 'A';
+let fade = { active: false, t0: 0 };
+let zA = offA, zB = 0;                     // per-universe flight integrals
+let lastShiftAt = -1e9;
+function transition(jump) {
+  if (fade.active) return;
+  const now = performance.now();
+  if (now - lastShiftAt < 4000) return;    // natural blink cadence guard
+  lastShiftAt = now;
+  const from = front === 'A' ? offA : offB;
+  if (front === 'A') {
+    offB = from + jump; zB = 0;            // zB re-seeds on first drive below
+    fs.setPf(inst, 'mixa', 1);
+    fs.setPf(inst, 'mixb', 1);
+  } else {
+    offA = from + jump; zA = 0;
+    fs.setPf(inst, 'mixa', 1);
+    fs.setPf(inst, 'mixb', 0);
+  }
+  fade = { active: true, t0: now };
+}
+
+// ---- gentle regime drift (no jumps — the dissolve owns the jumps) ----------
+let regime = { flight: 1, morph: 1, glow: 1 };
+let target = { ...regime };
+let drift = { t0: -9, dur: 1 };
+let nextDrift = 6;
+const smooth = x => x * x * (3 - 2 * x);
+function conducted(t) {
+  if (t > nextDrift) {
+    regime = { ...targetNow(t) };
+    target = { flight: logu(0.2, 2.6), morph: 0.35 + Math.random() * 1.15,
+               glow: logu(0.5, 2.2) };
+    drift = { t0: t, dur: 3 + Math.random() * 4 };
+    nextDrift = t + drift.dur + logu(8, 25);
+  }
+  return targetNow(t);
+}
+function targetNow(t) {
+  const k = smooth(Math.max(0, Math.min(1, (t - drift.t0) / drift.dur)));
+  return { flight: regime.flight + (target.flight - regime.flight) * k,
+           morph: regime.morph + (target.morph - regime.morph) * k,
+           glow: regime.glow + (target.glow - regime.glow) * k };
+}
 
 // ---- gaze (MediaPipe iris @10 Hz — the lsd.html analyzer, retargeted) ------
-// The eyes steer the view; holding eye contact deepens the metamorphosis;
-// a blink rolls the dice (1/4 snap-shift, 1/4 slow shift, 2/4 nothing);
-// keeping the eyes closed means waking in a different universe.
+// The eyes steer the lean of the view; staring slows the flight and lights
+// it up; a blink is the shutter between universes; a held closure wakes far
+// from home. Ordinary tracking noise moves nothing abruptly.
 const gazechk = document.getElementById('gazechk');
 const CAM_W = portrait ? 360 : 640, CAM_H = portrait ? 640 : 360;
 let video = null, landmarker = null;
 let gaze = { yaw: 0, pitch: 0 }, gazeS = { yaw: 0, pitch: 0 };
 let contact = false, contactLevel = 0, faceSeen = 0;
-let blinkPulse = 0, wasBlink = false;
-let eyeState = 'open', eyesClosedAt = 0;
-let snapWarp = false, slowShift = false, wakeWarp = false;
+let wasBlink = false, eyeState = 'open', eyesClosedAt = 0;
+let wantShift = false, wantWarp = false;
 let gbias = { yaw: 0, pitch: 0 }, gcalib = [];
 try {
   const b = JSON.parse(localStorage.getItem('fractal_gaze_bias') ||
@@ -118,12 +185,12 @@ try {
 const grab = document.createElement('canvas');
 grab.width = CAM_W; grab.height = CAM_H;
 const grabCtx = grab.getContext('2d', { willReadFrequently: true });
-function drawCover(c, src, sw, sh) {
+function drawCover(ctx2, src, sw, sh) {
   const dAsp = CAM_W / CAM_H, sAsp = sw / sh;
   let cw = sw, ch = sh, cx = 0, cy = 0;
   if (sAsp > dAsp) { cw = sh * dAsp; cx = (sw - cw) / 2; }
   else { ch = sw / dAsp; cy = (sh - ch) / 2; }
-  c.drawImage(src, cx, cy, cw, ch, 0, 0, CAM_W, CAM_H);
+  ctx2.drawImage(src, cx, cy, cw, ch, 0, 0, CAM_W, CAM_H);
 }
 async function gazeUp() {
   if (video) return;
@@ -184,10 +251,9 @@ setInterval(() => {
     if (openAvg < 0.13) {
       if (eyeState !== 'closed') { eyeState = 'closed'; eyesClosedAt = performance.now(); }
     } else {
-      // ordinary blinks pass unnoticed — only a deliberate closure
-      // (holding the eyes shut) warps the world on reopening
-      if (eyeState === 'closed' && performance.now() - eyesClosedAt >= 450) {
-        wakeWarp = true;
+      if (eyeState === 'closed') {
+        if (performance.now() - eyesClosedAt >= 450) { wantWarp = true; }
+        else { wantShift = true; }         // a blink is the shutter
       }
       eyeState = 'open';
     }
@@ -196,7 +262,6 @@ setInterval(() => {
       eyePitch = -((R.vy + L.vy) / 2) * 0.8;
     }
   }
-  if (blink && !wasBlink) { blinkPulse = 1; }
   wasBlink = blink;
   const rawYaw = head.yaw + eyeYaw, rawPitch = head.pitch + eyePitch;
   if (gcalib !== null && !blink) {
@@ -216,53 +281,7 @@ setInterval(() => {
   }
 }, 100);
 
-const knob = id => document.getElementById(id).value / 100;
-
-// ---- conductor --------------------------------------------------------------
-// The lsd.html idea, retold for a world that is a pure function of time:
-// the piece alternates 滞留 (hold) and 転移 (shift). A shift retargets the
-// filter's whole regime — speed, morph depth, glow — and, because every
-// frame is time-addressed, it can also TELEPORT: jumping the time offset
-// lands in a completely different universe instantly; gliding it is a
-// hyperspeed churn where structures boil past. Transition times are
-// log-uniform (0.3–0.8 s snaps, 2–6 s glides), holds 3–25 s.
-const logu = (lo, hi) => Math.exp(Math.log(lo) + Math.random() * (Math.log(hi) - Math.log(lo)));
-// every load opens in a different universe: a random birth epoch shifts
-// geometry AND weather (kept ≤ 15000 s so float32 camera stays silky)
-let regime = { flight: 1, morph: 1, glow: 1, tOff: logu(50, 15000) };
-let target = { ...regime };
-// The filter's camera sits at speed×time, so passing a CHANGING speed
-// would teleport it by Δspeed×t — at a 10000 s epoch that is thousands of
-// tiles in one frame. Instead we integrate the speed here and hand the
-// filter the AVERAGE (zPhase/time): z becomes the true integral, speed
-// changes turn into smooth acceleration, and during a time-warp the camera
-// holds still while the world fast-forwards around it.
-let zPhase = regime.tOff;  // as if it had flown at speed 1 since the epoch
-let shift = { t0: -9, dur: 0, snap: false, warp: false };
-let nextShift = 2.5;
-function conduct(t) {
-  const warp = Math.random() < 0.4;
-  target = {
-    flight: logu(0.15, 4.5) * (Math.random() < 0.12 ? -1 : 1),  // sometimes fly backwards
-    morph: 0.35 + Math.random() * 1.15,
-    glow: Math.random() < 0.25 ? logu(0.05, 0.5) : logu(0.6, 2.6),
-    tOff: regime.tOff + (warp ? logu(40, 900) : 0),
-  };
-  const snap = Math.random() < 0.45;
-  shift = { t0: t, dur: snap ? logu(0.25, 0.8) : logu(2, 6), snap, warp };
-  nextShift = t + shift.dur + logu(3, 25);
-}
-const smooth = x => x * x * (3 - 2 * x);
-function conducted(t) {
-  const k = smooth(Math.max(0, Math.min(1, (t - shift.t0) / shift.dur)));
-  const cur = {};
-  for (const key of ['flight', 'morph', 'glow', 'tOff'])
-    cur[key] = regime[key] + (target[key] - regime[key]) * k;
-  if (k >= 1) regime = { ...target };
-  return cur;
-}
-
-// WebGPU first; CPU fallback drops the presentation size, not the idea.
+// ---- render loop -----------------------------------------------------------
 fs.gInit('#v');
 let mode = 'boot';
 let cpuCtx = null;
@@ -282,7 +301,6 @@ function tick() {
       bar.textContent = `WebGPU 初期化中… ${((now - t0) / 1000) | 0}s`;
       requestAnimationFrame(tick); return;
     } else {
-      // -1, or stuck at 0 for 6 s — the flight continues on the CPU
       mode = 'cpu';
       canvas.width = portrait ? 180 : 320;
       canvas.height = portrait ? 320 : 180;
@@ -292,40 +310,48 @@ function tick() {
   }
 
   const auto = document.getElementById('auto').checked;
-  // gaze: the view leans where the eyes look, staring deepens the
-  // metamorphosis, and blink events land as conductor shifts
+  // gaze influences: lean, slow-and-glow stare, blink shutter
   gazeS.yaw += (gaze.yaw - gazeS.yaw) * Math.min(1, dt * 6);
   gazeS.pitch += (gaze.pitch - gazeS.pitch) * Math.min(1, dt * 6);
-  const tracking = gazechk.checked && performance.now() - faceSeen < 1500;
+  const tracking = gazechk.checked && now - faceSeen < 1500;
   contactLevel += ((tracking && contact ? 1 : 0) - contactLevel) * Math.min(1, dt * 1.2);
-  blinkPulse = Math.max(0, blinkPulse - dt * 1.8);
   canvas.style.transform = tracking
       ? `translate(${(-gazeS.yaw * 4).toFixed(2)}%, ${(gazeS.pitch * 4).toFixed(2)}%) scale(1.09)`
       : '';
-  if (auto && wakeWarp) {
-    conduct(t);
-    target.tOff = regime.tOff + logu(300, 3000);   // waking in another universe
-    shift.dur = 0.35; shift.snap = true; shift.warp = true;
-  } else if (auto && snapWarp) {
-    conduct(t);
-    shift.dur = logu(0.25, 0.5); shift.snap = true;
-  } else if (auto && slowShift) {
-    conduct(t);
+  if (wantWarp) { transition(logu(300, 3000)); }
+  else if (wantShift) { transition(logu(40, 600)); }
+  wantWarp = wantShift = false;
+  // no face to blink for us? the piece still turns its own pages
+  if (auto && !tracking && now - lastShiftAt > 25000) { transition(logu(40, 600)); }
+
+  // dissolve bookkeeping: when the curtain settles, cull the hidden layer
+  let swell = 1;
+  if (fade.active) {
+    const k = Math.min(1, (now - fade.t0) / 1000 / FADE);
+    swell = 1 + 0.55 * Math.sin(Math.PI * k);   // light blooms through the seam
+    if (k >= 1) {
+      fade.active = false;
+      front = front === 'A' ? 'B' : 'A';
+      if (front === 'B') { fs.setPf(inst, 'mixa', 0); }
+    }
   }
-  wakeWarp = snapWarp = slowShift = false;
-  // staring doesn't agitate the world — it slows it down and lights it up,
-  // like it noticed you watching
+
+  const cc = auto ? conducted(t) : { flight: 1, morph: 1, glow: 1 };
+  const gzFlight = 1 - 0.4 * contactLevel;
   const gzMorph = 1 + 0.15 * contactLevel;
   const gzGlow = 1 + 0.7 * contactLevel;
-  const gzFlight = 1 - 0.4 * contactLevel;
-  if (auto && t > nextShift) conduct(t);
-  const cc = auto ? conducted(t) : { flight: 1, morph: 1, glow: 1, tOff: 0 };
   const flEff = knob('flight') * cc.flight * gzFlight;
-  zPhase += flEff * dt;
-  const te = t + cc.tOff;
-  const fp = te > 1 ? zPhase / te : flEff;
-  fs.layerSetFilter(inst, 'void', 'fractal', fp, te,
-      knob('morph') * cc.morph * gzMorph, knob('glow') * cc.glow * gzGlow, 0);
+  const morphV = knob('morph') * cc.morph * gzMorph;
+  const glowV = knob('glow') * cc.glow * gzGlow * swell;
+  const teA = t + offA, teB = t + offB;
+  if (zA === 0) zA = teA;                       // fresh universes seed their integral
+  if (zB === 0) zB = teB;
+  zA += flEff * dt; zB += flEff * dt;
+  // drive only what is visible: the hidden layer is culled by opacity 0
+  const bVisible = fade.active || front === 'B';
+  const aVisible = fade.active || front === 'A';
+  if (aVisible) fs.layerSetFilter(inst, 'a', 'fractal', zA / teA, teA, morphV, glowV, 0);
+  if (bVisible) fs.layerSetFilter(inst, 'b', 'fractal', zB / teB, teB, morphV, glowV, 0);
 
   if (mode === 'gpu') {
     if (fs.gRender(inst, dt, canvas.width, canvas.height)) ++frames;
@@ -338,10 +364,9 @@ function tick() {
   }
   if (now - fpsAt > 1000) { fps = frames; frames = 0; fpsAt = now; }
   const hh = (t / 3600) | 0, mm = ((t / 60) | 0) % 60, ss = (t | 0) % 60;
-  const phase = !auto ? '手動'
-      : t < shift.t0 + shift.dur
-          ? `転移中${shift.warp ? ' ⟿ ワープ' : ''}${shift.snap ? ' (パッ)' : ' (ゆっくり)'}`
-          : `滞留 → 次の転移まで ${Math.max(0, nextShift - t).toFixed(0)}s`;
+  const phase = fade.active ? '転移中 ⟿ 別宇宙へディゾルブ'
+      : tracking ? '滞留 (瞬き=転移 / 長閉眼=遠くへ)'
+      : '滞留';
   const eye = !gazechk.checked ? '' : !tracking ? ' · 👁…'
       : contactLevel > 0.5 ? ' · 👁凝視' : ' · 👁';
   bar.textContent = `${mode} · ${fps} fps · ${phase}${eye} · 飛行 ${hh}h${String(mm).padStart(2, '0')}m${String(ss).padStart(2, '0')}s`;
