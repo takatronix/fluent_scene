@@ -123,7 +123,18 @@ let offA = logu(50, 15000), offB = 0;      // every load opens somewhere new
 let front = 'A';
 let fade = { active: false, t0: 0 };
 let zA = offA, zB = 0;                     // per-universe flight integrals
-let lastShiftAt = -1e9;
+let lastShiftAt = -1e9, lastCutAt = -1e9, cutPulse = 0;
+// a blink is a hard cut: the visible universe swaps epochs while the eyes
+// are still closed — reopen and the world is already different. No time
+// interpolation, so nothing strobes; the seam is hidden inside the blink.
+function instantCut(jump) {
+  const now = performance.now();
+  if (now - lastCutAt < 1000 || fade.active) return;   // double-detect guard only
+  lastCutAt = now;
+  if (front === 'A') { offA += jump; zA = 0; }
+  else { offB += jump; zB = 0; }
+  cutPulse = 1;                                        // a breath of light on reopen
+}
 function transition(jump) {
   if (fade.active) return;
   const now = performance.now();
@@ -318,8 +329,8 @@ function tick() {
   canvas.style.transform = tracking
       ? `translate(${(-gazeS.yaw * 4).toFixed(2)}%, ${(gazeS.pitch * 4).toFixed(2)}%) scale(1.09)`
       : '';
-  if (wantWarp) { transition(logu(300, 3000)); }
-  else if (wantShift) { transition(logu(40, 600)); }
+  if (wantWarp) { transition(logu(300, 3000)); }       // held eyes: slow dissolve far away
+  else if (wantShift) { instantCut(logu(40, 600)); }   // blink: already elsewhere
   wantWarp = wantShift = false;
   // no face to blink for us? the piece still turns its own pages
   if (auto && !tracking && now - lastShiftAt > 25000) { transition(logu(40, 600)); }
@@ -336,10 +347,11 @@ function tick() {
     }
   }
 
+  cutPulse = Math.max(0, cutPulse - dt * 2.5);
   const cc = auto ? conducted(t) : { flight: 1, morph: 1, glow: 1 };
   const gzFlight = 1 - 0.4 * contactLevel;
   const gzMorph = 1 + 0.15 * contactLevel;
-  const gzGlow = 1 + 0.7 * contactLevel;
+  const gzGlow = (1 + 0.7 * contactLevel) * (1 + 0.5 * cutPulse);
   const flEff = knob('flight') * cc.flight * gzFlight;
   const morphV = knob('morph') * cc.morph * gzMorph;
   const glowV = knob('glow') * cc.glow * gzGlow * swell;
@@ -365,7 +377,7 @@ function tick() {
   if (now - fpsAt > 1000) { fps = frames; frames = 0; fpsAt = now; }
   const hh = (t / 3600) | 0, mm = ((t / 60) | 0) % 60, ss = (t | 0) % 60;
   const phase = fade.active ? '転移中 ⟿ 別宇宙へディゾルブ'
-      : tracking ? '滞留 (瞬き=転移 / 長閉眼=遠くへ)'
+      : tracking ? '滞留 (瞬き=パッ / 長閉眼=遠くへ)'
       : '滞留';
   const eye = !gazechk.checked ? '' : !tracking ? ' · 👁…'
       : contactLevel > 0.5 ? ' · 👁凝視' : ' · 👁';
