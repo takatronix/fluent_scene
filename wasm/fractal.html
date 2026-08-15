@@ -7,21 +7,34 @@
   :root { color-scheme: dark; }
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   #v { position: fixed; inset: 0; width: 100vw; height: 100vh;
-       object-fit: cover; background: #000; }
-  #hud { position: fixed; left: 12px; bottom: 12px; z-index: 9;
-         font: 12px ui-monospace, monospace; color: rgba(255,255,255,0.75);
-         background: rgba(8, 6, 14, 0.55); border-radius: 12px;
-         padding: 10px 14px; backdrop-filter: blur(8px);
-         display: flex; flex-direction: column; gap: 6px; }
+       object-fit: cover; background: #000; touch-action: none;
+       -webkit-user-select: none; user-select: none; }
+  #hud { position: fixed; right: 14px; bottom: calc(72px + env(safe-area-inset-bottom)); max-width: min(78vw, 260px); z-index: 9;
+         font: 12px ui-monospace, monospace; color: rgba(255,255,255,0.78);
+         background: rgba(8, 6, 14, 0.6); border-radius: 14px;
+         border: 1px solid rgba(255,255,255,0.09);
+         padding: 12px 16px; backdrop-filter: blur(12px);
+         display: none; flex-direction: column; gap: 7px; }
+  #hud.open { display: flex; }
   #hud label { display: flex; align-items: center; gap: 8px; }
   #hud span.k { width: 4.5em; opacity: 0.8; }
   #hud input[type=range] { width: 140px; accent-color: #c86ef0; }
   #bar { opacity: 0.65; }
-  #fsb { position: fixed; right: 12px; bottom: 12px; z-index: 9;
-         font: 12px ui-monospace, monospace; color: rgba(255,255,255,0.7);
-         background: rgba(8, 6, 14, 0.55); border: 0; border-radius: 999px;
-         padding: 8px 14px; backdrop-filter: blur(8px); cursor: pointer; }
-  #credit { position: fixed; right: 12px; top: 10px; z-index: 9;
+  #corner { position: fixed; right: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 9;
+            display: flex; gap: 10px; transition: opacity 0.9s; }
+  .chip { width: 44px; height: 44px; border-radius: 50%;
+          border: 1px solid rgba(255,255,255,0.16);
+          background: rgba(10, 8, 18, 0.45); color: rgba(255,255,255,0.85);
+          font-size: 19px; line-height: 1; backdrop-filter: blur(10px);
+          cursor: pointer; transition: 0.2s;
+          display: flex; align-items: center; justify-content: center; }
+  .chip:hover { background: rgba(150, 110, 240, 0.35);
+                border-color: rgba(200, 140, 255, 0.6);
+                box-shadow: 0 0 18px rgba(160, 110, 255, 0.35);
+                transform: scale(1.06); }
+  #credit { transition: opacity 0.9s; }
+  body.idle #corner, body.idle #credit { opacity: 0; pointer-events: none; }
+  #credit { position: fixed; right: 12px; top: calc(10px + env(safe-area-inset-top)); z-index: 9;
             font: 11px ui-monospace, monospace; color: rgba(255,255,255,0.55);
             text-decoration: none; background: rgba(0,0,0,0.35);
             padding: 4px 10px; border-radius: 999px; backdrop-filter: blur(4px); }
@@ -36,7 +49,10 @@
   <label><span class="k">発光</span><input id="glow" type="range" min="0" max="300" value="100"></label>
   <div id="bar">起動中…</div>
 </div>
-<button id="fsb">全画面</button>
+<div id="corner">
+  <button id="cfg" class="chip" title="設定">⚙</button>
+  <button id="fsb" class="chip" title="全画面">⛶</button>
+</div>
 <a id="credit" href="https://x.com/takatronix" target="_blank" rel="noopener">fluent_scene · by <b>@takatronix</b></a>
 <script type="module">
 // fs_fractal — eternal flight through a self-morphing KIFS (mode 39).
@@ -112,6 +128,27 @@ fs.commitImage(inst, 'seed', 2, 2);
 
 document.getElementById('fsb').onclick = () =>
     document.fullscreenElement ? document.exitFullscreen() : document.body.requestFullscreen();
+document.getElementById('cfg').onclick = () =>
+    document.getElementById('hud').classList.toggle('open');
+// on phones there is no gaze — a TAP on the piece is the blink instead
+let lastTapAt = -1e9;
+canvas.addEventListener('pointerdown', () => {
+  const nowT = performance.now();
+  if (nowT - lastTapAt < 2500) return;
+  lastTapAt = nowT;
+  lastCutAt = -1e9;
+  instantCut((nowT - t0) / 1000);
+});
+// the piece owns the screen: all chrome fades after 3 s of stillness
+let idleT = 0;
+const wake = () => {
+  document.body.classList.remove('idle');
+  clearTimeout(idleT);
+  idleT = setTimeout(() => document.body.classList.add('idle'), 3000);
+};
+for (const ev of ['pointermove', 'pointerdown', 'keydown', 'touchstart'])
+  addEventListener(ev, wake, { passive: true });
+wake();
 const knob = id => document.getElementById(id).value / 100;
 const logu = (lo, hi) => Math.exp(Math.log(lo) + Math.random() * (Math.log(hi) - Math.log(lo)));
 
@@ -128,6 +165,23 @@ let zA = offA, zB = 0;                     // per-universe flight integrals
 let lastShiftAt = -1e9, lastCutAt = -1e9, cutPulse = 0;
 let rampUntil = 0;
 
+
+// ---- measured-good landing catalogue ---------------------------------------
+// A CPU sweep (0..3000 s, 2 s steps) rendered and scored every epoch with
+// the same probe metrics; these are the stable stretches that LOOKED good
+// (median coherence < 0.6). Warps, rescues, and idle page-turns land here —
+// guaranteed structure. Blinks still jump free-range nearby: novelty for
+// the deliberate, certainty for the automatic.
+const GOOD = [[0,44],[48,54],[62,68],[72,94],[100,104],[150,298],[306,322],[326,334],[342,350],[380,400],[404,432],[436,446],[466,470],[478,488],[494,508],[512,526],[532,540],[550,568],[624,728],[744,764],[818,848],[852,974],[978,1198],[1238,1254],[1260,1278],[1282,1312],[1354,1362],[1368,1430],[1434,1446],[1478,1504],[1508,1512],[1568,1572],[1626,1632],[1660,1664],[1732,1736],[1756,1772],[1776,1896],[1910,1944],[1972,1980],[2000,2004],[2010,2014],[2018,2080],[2084,2338],[2358,2362],[2382,2390],[2396,2402],[2410,2416],[2424,2448],[2452,2460],[2466,2476],[2490,2494],[2536,2558],[2584,2632],[2636,2648],[2742,2748],[2758,2796],[2800,2910],[2914,2970],[2986,2998]];
+function catalogOff(tNow, awayFromTe) {
+  for (let i = 0; i < 12; ++i) {
+    const iv = GOOD[(Math.random() * GOOD.length) | 0];
+    const te = iv[0] + 1 + Math.random() * Math.max(1, iv[1] - iv[0] - 2);
+    if (awayFromTe === undefined || Math.abs(te - awayFromTe) > 60) return te - tNow;
+  }
+  const iv = GOOD[(Math.random() * GOOD.length) | 0];
+  return iv[0] + 2 - tNow;
+}
 // ---- landing audition ------------------------------------------------------
 // A cut must LAND well. These mirror the filter's drive bank (same
 // incommensurate sine sums), so we can ask of any candidate epoch: how fast
@@ -227,13 +281,13 @@ function probeFrame(now) {
     if (!bad) { lastGoodOff = front === 'A' ? offA : offB; rescueChain = 0; }
   } catch (e) { console.warn('probe disabled:', e); probeDead = 2; }
 }
-function transition(tNow, lo, hi) {
+function transition(tNow) {
   if (fade.active) return;
   const now = performance.now();
   if (now - lastShiftAt < 4000) return;
   lastShiftAt = now;
   const from = front === 'A' ? offA : offB;
-  const newOff = auditionOff(from, tNow, lo, hi);
+  const newOff = catalogOff(tNow, tNow + from);
   if (front === 'A') {
     offB = newOff; zB = 0;                 // zB re-seeds on first drive below
     fs.setPf(inst, 'mixa', 1);
@@ -431,11 +485,11 @@ function tickBody() {
   canvas.style.transform = tracking
       ? `translate(${(-gazeS.yaw * 4).toFixed(2)}%, ${(gazeS.pitch * 4).toFixed(2)}%) scale(1.09)`
       : '';
-  if (wantWarp) { transition(t, 300, 3000); }          // held eyes: slow dissolve far away
+  if (wantWarp) { transition(t); }          // held eyes: slow dissolve far away
   else if (wantShift) { instantCut(t); }               // blink: already elsewhere
   wantWarp = wantShift = false;
   // no face to blink for us? the piece still turns its own pages
-  if (auto && !tracking && now - lastShiftAt > 25000) { transition(t, 40, 600); }
+  if (auto && !tracking && now - lastShiftAt > 25000) { transition(t); }
 
   // post-landing grace: the fresh universe's clocks run at 0.35× and ease
   // up to full speed over 2.5 s (flight speed is untouched — z rides its
@@ -506,8 +560,10 @@ function tickBody() {
     } else {
       lastRescueAt = now;
       ++rescueChain;
-      lastCutAt = -1e9;                     // rescue overrides the blink guard
-      instantCut(t, 60, 1500);
+      const esc = catalogOff(t, t + (front === 'A' ? offA : offB));
+      if (front === 'A') { offA = esc; zA = 0; } else { offB = esc; zB = 0; }
+      cutPulse = 1; rampUntil = now + 2500;
+      lastProbeAt = now - 1250; postCutUntil = now + 4200;
     }
   }
 
