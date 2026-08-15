@@ -913,40 +913,11 @@ vec3 fs_fractal(vec2 uv, float flight, float time_s, float morph, float glow, fl
     float zraw = 1.30 * clamp(flight, -4.0, 4.0) * t;
     float z0 = 2.0 * (zraw - floor(zraw));
     vec3 ro = vec3(0.09 * fs_fr_osc(t, 0.023, 5.1), 0.09 * fs_fr_osc(t, 0.019, 1.3), z0);
-    // the camera must never fly through the masonry (the owner's exact
-    // diagnosis of the noise storms): probe the field at the eye and slide
-    // out along the gradient until clear. Two passes clear the skin, the
-    // push is continuous in t, so the flight stays smooth — it reads as
-    // the camera banking around a wall, not a jump.
-    for (int k = 0; k < 2; ++k) {
-        vec4 hc = fs_fr_de(ro, a1b, a2b, sc, off, t, m, wInv);
-        if (hc.x < 0.12) {
-            float ec = 0.02;
-            vec3 g = vec3(
-                fs_fr_de(ro + vec3(ec, 0.0, 0.0), a1b, a2b, sc, off, t, m, wInv).x - hc.x,
-                fs_fr_de(ro + vec3(0.0, ec, 0.0), a1b, a2b, sc, off, t, m, wInv).x - hc.x,
-                fs_fr_de(ro + vec3(0.0, 0.0, ec), a1b, a2b, sc, off, t, m, wInv).x - hc.x);
-            float gl = max(length(g), 0.00001);
-            ro = ro + g * ((0.12 - hc.x) / gl);
-        }
-    }
-    // the camera must never fly through the masonry (the owner's exact
-    // diagnosis of the noise storms): probe the field at the eye and slide
-    // out along the gradient until clear. Two passes clear the skin, the
-    // push is continuous in t, so the flight stays smooth — it reads as
-    // the camera banking around a wall, not a jump.
-    for (int k = 0; k < 2; ++k) {
-        vec4 hc = fs_fr_de(ro, a1b, a2b, sc, off, t, m, wInv);
-        if (hc.x < 0.12) {
-            float ec = 0.02;
-            vec3 g = vec3(
-                fs_fr_de(ro + vec3(ec, 0.0, 0.0), a1b, a2b, sc, off, t, m, wInv).x - hc.x,
-                fs_fr_de(ro + vec3(0.0, ec, 0.0), a1b, a2b, sc, off, t, m, wInv).x - hc.x,
-                fs_fr_de(ro + vec3(0.0, 0.0, ec), a1b, a2b, sc, off, t, m, wInv).x - hc.x);
-            float gl = max(length(g), 0.00001);
-            ro = ro + g * ((0.12 - hc.x) / gl);
-        }
-    }
+    // No in-flight obstacle steering here, by owner decree: the corrective
+    // push (both the hard 0.12 clamp and the soft band that replaced it)
+    // read as shivering and worse. The flight PATH itself is the structural
+    // fix — a pre-computed clear-corridor spline is the planned successor;
+    // until then the page's probe rescue is the safety net.
     vec2 d0 = uv - vec2(0.5, 0.5);
     vec2 pc = vec2(d0.x * (FS_TEXEL.y / FS_TEXEL.x), d0.y);
     float cr = cos(roll);
