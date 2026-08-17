@@ -1,174 +1,332 @@
 <!doctype html>
-<html lang="ja">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>fluent_scene</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fluent scene</title>
 <style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; color: #e8e4f2; overflow-x: hidden;
-         font: 15px/1.7 -apple-system, "Hiragino Sans", "Noto Sans CJK JP", sans-serif;
-         background: #05040a; }
-  /* living background: the fractal filter itself, dimmed under the glass.
-     If WebGPU never comes up, the CSS aurora below is the understudy. */
-  #bg { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0;
-        object-fit: cover; filter: brightness(0.42) saturate(1.15);
-        transition: opacity 1.2s; opacity: 0; }
-  #bg.on { opacity: 1; }
-  #aurora { position: fixed; inset: -20%; z-index: -1; filter: blur(60px);
-            background:
-              radial-gradient(38% 30% at 25% 30%, rgba(120, 70, 220, 0.55), transparent 70%),
-              radial-gradient(32% 34% at 75% 20%, rgba(40, 160, 200, 0.5), transparent 70%),
-              radial-gradient(40% 36% at 60% 80%, rgba(220, 90, 150, 0.35), transparent 70%);
-            animation: drift 26s ease-in-out infinite alternate; }
-  @keyframes drift {
-    from { transform: rotate(0deg) scale(1); }
-    to   { transform: rotate(8deg) scale(1.15); }
-  }
-  main { position: relative; z-index: 1; display: flex; flex-direction: column;
-         align-items: center; padding: max(9vh, 56px) 18px 40px;
-         padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
-  h1 { font: 800 clamp(40px, 8vw, 72px)/1.1 ui-monospace, monospace; margin: 0;
-       letter-spacing: -0.02em;
-       background: linear-gradient(100deg, #7ee8fa 5%, #c86ef0 45%, #ffb35c 95%);
-       -webkit-background-clip: text; background-clip: text; color: transparent;
-       filter: drop-shadow(0 0 24px rgba(150, 100, 255, 0.35)); }
-  p.sub { margin: 14px 0 0; color: rgba(230, 224, 245, 0.82); text-align: center;
-          max-width: 560px; text-wrap: balance; }
-  p.sub small { color: rgba(170, 162, 190, 0.8); }
-  .stats { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
-           margin-top: 22px; max-width: 720px; }
-  .stats span { font-size: 12px; color: rgba(200, 220, 245, 0.9);
-                border: 1px solid rgba(126, 232, 250, 0.28); border-radius: 999px;
-                padding: 3px 13px; background: rgba(20, 30, 50, 0.35);
-                backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-  p.lead { margin: 40px 0 0; font-size: 13px; letter-spacing: 0.14em;
-           color: rgba(190, 182, 215, 0.85); text-transform: uppercase;
-           font-family: ui-monospace, monospace; }
-  p.lead small { display: block; margin-top: 6px; letter-spacing: 0;
-                 text-transform: none; font-family: inherit;
-                 color: rgba(160, 152, 182, 0.9); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-          gap: 14px; width: 100%; max-width: 920px; margin-top: 18px; }
-  .card { display: block; position: relative; padding: 18px 18px 15px;
-          border-radius: 16px; text-decoration: none; color: inherit;
-          background: rgba(14, 11, 26, 0.55);
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-          transition: 0.18s; }
-  .card:hover { transform: translateY(-3px);
-                border-color: rgba(200, 140, 255, 0.55);
-                box-shadow: 0 6px 30px rgba(140, 90, 255, 0.25);
-                background: rgba(24, 17, 44, 0.65); }
-  .card b { font-size: 17px; }
-  .card span { display: block; margin-top: 5px; color: rgba(170, 162, 190, 0.95);
-               font-size: 13px; line-height: 1.55; }
-  .card a.fill { display: block; text-decoration: none; color: inherit; }
-  .card a.lang { position: absolute; top: 18px; right: 16px; font-size: 11px;
-                 color: #9fd8ff; text-decoration: none;
-                 border: 1px solid rgba(159, 216, 255, 0.4);
-                 border-radius: 999px; padding: 1px 9px; }
-  .card a.lang:hover { background: rgba(159, 216, 255, 0.15); }
-  .card em { font-style: normal; font-size: 11px; color: #7ee8fa;
-             border: 1px solid rgba(126, 232, 250, 0.4); border-radius: 999px;
-             padding: 1px 8px; margin-left: 8px; vertical-align: 2px; }
-  footer { position: relative; z-index: 1; margin: 26px 0 0; text-align: center;
-           color: rgba(140, 132, 158, 0.9); font-size: 13px; padding-bottom: 24px; }
-  footer a { color: rgba(190, 182, 210, 0.95); }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; align-items: center;
+         justify-content: center; gap: 8px;
+         background: #05060a;
+         color: #dfe5ec; font: 14px/1.5 system-ui, sans-serif; }
+  #v { display: block; width: min(96vw, calc(88vh * 16 / 9), 1440px); aspect-ratio: 16 / 9;
+       background: #000; border-radius: 14px;
+       box-shadow: 0 32px 100px rgba(40, 60, 160, 0.25), 0 2px 8px rgba(0, 0, 0, 0.6);
+       touch-action: none; user-select: none; }
+  #bar { font-family: ui-monospace, monospace; color: #5d6a7c; font-size: 11px; }
+  a { color: #5d6a7c; }
 </style>
-<div id="aurora"></div>
-<canvas id="bg" width="960" height="540"></canvas>
-<main>
-  <h1>fluent_scene</h1>
-  <p class="sub">映像は、流れる。ロボットで実運用中の C++ Scene / Stage / Layer 描画エンジン。<br>
-  <small>CPU / Vulkan / WebGPU / WASM — どのバックエンドでも同じ絵(±1LSB)。背景で泳いでいるのも実機の <code>fractal</code> フィルタです。</small></p>
-  <div class="stats">
-    <span>フィルタ38種</span>
-    <span>3バックエンド同一ピクセル</span>
-    <span>wasm 2.8MB 自己完結</span>
-    <span>映像はタブの外に出ない</span>
-  </div>
-  <p class="lead">Live Demos
-  <small>下のデモはすべて、ロボットで動いているものと同じ C++ コアがこのページの中で描画しています</small></p>
-  <div class="grid">
-    <a class="card" href="fractal.html"><b>🌀 fractal</b><em>NEW</em>
-      <span>永遠フラクタル飛行 — 二度と同じ画が来ない自己変容KIFS。瞬きで世界が切り替わる</span></a>
-    <a class="card" href="filters.html"><b>🎛 filter lab</b><em>NEW</em>
-      <span>全38フィルタをWebカメラで試すカタログ — NTSC→CRT・鉛筆・油絵・多角形ボケ</span></a>
-    <a class="card" href="lsd.html"><b>👁 LSD</b>
-      <span>サイケデリック視覚現象の再現。視線・瞬きで世界が動く</span></a>
-    <div class="card"><a class="fill" href="lsd_report.html"><b>📄 LSDシェーダーの科学</b>
-      <span>なぜああ見えるのか — 薬理学から書いた解説記事</span></a>
-      <a class="lang" href="lsd_report.en.html">EN</a></div>
-    <a class="card" href="beauty.html"><b>✨ beauty studio</b><em>NEW</em>
-      <span>美肌比較・顔ワープ&メイク・視線フォーカス — 3つのデモがひとつのSceneに同居。ボタンはパラメータを切り替えるだけ</span></a>
-  </div>
-</main>
-<footer>github: <a href="https://github.com/takatronix/fluent_scene">takatronix/fluent_scene</a> · by <a href="https://x.com/takatronix">@takatronix</a></footer>
+<canvas id="v" width="1280" height="720"></canvas>
+<div id="bar">loading wasm…</div>
+<a href="https://x.com/takatronix" target="_blank" rel="noopener" style="position:fixed;right:12px;bottom:10px;z-index:9;font:11px ui-monospace,monospace;color:rgba(255,255,255,0.6);text-decoration:none;background:rgba(0,0,0,0.35);padding:4px 10px;border-radius:999px;backdrop-filter:blur(4px)">fluent_scene · by <b style="color:rgba(255,255,255,0.85)">@takatronix</b></a>
 <script type="module">
-// The doorway is itself a demo: the fractal filter swims dimly behind the
-// glass. WebGPU only — if it does not come up in 5 s the CSS aurora keeps
-// the house lights on. Landings come from the measured-good catalogue, and
-// every ~90 s the scene dissolves (via the canvas opacity) to a new one.
-try {
-  const createFluentScene = (await import('./fluent_scene.mjs')).default;
-  const mod = await createFluentScene();
-  const c = (n, r, a) => mod.cwrap(n, r, a);
-  const fs = {
-    create: c('fs_create', 'number', ['number']),
-    imageBuffer: c('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
-    commitImage: c('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
-    gInit: c('fs_webgpu_init', null, ['string']),
-    gStatus: c('fs_webgpu_status', 'number', []),
-    gRender: c('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']),
-    layerSetFilter: c('fs_layer_set_filter', 'number',
-        ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
-  };
-  const SCENE = `
+// The hub IS the demo: no HTML UI, everything on this page — the breathing
+// nebula, the water, the cards, their live filter previews, the type, the
+// fps gauge — is one fluent_scene Scene document rendered by the same C++
+// that runs on the robot. Every card's thumbnail is the same nebula input
+// seen through that demo's actual filter, live, at 60 fps.
+import createFluentScene from './fluent_scene.mjs';
+
+const CARDS = [
+  { id: 0, label: 'BEAUTY',     sub: 'gpupixel, surpassed',   href: 'beauty.html' },
+  { id: 1, label: 'GAZE FOCUS', sub: 'iris drives the lens',  href: 'gaze.html' },
+  { id: 2, label: 'LSD',        sub: 'phenomenology, shaded', href: 'lsd.html' },
+  { id: 3, label: 'WATER',      sub: 'touch the webcam',      href: 'demo.html' },
+  { id: 4, label: 'FACE',       sub: 'warp + makeup, live',   href: 'face.html' },
+  { id: 5, label: 'GPU LAB',    sub: 'cpu = webgpu, proven',  href: 'webgpu.html' },
+];
+const CARD_W = 196, CARD_H = 196, GAP = 16;
+const ROW_X0 = (1280 - (CARD_W * CARDS.length + GAP * (CARDS.length - 1)) / 1) / 2;
+const CARD_Y = 476;                                    // top edge at rest
+const cx = i => ROW_X0 + i * (CARD_W + GAP) + CARD_W / 2;
+const CY_REST = CARD_Y + CARD_H / 2, CY_IN = CY_REST + 46, LIFT = 10;
+
+const cardLayers = CARDS.map((c, i) => `
+  - id: card${i}
+    bounds: [0, 0, ${CARD_W}, ${CARD_H}]
+    position: $params.p${i}
+    opacity: $params.o${i}
+    shadow: {}
+    sublayers:
+      - content: { rect: { size: [${CARD_W}, ${CARD_H}], corner_radius: 18,
+                           color: [0.04, 0.05, 0.09, 0.66] } }
+        border: { width: 1.5, color: [1, 1, 1, 0.14] }
+        corner_radius: 18
+      - id: prev${i}
+        frame: [10, 10, ${CARD_W - 20}, 122]
+        corner_radius: 12
+        masks_to_bounds: true
+        content: { image: { source: $inputs.nebula, fit: cover } }
+${i === 0 ? `        filters: [ { beauty: { smoothing: 1, denoise: 1, sharpen: 0 } } ]` : ''}\
+${i === 1 ? `        filters: [ { blur: { radius: 5 } } ]` : ''}\
+${i === 2 ? `        filters: [ { lsd: { trip: 1, chroma: 0.9 } } ]` : ''}\
+${i === 3 ? `        filters: [ { ripple: { center_x: 102, center_y: 61 } } ]` : ''}\
+${i === 4 ? `        filters: [ { swirl: { radius: 0.55, angle: 1.6 } } ]` : ''}\
+${i === 5 ? `        filters: [ { halftone: { spacing: 5 } } ]` : ''}
+${i === 1 ? `      - content: { crosshair: { center: [${CARD_W / 2}, 71], size: 30, color: [0.3, 0.95, 0.65, 0.9] } }` : ''}
+      - content: { text: { text: "${CARDS[i].label}", position: [${CARD_W / 2}, 140], size: 23,
+                           align: center } }
+      - content: { text: { text: "${CARDS[i].sub}", position: [${CARD_W / 2}, 168], size: 12.5,
+                           align: center, color: [1, 1, 1, 0.45] } }`).join('\n');
+
+const paramDecls = CARDS.map((c, i) => `
+  p${i}: { type: vec2, default: [${cx(i)}, ${CY_IN}], runtime_mutable: true,
+           animate: { duration: 0.45, ease: ease_out } }
+  o${i}: { type: f32, default: 0, runtime_mutable: true,
+           animate: { duration: 0.45, ease: ease_out } }`).join('');
+
+const SCENE = `
 schema: fluent.scene/v1alpha2
-stage: { size: [960, 540] }
+stage: { size: [1280, 720] }
 inputs:
-  seed: { type: image.rgba8 }
+  nebula: { type: image.rgba8 }
+params:
+  title: { type: vec2, default: [640, -140], runtime_mutable: true,
+           animate: { duration: 0.7, ease: ease_out } }
+  load: { type: f32, default: 0, runtime_mutable: true,
+          animate: { duration: 0.25, ease: ease_out } }
+  chips: { type: f32, default: 0, runtime_mutable: true,
+           animate: { duration: 0.6, ease: ease_out } }
+${paramDecls}
 layers:
-  - id: v
-    frame: [0, 0, 960, 540]
-    content: { image: { source: $inputs.seed, fit: cover } }
-    filters: [ { fractal: { flight: 0.45, time: 0, morph: 0.8, glow: 1.1, blend: 0 } } ]
+  - id: bg
+    content: { image: { source: $inputs.nebula, fit: cover } }
+    filters: [ { lsd: { trip: 0.32, drift: 0.7, geometry: 0.3, chroma: 0.55 } } ]
+  - content: { rect: { rect: [0, 0, 1280, 720], color: [0.01, 0.01, 0.03, 0.34] } }
+  - id: titleblock
+    position: $params.title
+    sublayers:
+      - content: { text: { text: "FLUENT SCENE", position: [0, 0], size: 84, align: center } }
+      - content: { text: { text: "one scene graph - robot to browser - drawn by the engine you are looking at",
+                           position: [0, 96], size: 16.5, align: center, color: [1, 1, 1, 0.55] } }
+  - id: meter
+    content: { gauge: { center: [1206, 66], radius: 40, value: $params.load } }
+  - content: { text: { text: "fps / 60", position: [1206, 112], size: 12, align: center,
+                       color: [1, 1, 1, 0.45] } }
+  - id: chips
+    opacity: $params.chips
+    position: [640, 350]
+    sublayers:
+      - content: { rect: { rect: [-333, 0, 200, 40], corner_radius: 20, color: [0, 0, 0, 0.35] } }
+        border: { width: 1, color: [1, 1, 1, 0.12] }
+        corner_radius: 20
+      - content: { text: { text: "33 filters", position: [-233, 9], size: 15, align: center,
+                           color: [1, 1, 1, 0.75] } }
+      - content: { rect: { rect: [-113, 0, 226, 40], corner_radius: 20, color: [0, 0, 0, 0.35] } }
+        border: { width: 1, color: [1, 1, 1, 0.12] }
+        corner_radius: 20
+      - content: { text: { text: "cpu = vulkan = webgpu", position: [0, 9], size: 15, align: center,
+                           color: [1, 1, 1, 0.75] } }
+      - content: { rect: { rect: [133, 0, 200, 40], corner_radius: 20, color: [0, 0, 0, 0.35] } }
+        border: { width: 1, color: [1, 1, 1, 0.12] }
+        corner_radius: 20
+      - content: { text: { text: "one kernel source", position: [233, 9], size: 15, align: center,
+                           color: [1, 1, 1, 0.75] } }
+${cardLayers}
 `;
-  const inst = fs.create(mod.stringToNewUTF8(SCENE));
-  if (!inst) throw new Error('scene');
-  const sp = fs.imageBuffer(inst, 'seed', 2, 2);
-  mod.HEAPU8.fill(0, sp, sp + 16);
-  for (let i = 0; i < 4; ++i) mod.HEAPU8[sp + i * 4 + 3] = 255;
-  fs.commitImage(inst, 'seed', 2, 2);
-  const bg = document.getElementById('bg');
-  fs.gInit('#bg');
-  const GOOD = [[155,248],[640,762],[902,975],[1048,1178],[1792,1867],[1886,1939],[2190,2328],[2548,2597]];
-  const pick = () => {
-    const iv = GOOD[(Math.random() * GOOD.length) | 0];
-    return iv[0] + 2 + Math.random() * (iv[1] - iv[0] - 4);
-  };
-  let epoch = pick();
-  const t0 = performance.now();
-  let last = t0, nextSwap = 90000, booted = false;
-  (function tick() {
-    const now = performance.now();
-    const dt = Math.min((now - last) / 1000, 0.1);
-    last = now;
-    const st = fs.gStatus();
-    if (st === -1 || (!booted && now - t0 > 5000)) return;   // aurora keeps the stage
-    if (st === 1) {
-      if (!booted) { booted = true; bg.classList.add('on'); }
-      if (now - t0 > nextSwap) {         // dissolve to another catalogued place
-        nextSwap += 90000;
-        bg.classList.remove('on');
-        setTimeout(() => { epoch = pick(); bg.classList.add('on'); }, 1250);
-      }
-      fs.layerSetFilter(inst, 'v', 'fractal', 0.45, epoch + (now - t0) / 1000, 0.8, 1.1, 0);
-      fs.gRender(inst, dt, 960, 540);
+
+const bar = document.getElementById('bar');
+let canvas = document.getElementById('v');
+let ctx = null;
+
+const mod = await createFluentScene();
+const c = (n, r, a) => mod.cwrap(n, r, a);
+const fs = {
+  create: c('fs_create', 'number', ['number']),
+  error: c('fs_error', 'string', []),
+  backend: c('fs_backend', 'string', []),
+  imageBuffer: c('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
+  commitImage: c('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
+  pointer: c('fs_pointer', null, ['number', 'number', 'number', 'number']),
+  attachRipple: c('fs_attach_ripple', 'number', ['number', 'string', 'number']),
+  render: c('fs_render', 'number', ['number', 'number', 'number', 'number']),
+  renderW: c('fs_render_width', 'number', ['number']),
+  renderH: c('fs_render_height', 'number', ['number']),
+  renderStride: c('fs_render_stride', 'number', ['number']),
+  setF32: c('fs_set_param_f32', 'number', ['number', 'string', 'number']),
+  setVec2: c('fs_set_param_vec2', 'number', ['number', 'string', 'number', 'number']),
+  setFilter: c('fs_layer_set_filter', 'number',
+      ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
+};
+
+const inst = fs.create(mod.stringToNewUTF8(SCENE));
+if (!inst) { bar.textContent = 'scene rejected:\n' + fs.error(); throw new Error(fs.error()); }
+
+// ---- backend: WebGPU when the browser has it, CPU otherwise ----------------
+let gpu = false;
+try {
+  if (navigator.gpu) {
+    const gInit = c('fs_webgpu_init', null, ['string']);
+    const gStatus = c('fs_webgpu_status', 'number', []);
+    const gError = c('fs_webgpu_error', 'string', []);
+    fs.gRender = c('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']);
+    gInit('#v');
+    gpu = await new Promise(resolve => {
+      const t0 = performance.now();
+      (function poll() {
+        const s = gStatus();
+        if (s === 1) return resolve(true);
+        if (s === -1) { console.error('WebGPU init failed:', gError()); return resolve(false); }
+        if (performance.now() - t0 > 5000) return resolve(false);
+        requestAnimationFrame(poll);
+      })();
+    });
+  }
+} catch (e) { gpu = false; }
+if (!gpu) ctx = canvas.getContext('2d');
+fs.gStatus = gpu ? c('fs_webgpu_status', 'number', []) : () => -1;
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+if (gpu && DPR > 1) { canvas.width = 1280 * DPR; canvas.height = 720 * DPR; }
+
+function fallbackToCpu(why) {
+  if (!gpu) return;
+  gpu = false;
+  console.error('falling back to CPU renderer:', why);
+  const fresh = canvas.cloneNode(false);
+  fresh.width = 1280; fresh.height = 720;
+  canvas.replaceWith(fresh);
+  canvas = fresh;
+  hook(canvas);
+  ctx = canvas.getContext('2d');
+}
+
+// ---- the nebula: procedural, generated once, fed as an input ---------------
+// Layered sine plasma in a violet→teal→ember palette, plus fine grain so the
+// BEAUTY card has something real to clean up.
+const NW = 640, NH = 360;
+{
+  const ptr = fs.imageBuffer(inst, 'nebula', NW, NH);
+  const heap = mod.HEAPU8;
+  let seed = 9;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let y = 0; y < NH; ++y) {
+    for (let x = 0; x < NW; ++x) {
+      const u = x / NW, v = y / NH;
+      const p = Math.sin(u * 5.1 + Math.sin(v * 4.2 + u * 2)) +
+                Math.sin(Math.hypot(u - 0.68, v - 0.30) * 11.0) * 0.8 +
+                Math.sin((u + v) * 7.3 + Math.sin(u * 9.1) * 0.7) * 0.55;
+      const t = p * 0.25 + 0.5;                     // 0..1-ish field
+      const g = (rnd() - 0.5) * 22;                  // grain for BEAUTY to eat
+      const r = 38 + 150 * Math.max(0, Math.sin((t + 0.02) * Math.PI)) + 60 * Math.max(0, t - 0.62) * 2.6;
+      const gr = 26 + 90 * Math.max(0, Math.sin((t - 0.18) * Math.PI)) + 40 * Math.max(0, t - 0.7) * 2;
+      const b = 66 + 160 * Math.max(0, Math.sin((t + 0.24) * Math.PI));
+      const o = (y * NW + x) * 4;
+      heap[ptr + o] = Math.max(0, Math.min(255, r + g));
+      heap[ptr + o + 1] = Math.max(0, Math.min(255, gr + g));
+      heap[ptr + o + 2] = Math.max(0, Math.min(255, b + g));
+      heap[ptr + o + 3] = 255;
     }
-    requestAnimationFrame(tick);
-  })();
-} catch (e) { console.warn('bg fractal unavailable:', e); }
+  }
+  fs.commitImage(inst, 'nebula', NW, NH);
+}
+fs.attachRipple(inst, 'bg', 4);
+
+// ---- entrance --------------------------------------------------------------
+fs.setVec2(inst, 'title', 640, 118);
+setTimeout(() => fs.setF32(inst, 'chips', 1), 500);
+CARDS.forEach((card, i) => setTimeout(() => {
+  fs.setF32(inst, 'o' + i, 1);
+  fs.setVec2(inst, 'p' + i, cx(i), CY_REST);
+}, 350 + i * 110));
+
+// ---- pointer: hover lifts a card, click opens the demo, touch makes waves --
+let hovered = -1;
+const cardAt = (x, y) => {
+  if (y < CARD_Y - LIFT || y > CARD_Y + CARD_H) return -1;
+  for (let i = 0; i < CARDS.length; ++i) {
+    const x0 = ROW_X0 + i * (CARD_W + GAP);
+    if (x >= x0 && x <= x0 + CARD_W) return i;
+  }
+  return -1;
+};
+function setHover(i) {
+  if (i === hovered) return;
+  if (hovered >= 0) fs.setVec2(inst, 'p' + hovered, cx(hovered), CY_REST);
+  hovered = i;
+  if (i >= 0) fs.setVec2(inst, 'p' + i, cx(i), CY_REST - LIFT);
+  canvas.style.cursor = i >= 0 ? 'pointer' : 'default';
+}
+function hook(el) {
+  const toStage = e => {
+    const r = el.getBoundingClientRect();
+    return [(e.clientX - r.left) / r.width * 1280, (e.clientY - r.top) / r.height * 720];
+  };
+  el.addEventListener('pointermove', e => {
+    const [x, y] = toStage(e);
+    fs.pointer(inst, 1, x, y);
+    setHover(cardAt(x, y));
+  });
+  el.addEventListener('pointerdown', e => {
+    const [x, y] = toStage(e);
+    const i = cardAt(x, y);
+    if (i >= 0) { location.href = CARDS[i].href; return; }
+    fs.pointer(inst, 0, x, y);
+    e.preventDefault();
+  });
+  el.addEventListener('pointerup', e => {
+    const [x, y] = toStage(e);
+    fs.pointer(inst, 2, x, y);
+  });
+  el.addEventListener('pointerleave', () => setHover(-1));
+}
+hook(canvas);
+
+// Ambient waves: quiet splashes wander the top half so the water reads even
+// before anyone touches it.
+const SPOTS = [[210, 180], [980, 130], [520, 300], [1130, 340], [350, 90], [760, 240]];
+let spot = 0;
+setInterval(() => {
+  const [x, y] = SPOTS[spot++ % SPOTS.length];
+  fs.pointer(inst, 0, x, y);
+  setTimeout(() => fs.pointer(inst, 2, x, y), 60);
+}, 2600);
+
+// ---- render loop -----------------------------------------------------------
+let last = performance.now(), frames = 0, fpsShown = 0, t0 = last;
+// Adaptive resolution (lsd.html's ladder, scale-factor form): a phone GPU
+// pays the full-screen lsd background per pixel, and DPR 2 is 3.7M of
+// them. Down only — recovering fps near a threshold oscillates visibly.
+const SCALES = [DPR, 1.5, 1, 0.75].filter((s, i, a) => i === 0 || s < a[0]);
+let rung = 0;
+setInterval(() => {
+  fpsShown = frames; frames = 0;
+  if (!gpu) return;
+  if (fpsShown > 0 && fpsShown < 24 && rung < SCALES.length - 1) {
+    ++rung;
+    canvas.width = Math.round(1280 * SCALES[rung]);
+    canvas.height = Math.round(720 * SCALES[rung]);
+  }
+}, 1000);
+
+function tick() {
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+  const t = (now - t0) / 1000;
+
+  // Time-driven filters: the breathing background and the LSD card.
+  fs.setFilter(inst, 'bg', 'lsd', 0.32, t * 0.45, 0.7, 0.3, 0.55);
+  fs.setFilter(inst, 'prev2', 'lsd', 1.0, t, 1.0, 0.6, 0.9);
+  // The WATER card: an endless expanding wave.
+  const ph = (t % 2.4) / 2.4;
+  fs.setFilter(inst, 'prev3', 'ripple', 102, 61, 8 + ph * 95, 6.5 * (1 - ph), 22);
+
+  if (gpu) {
+    if (fs.gStatus() !== 1) fallbackToCpu('device left ready state');
+    else if (!fs.gRender(inst, dt, canvas.width, canvas.height)) fallbackToCpu('fs_render_webgpu failed');
+  }
+  if (!gpu) {
+    const px = fs.render(inst, dt, canvas.width, canvas.height);
+    const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
+    if (w === canvas.width && stride === w * 4) {
+      const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
+      ctx.putImageData(new ImageData(view, w, h), 0, 0);
+    }
+  }
+  ++frames;
+  fs.setF32(inst, 'load', Math.min(fpsShown / 60, 1));
+  bar.textContent = `wasm/${fs.backend()} · ${fpsShown} fps · ` +
+                    `github.com/takatronix/fluent_scene`;
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
 </script>
-</html>

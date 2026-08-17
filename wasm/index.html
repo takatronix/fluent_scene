@@ -282,7 +282,20 @@ setInterval(() => {
 
 // ---- render loop -----------------------------------------------------------
 let last = performance.now(), frames = 0, fpsShown = 0, t0 = last;
-setInterval(() => { fpsShown = frames; frames = 0; }, 1000);
+// Adaptive resolution (lsd.html's ladder, scale-factor form): a phone GPU
+// pays the full-screen lsd background per pixel, and DPR 2 is 3.7M of
+// them. Down only — recovering fps near a threshold oscillates visibly.
+const SCALES = [DPR, 1.5, 1, 0.75].filter((s, i, a) => i === 0 || s < a[0]);
+let rung = 0;
+setInterval(() => {
+  fpsShown = frames; frames = 0;
+  if (!gpu) return;
+  if (fpsShown > 0 && fpsShown < 24 && rung < SCALES.length - 1) {
+    ++rung;
+    canvas.width = Math.round(1280 * SCALES[rung]);
+    canvas.height = Math.round(720 * SCALES[rung]);
+  }
+}, 1000);
 
 function tick() {
   const now = performance.now();

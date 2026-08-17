@@ -288,11 +288,12 @@ function probeFrame(now) {
     probeCtx.drawImage(canvas, 0, 0, 96, 54);
     const d = probeCtx.getImageData(0, 0, 96, 54).data;
     const n = 96 * 54;
-    let s = 0, s2 = 0, sg = 0, sa = 0, prevL = 0;
+    let s = 0, s2 = 0, sg = 0, sa = 0, prevL = 0, sr = 0, sgc = 0, sb = 0;
     for (let i = 0; i < n; ++i) {
       const o = i * 4;
       const l = 0.299 * d[o] + 0.587 * d[o + 1] + 0.114 * d[o + 2];
       s += l; s2 += l * l; sa += d[o + 3];
+      sr += d[o]; sgc += d[o + 1]; sb += d[o + 2];
       if (i % 96 !== 0) sg += Math.abs(l - prevL);
       prevL = l;
     }
@@ -306,7 +307,15 @@ function probeFrame(now) {
     probeInvalid = 0;
     const mean = s / n, va = s2 / n - mean * mean;
     const ratio = (sg / (n - 54)) / Math.max(Math.sqrt(va), 1e-3);
-    const bad = va < 60 || mean < 4 || ratio > 0.95;
+    // 単色監獄 (真っ赤/真っピンク): one channel owns the frame, or one has
+    // vanished (magenta = green gone). Neutral is ~0.33 per share; the
+    // weather layer's warm phases sit well under these gates, and rescue
+    // still needs a multi-probe streak — moments of color are welcome,
+    // minutes of one color are not.
+    const csum = sr + sgc + sb + 1e-6;
+    const mono = Math.max(sr, sgc, sb) / csum > 0.55 ||
+                 Math.min(sr, sgc, sb) / csum < 0.06;
+    const bad = va < 60 || mean < 4 || ratio > 0.95 || mono;
     flatStreak = bad ? flatStreak + 1 : 0;
     if (!bad) { lastGoodOff = front === 'A' ? offA : offB; rescueChain = 0; }
   } catch (e) { console.warn('probe disabled:', e); probeDead = 2; }
@@ -586,7 +595,11 @@ function tickBody() {
   const gzGlow = (1 + 0.7 * contactLevel) * (1 + 0.5 * cutPulse);
   const flEff = 0.6 * knob('flight') * cc.flight * gzFlight;
   const morphV = knob('morph') * cc.morph * gzMorph;
-  const glowV = knob('glow') * cc.glow * gzGlow * swell;
+  // At low ladder rungs the filigree softens away and the glow field is
+  // what survives the upscale — untamed it reads as round color stains on
+  // a phone screen. Trade some radiance for structure.
+  const GLOW_TAPER = [1, 1, 0.85, 0.72];
+  const glowV = knob('glow') * cc.glow * gzGlow * swell * GLOW_TAPER[rung];
   const teA = t + offA, teB = t + offB;
   if (zA === 0) zA = teA;                       // fresh universes seed their integral
   if (zB === 0) zB = teB;
