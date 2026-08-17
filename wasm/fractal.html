@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ja">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>fluent scene — fractal 永遠フラクタル飛行</title>
 <style>
   :root { color-scheme: dark; }
@@ -68,7 +68,12 @@ import createFluentScene from './fluent_scene.mjs';
 
 const portrait = matchMedia('(orientation: portrait)').matches;
 matchMedia('(orientation: portrait)').addEventListener('change', () => location.reload());
-const STAGE_W = portrait ? 720 : 1280, STAGE_H = portrait ? 1280 : 720;
+// The stage takes the SCREEN's own aspect (tall iPhones are 9:19.5,
+// not 9:16 — a fixed stage got cover-cropped ~20% = "zoomed in"). The
+// long side stays 1280; the short side follows the viewport.
+const vw = Math.max(320, window.innerWidth), vh = Math.max(320, window.innerHeight);
+const STAGE_W = portrait ? Math.round(1280 * vw / vh / 4) * 4 : 1280;
+const STAGE_H = portrait ? 1280 : Math.round(1280 * vh / vw / 4) * 4;
 
 const SCENE = `
 schema: fluent.scene/v1alpha2
@@ -496,9 +501,8 @@ if (resPin && /^\d+x\d+$/.test(resPin)) {
   const [rw, rh] = resPin.split('x').map(Number);
   canvas.width = rw; canvas.height = rh;
 }
-const LADDER = portrait
-    ? [[720, 1280], [576, 1024], [480, 854], [360, 640]]
-    : [[1280, 720], [1024, 576], [854, 480], [640, 360]];
+const LADDER = [1, 0.8, 0.66, 0.5].map(s =>
+    [Math.round(STAGE_W * s / 4) * 4, Math.round(STAGE_H * s / 4) * 4]);
 let rung = 0;
 setInterval(() => {
   if (resPin || mode !== 'gpu') return;   // CPU path picked its size already
@@ -535,8 +539,8 @@ function tickBody() {
       const fresh = canvas.cloneNode(false);
       canvas.replaceWith(fresh);
       canvas = fresh;
-      canvas.width = portrait ? 180 : 320;
-      canvas.height = portrait ? 320 : 180;
+      canvas.width = Math.round(STAGE_W * 0.25 / 4) * 4;
+      canvas.height = Math.round(STAGE_H * 0.25 / 4) * 4;
       cpuCtx = canvas.getContext('2d');
       console.warn('WebGPU unavailable (status', st + '):', fs.gError());
     }

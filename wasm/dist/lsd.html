@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>fluent scene — LSD</title>
 <style>
   html, body { height: 100%; }
@@ -109,7 +109,12 @@ import createFluentScene from './fluent_scene.mjs';
 // cover-cropped into a face closeup. Rotation reloads with the other set.
 const portrait = matchMedia('(orientation: portrait)').matches;
 matchMedia('(orientation: portrait)').addEventListener('change', () => location.reload());
-const STAGE_W = portrait ? 720 : 1280, STAGE_H = portrait ? 1280 : 720;
+// The stage takes the SCREEN's own aspect (tall iPhones are 9:19.5,
+// not 9:16 — a fixed stage got cover-cropped ~20% = "zoomed in"). The
+// long side stays 1280; the short side follows the viewport.
+const vw = Math.max(320, window.innerWidth), vh = Math.max(320, window.innerHeight);
+const STAGE_W = portrait ? Math.round(1280 * vw / vh / 4) * 4 : 1280;
+const STAGE_H = portrait ? 1280 : Math.round(1280 * vh / vw / 4) * 4;
 
 const SCENE = `
 schema: fluent.scene/v1alpha2
@@ -520,9 +525,8 @@ let last = performance.now(), t0 = last, frames = 0, fpsShown = 0, uiTick = 0;
 // the come-up: the first half minute barely touches the image, so you
 // see your own room before it starts moving
 const ONSET = 15;
-const LADDER = portrait
-    ? [[720, 1280], [576, 1024], [480, 854], [360, 640]]
-    : [[1280, 720], [1024, 576], [854, 480], [640, 360]];
+const LADDER = [1, 0.8, 0.66, 0.5].map(s =>
+    [Math.round(STAGE_W * s / 4) * 4, Math.round(STAGE_H * s / 4) * 4]);
 canvas.width = LADDER[0][0]; canvas.height = LADDER[0][1];
 let rung = 0, bodyCap = 1;
 setInterval(() => {
