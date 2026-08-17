@@ -178,8 +178,21 @@ const bootAt = performance.now();
 // iPhone "old frame pops in" stutter).
 let rbBusy = false;
 let bodyEpoch = 137 + Math.random() * 2800;
+// The echo advances at the CPU era's ~9 generations/s NO MATTER the display
+// fps. Each generation passes the history through the filter again (chroma
+// shift, max-composite, geometry), so generation RATE — not just per-second
+// decay — sets the loop gain. Ungated at 60 fps the loop ran ~30 gen/s:
+// 4× the amplification the look was tuned at, and the picture saturated
+// into flat rainbow fields within seconds of going WebGPU ("CPUと全然
+// ちがう"). dt-normalizing the decay alone cannot fix that — the filter is
+// a nonlinear amplifier applied once per generation.
+const ECHO_MS = 110;
+let lastEchoBeginAt = -1e9, lastComposeAt = -1e9;
 function pumpEcho() {
   if (rbBusy || mode !== 'gpu') return;
+  const nowE = performance.now();
+  if (nowE - lastEchoBeginAt < ECHO_MS * 0.5) return;
+  lastEchoBeginAt = nowE;
   rbBusy = true;
   try {
     if (!fs.gReadLast(CAM_W, CAM_H)) { rbBusy = false; return; }
@@ -343,6 +356,17 @@ function conduct(t) {
     const jit = 0.25 * DIMS[d].span *
         Math.sin(t * conductor.jitterF[d] + conductor.jitterP[d]);
     eff[d] = clampDim(d, Number(sl[d].value) + depth * (currentOffset(d, t) + jit));
+  }
+  // recursion budget: deep persistence AND a fast vortex together turn the
+  // echo into a saturated ring tunnel that eats the camera (真ん中のウズ).
+  // The conductor may spend one or the other, never both — when the product
+  // exceeds the budget, the vortex yields (trails feel is the rarer prize).
+  const rec = (eff.persist / DIMS.persist.max) *
+      (Math.abs(eff.zoom) / DIMS.zoom.max + Math.abs(eff.rot) / DIMS.rot.max);
+  if (rec > 0.55) {
+    const k = 0.55 / rec;
+    eff.zoom *= k;
+    eff.rot *= k;
   }
   return eff;
 }
@@ -649,7 +673,12 @@ function tick() {
     }
   }
 
-  if (video && video.readyState >= 2) {
+  // one generation per ECHO_MS: camera in, history over it, into the scene.
+  // Between generations the filter keeps animating at full fps — only the
+  // recursion advances at its fixed, tuned cadence.
+  if (video && video.readyState >= 2 && now - lastComposeAt >= ECHO_MS) {
+    const dtGen = Math.min((now - lastComposeAt) / 1000, 0.5);
+    lastComposeAt = now;
     // 1) fresh retinal input
     fbCtx.globalCompositeOperation = 'source-over';
     fbCtx.globalAlpha = 1;
@@ -660,26 +689,27 @@ function tick() {
     // the vortex pivots to the gaze point (eased); losing the face eases
     // it home. Holding eye contact deepens the trip.
     if (gazechk.checked && gazeRaw && performance.now() - faceSeen < 800) {
-      gazePivot.x += (Math.max(0, Math.min(CAM_W, gazeRaw.x)) - gazePivot.x) * Math.min(1, dt * 5);
-      gazePivot.y += (Math.max(0, Math.min(CAM_H, gazeRaw.y)) - gazePivot.y) * Math.min(1, dt * 5);
+      gazePivot.x += (Math.max(0, Math.min(CAM_W, gazeRaw.x)) - gazePivot.x) * Math.min(1, dtGen * 5);
+      gazePivot.y += (Math.max(0, Math.min(CAM_H, gazeRaw.y)) - gazePivot.y) * Math.min(1, dtGen * 5);
       contactLevel = Math.min(1, Math.max(0,
-          contactLevel + (gazeRaw.contact ? dt / 2.5 : 0 - dt / 1.5)));
+          contactLevel + (gazeRaw.contact ? dtGen / 2.5 : 0 - dtGen / 1.5)));
     } else {
-      gazePivot.x += (CAM_W / 2 - gazePivot.x) * Math.min(1, dt * 2);
-      gazePivot.y += (CAM_H / 2 - gazePivot.y) * Math.min(1, dt * 2);
-      contactLevel = Math.max(0, contactLevel - dt / 1.5);
+      gazePivot.x += (CAM_W / 2 - gazePivot.x) * Math.min(1, dtGen * 2);
+      gazePivot.y += (CAM_H / 2 - gazePivot.y) * Math.min(1, dtGen * 2);
+      contactLevel = Math.max(0, contactLevel - dtGen / 1.5);
     }
     const persist = eff.persist;
     if (hasPrev && persist > 0) {
-      const s = Math.exp(eff.zoom * dt * 4);
-      const a = eff.rot * dt * 4;
+      const s = Math.exp(eff.zoom * dtGen * 4);
+      const a = eff.rot * dtGen * 4;
       fbCtx.globalCompositeOperation = trailmode.value;
       // dt-normalized like zoom/rot above: the slider means retention per
-      // 1/8 s of WALL time. A constant per-frame alpha made trail life
-      // depend on frame rate — 0.55^60/s at 60 fps killed the tracers the
-      // moment the page went WebGPU, while the ~8 fps CPU path kept them
-      // ("CPUのほうがトリップ感ある" — the owner was right).
-      fbCtx.globalAlpha = Math.pow(persist, Math.min(dt, 0.5) * 8);
+      // 1/8 s of WALL time — dtGen, the time this GENERATION spans, keeps
+      // it true at any display fps. A constant per-frame alpha made trail
+      // life depend on frame rate — 0.55^60/s at 60 fps killed the tracers
+      // the moment the page went WebGPU, while the ~8 fps CPU path kept
+      // them ("CPUのほうがトリップ感ある" — the owner was right).
+      fbCtx.globalAlpha = Math.pow(persist, dtGen * 8);
       // a whisper of blur per echo GENERATION: at 60 fps the buffer gets
       // resampled 7× more often than the old CPU path, and the zoom+rotate
       // interpolation error accumulated into visible stripes ("エフェクトが
