@@ -353,15 +353,23 @@ function clampDim(d, v) { return Math.min(DIMS[d].max, Math.max(DIMS[d].min, v))
 // a mismatch here would make the fed-back echo slide against the image.
 const CAM_W = portrait ? 360 : 640, CAM_H = portrait ? 640 : 360;
 let video = null;
-try {
-  const stream = await navigator.mediaDevices.getUserMedia(
-      { video: { width: CAM_W, height: CAM_H }, audio: false });
-  video = document.createElement('video');
-  video.srcObject = stream; video.muted = true;
-  await video.play();
-} catch (e) {
-  bar.textContent = 'webcam: ' + e + ' (needs https or localhost)';
+async function camUp() {
+  if (video) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(
+        { video: { width: CAM_W, height: CAM_H }, audio: false });
+    const v = document.createElement('video');
+    v.srcObject = stream; v.muted = true;
+    v.playsInline = true;                    // iOS: mandatory for inline play
+    v.setAttribute('playsinline', '');
+    await v.play();
+    video = v;
+  } catch (e) {
+    bar.textContent = 'webcam: ' + e + ' (needs https / タップで再試行)';
+  }
 }
+await camUp();
+document.addEventListener('pointerdown', () => { if (!video) camUp(); }, { passive: true });
 
 // ---- gaze analyzer (MediaPipe iris, ~10 Hz, from the gaze demo) ------------
 // The hallucination follows the eyes: the feedback vortex pivots to the

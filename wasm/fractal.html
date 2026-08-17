@@ -133,6 +133,7 @@ document.getElementById('cfg').onclick = () =>
 // on phones there is no gaze — a TAP on the piece is the blink instead
 let lastTapAt = -1e9;
 document.addEventListener('pointerdown', (e) => {
+  if (gazechk.checked && !video) { gazeFail = false; gazeUp(); }  // iOS: gesture unlocks the camera
   if (!e.target || e.target.id !== 'v') return;
   const nowT = performance.now();
   if (nowT - lastTapAt < 2500) return;
@@ -363,6 +364,7 @@ let gaze = { yaw: 0, pitch: 0 }, gazeS = { yaw: 0, pitch: 0 };
 let contact = false, contactLevel = 0, faceSeen = 0;
 let wasBlink = false, eyeState = 'open', eyesClosedAt = 0;
 let wantShift = false, wantWarp = false;
+let gazeFail = false;
 let gbias = { yaw: 0, pitch: 0 }, gcalib = [];
 try {
   const b = JSON.parse(localStorage.getItem('fractal_gaze_bias') ||
@@ -386,7 +388,9 @@ async function gazeUp() {
         { video: { width: CAM_W, height: CAM_H }, audio: false });
     video = document.createElement('video');
     video.srcObject = stream; video.muted = true;
-    await video.play();
+    video.playsInline = true;                       // iOS: without this the
+    video.setAttribute('playsinline', '');          // video never starts and
+    await video.play();                             // the analyzer starves
     const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
     const vision = await import(`${MP}/vision_bundle.mjs`);
     const files = await vision.FilesetResolver.forVisionTasks(`${MP}/wasm`);
@@ -399,7 +403,7 @@ async function gazeUp() {
     });
     try { landmarker = await make('GPU'); }
     catch (e) { landmarker = await make('CPU'); }
-  } catch (e) { console.warn('gaze unavailable:', e); }
+  } catch (e) { console.warn('gaze unavailable:', e); gazeFail = true; }
 }
 if (gazechk.checked) gazeUp();
 gazechk.addEventListener('change', () => { if (gazechk.checked) gazeUp(); });
@@ -635,7 +639,8 @@ function tickBody() {
   const phase = fade.active ? '転移中 ⟿ 別宇宙へディゾルブ'
       : tracking ? '滞留 (瞬き=パッ / 長閉眼=遠くへ)'
       : '滞留';
-  const eye = !gazechk.checked ? '' : !tracking ? ' · 👁…'
+  const eye = !gazechk.checked ? '' : gazeFail ? ' · 👁✗(タップで再試行)'
+      : !tracking ? ' · 👁…'
       : contactLevel > 0.5 ? ' · 👁凝視' : ' · 👁';
   bar.textContent = `${mode} · ${canvas.width}x${canvas.height} · ${fps} fps · ${phase}${eye} · 飛行 ${hh}h${String(mm).padStart(2, '0')}m${String(ss).padStart(2, '0')}s`;
 }
