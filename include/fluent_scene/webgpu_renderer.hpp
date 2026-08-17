@@ -60,6 +60,11 @@ public:
     /// Renders offscreen and starts the async pixel readback. One
     /// readback may be in flight at a time.
     bool readbackBegin(Stage& stage, uint32_t out_w, uint32_t out_h, float dt);
+    /// Starts the async readback of the frame renderToCanvas last
+    /// recorded, rescaled to out_w x out_h — no second scene render, so
+    /// per-frame feedback loops don't double the GPU load. Requires at
+    /// least one renderToCanvas this session.
+    bool readbackLastFrame(uint32_t out_w, uint32_t out_h);
     /// The finished readback's straight-RGBA8 pixels (tightly packed,
     /// valid until the next readbackBegin), or nullptr while pending.
     const uint8_t* readbackPixels() const;

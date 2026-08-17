@@ -1674,6 +1674,35 @@ struct WebGPURenderer::Impl {
         if (!recordScene(stage, out_w, out_h, dt)) {
             return false;
         }
+        return readbackFinish(out_w, out_h, sampler_nearest);
+    }
+
+    // Readback WITHOUT a second scene render: blits whatever the display
+    // path last recorded into the canvas texture, rescaled to the
+    // requested extent. Feedback loops (lsd.html's echo) otherwise pay a
+    // full re-render per frame — and when their size differs from the
+    // display's, recordScene destroys/recreates the canvas texture twice
+    // every frame.
+    bool readbackLastFrame(uint32_t out_w, uint32_t out_h) {
+        if (readback_pending || status != Status::Ready || canvas.tex == nullptr) {
+            return false;
+        }
+        encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
+        bound_target = nullptr;
+        pass = nullptr;
+        for (PushChunk& c : push_chunks) {
+            c.used = 0;
+        }
+        push_chunk_i = 0;
+        text_runs.clear();
+        polygon_offsets.clear();
+        polygon_points.clear();
+        return readbackFinish(out_w, out_h, sampler_linear);
+    }
+
+    // Shared tail: blit canvas → out_rgba, copy to the map buffer, submit,
+    // and arm the async map. Assumes `encoder` is live.
+    bool readbackFinish(uint32_t out_w, uint32_t out_h, WGPUSampler sampler) {
         if (out_rgba.w != static_cast<int>(out_w) || out_rgba.h != static_cast<int>(out_h)) {
             destroyTex(out_rgba);
             out_rgba = createTex(static_cast<int>(out_w), static_cast<int>(out_h),
@@ -1692,7 +1721,7 @@ struct WebGPURenderer::Impl {
         out_rgba.needs_clear = true;
         ensureTarget(out_rgba);
         Push push{};
-        drawFullscreen(pipe_unpremul, texGroup(canvas.view, sampler_nearest), push);
+        drawFullscreen(pipe_unpremul, texGroup(canvas.view, sampler), push);
         endTarget();
 
         WGPUTexelCopyTextureInfo src = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
@@ -1753,6 +1782,10 @@ const std::string& WebGPURenderer::error() const { return impl_->error; }
 
 bool WebGPURenderer::renderToCanvas(Stage& stage, uint32_t out_w, uint32_t out_h, float dt) {
     return impl_->renderToCanvas(stage, out_w, out_h, dt);
+}
+
+bool WebGPURenderer::readbackLastFrame(uint32_t out_w, uint32_t out_h) {
+    return impl_->readbackLastFrame(out_w, out_h);
 }
 
 bool WebGPURenderer::readbackBegin(Stage& stage, uint32_t out_w, uint32_t out_h, float dt) {

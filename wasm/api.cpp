@@ -160,6 +160,20 @@ int fs_webgpu_read_begin(FsInstance* inst, float dt, int out_w, int out_h) {
                : 0;
 }
 
+/// Async readback of the frame fs_render_webgpu last drew — no second
+/// scene render. Completion comes home through fs_webgpu_read_pixels,
+/// same as fs_webgpu_read_begin.
+EMSCRIPTEN_KEEPALIVE
+int fs_webgpu_read_last(int out_w, int out_h) {
+    if (!g_webgpu) {
+        return 0;
+    }
+    return g_webgpu->readbackLastFrame(static_cast<uint32_t>(out_w),
+                                       static_cast<uint32_t>(out_h))
+               ? 1
+               : 0;
+}
+
 EMSCRIPTEN_KEEPALIVE
 const uint8_t* fs_webgpu_read_pixels() {
     return g_webgpu ? g_webgpu->readbackPixels() : nullptr;

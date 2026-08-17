@@ -475,6 +475,26 @@ let cpuCtx = null;
 const t0 = performance.now();
 let last = t0, frames = 0, fps = 0, fpsAt = t0;
 
+// adaptive resolution ladder (lsd.html's, GPU included): the raymarch is
+// paid per pixel, and a phone GPU at 720×1280 chokes. Down only — stepping
+// back up oscillates visibly. ?res=WxH pins it for diagnosis.
+const resPin = new URLSearchParams(location.search).get('res');
+if (resPin && /^\d+x\d+$/.test(resPin)) {
+  const [rw, rh] = resPin.split('x').map(Number);
+  canvas.width = rw; canvas.height = rh;
+}
+const LADDER = portrait
+    ? [[720, 1280], [576, 1024], [480, 854], [360, 640]]
+    : [[1280, 720], [1024, 576], [854, 480], [640, 360]];
+let rung = 0;
+setInterval(() => {
+  if (resPin || mode !== 'gpu') return;   // CPU path picked its size already
+  if (fps > 0 && fps < 24 && rung < LADDER.length - 1) {
+    ++rung;
+    canvas.width = LADDER[rung][0]; canvas.height = LADDER[rung][1];
+  }
+}, 1000);
+
 // the loop must be unkillable: any exception is reported on the bar and the
 // next frame still runs; a wedged probe or a dead present path degrades
 // features instead of freezing the art
@@ -617,7 +637,7 @@ function tickBody() {
       : '滞留';
   const eye = !gazechk.checked ? '' : !tracking ? ' · 👁…'
       : contactLevel > 0.5 ? ' · 👁凝視' : ' · 👁';
-  bar.textContent = `${mode} · ${fps} fps · ${phase}${eye} · 飛行 ${hh}h${String(mm).padStart(2, '0')}m${String(ss).padStart(2, '0')}s`;
+  bar.textContent = `${mode} · ${canvas.width}x${canvas.height} · ${fps} fps · ${phase}${eye} · 飛行 ${hh}h${String(mm).padStart(2, '0')}m${String(ss).padStart(2, '0')}s`;
 }
 requestAnimationFrame(tick);
 </script>

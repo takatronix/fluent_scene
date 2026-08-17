@@ -157,7 +157,7 @@ const fs = {
   gStatus: mod.cwrap('fs_webgpu_status', 'number', []),
   gError: mod.cwrap('fs_webgpu_error', 'string', []),
   gRender: mod.cwrap('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']),
-  gReadBegin: mod.cwrap('fs_webgpu_read_begin', 'number', ['number', 'number', 'number', 'number']),
+  gReadLast: mod.cwrap('fs_webgpu_read_last', 'number', ['number', 'number']),
   gReadPixels: mod.cwrap('fs_webgpu_read_pixels', 'number', []),
   setPf: mod.cwrap('fs_set_param_f32', 'number', ['number', 'string', 'number']),
 };
@@ -166,14 +166,18 @@ let mode = 'boot';
 const bootAt = performance.now();
 // GPU tracers: the echo comes home through an async readback (1–2 frames
 // late — palinopsia does not mind). One in flight, read in the same rAF
-// discipline that the fractal page's probe taught us.
+// discipline that the fractal page's probe taught us. gReadLast re-reads
+// the frame gRender just drew — the old gReadBegin re-RENDERED the whole
+// scene at echo size, which both doubled the raymarch cost and thrashed
+// the renderer's canvas texture between the two sizes every frame (the
+// iPhone "old frame pops in" stutter).
 let rbBusy = false;
 let bodyEpoch = 137 + Math.random() * 2800;
 function pumpEcho() {
   if (rbBusy || mode !== 'gpu') return;
   rbBusy = true;
   try {
-    if (!fs.gReadBegin(inst, 0, CAM_W, CAM_H)) { rbBusy = false; return; }
+    if (!fs.gReadLast(CAM_W, CAM_H)) { rbBusy = false; return; }
   } catch (e) { rbBusy = false; return; }
   const poll = () => {
     let px = 0;
@@ -512,13 +516,19 @@ const LADDER = portrait
     ? [[720, 1280], [576, 1024], [480, 854], [360, 640]]
     : [[1280, 720], [1024, 576], [854, 480], [640, 360]];
 canvas.width = LADDER[0][0]; canvas.height = LADDER[0][1];
-let rung = 0;
+let rung = 0, bodyCap = 1;
 setInterval(() => {
   fpsShown = frames; frames = 0;
-  if (res || mode !== 'cpu') return;
+  if (res || mode === 'boot') return;
   // Down only: stepping back up caused a visible quality oscillation when
-  // fps hovered around the thresholds. ?res=WxH overrides.
-  if (fpsShown > 0 && fpsShown < 24 && rung < LADDER.length - 1) ++rung;
+  // fps hovered around the thresholds. ?res=WxH overrides. GPU mode rides
+  // the same ladder (phone GPUs pay the raymarch per pixel too); once the
+  // bottom rung still can't hold, the 3D body bows out instead — the CPU
+  // path's own economy, arrived at gradually.
+  if (fpsShown > 0 && fpsShown < 24) {
+    if (rung < LADDER.length - 1) ++rung;
+    else bodyCap = Math.max(0, bodyCap - 0.34);
+  }
   const [w, h] = LADDER[rung];
   if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
 }, 1000);
@@ -692,7 +702,7 @@ function tick() {
   // one geometry at a time: as the 3D body rises, the filter's built-in
   // geometric overlay steps aside (never fully — dark scenes keep a trace)
   const bmix = mode === 'gpu'
-      ? Math.min(0.7, (0.12 + 0.30 * eff.trip) * lift) * (1 - closedLevel) : 0;
+      ? Math.min(0.7, (0.12 + 0.30 * eff.trip) * lift) * (1 - closedLevel) * bodyCap : 0;
   const geomDuck = 1 - 0.85 * bmix;
   fs.layerSetFilter(inst, 'live', 'lsd',
       Math.min(1.5, come * (eff.trip + 0.35 * contactLevel) + 0.22 * blinkPulse),
