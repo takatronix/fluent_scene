@@ -2967,7 +2967,9 @@ const SHADER_SHOTS = [
   // 輪郭は設計パレットで発光、帯で増幅
   vec3 glow = pal(luma(srcAt(uv)) + u_time * 0.05,
       vec3(0.1, 0.4, 0.5), vec3(0.4, 0.4, 0.4), vec3(1.0), vec3(0.0, 0.15, 0.4));
-  vec3 col = base + glow * e * (0.6 + 1.4 * band);
+  // screen合成 — 加算と違い白飛びしない
+  vec3 g = clamp(glow * e * (0.6 + 1.4 * band), 0.0, 1.0);
+  vec3 col = 1.0 - (1.0 - base) * (1.0 - g);
   col *= 0.9 + 0.1 * sin(uv.y * u_res.y * 2.0);     // 細い走査線
   outColor = vec4(col, 1.0);
 }` },
@@ -2984,7 +2986,9 @@ const SHADER_SHOTS = [
   vec2 q = rot(vec2(cos(a), sin(a)) * r, u_time * 0.15);
   q *= 1.0 + 0.03 * sin(u_time * 0.8);
   q.x *= u_res.y / u_res.x;
-  outColor = vec4(srcAt(fract(q + 0.5)), 1.0);
+  // ミラーラップ — fractと違い端に継ぎ目が出ない
+  vec2 m = 1.0 - abs(fract((q + 0.5) * 0.5) * 2.0 - 1.0);
+  outColor = vec4(srcAt(m), 1.0);
 }` },
 ];
 const postState = { c: null, gl: null, prog: null, uT: null, uR: null, tex: null, on: false };
