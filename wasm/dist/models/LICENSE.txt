@@ -25,3 +25,12 @@ README for contact details.
 They are bundled here solely so the anime.html demo can run same-origin
 in the browser. The fluent_scene engine itself does not link or contain
 them.
+
+---
+
+id_lineart.onnx / id_lineart_fp16.onnx — "Informative Drawings" line
+drawing generator (Chan, Durand, Isola: "Learning to Generate Line
+Drawings that Convey Geometry and Semantics", 2022).
+https://github.com/carolineec/informative-drawings — **MIT license**.
+ONNX export via huggingface.co/rocca/informative-drawings-line-art-onnx;
+fp16 variant is the same weights rounded to float16.
