@@ -236,9 +236,10 @@ quantization (chroma 保存 = 色相が回らない) → 等方 XDoG 線 (太さ
 
 ## 6. 残タスク
 
-- **wasm/dist 再ビルド** (emsdk 環境で `./wasm/build.sh --webgpu`) —
-  ブラウザデモ (filters.html のチップは fs_filters_json() 自動、
-  プリセット 6 個は追加済) と WebGPU/naga 経路の実機確認はこれ待ち
+- ~~wasm/dist 再ビルド~~ → **済** (emsdk+naga-cli 導入、
+  `./wasm/build.sh --webgpu`。naga が新6本の WGSL 翻訳を通過、node
+  スモークで fs_filters_json 45種 + anime Scene の CPU レンダ確認)。
+  ブラウザ実機 (WebGPU パス目視) のみ残
 - 実写・実カメラでの目視 (追い込みは合成写真ベース)
 - v2 候補: ETF/FDoG 線画 (persistent_buffers P2 後)、anisotropic
   Kuwahara、流体水彩

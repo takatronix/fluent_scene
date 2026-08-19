@@ -34,9 +34,10 @@
 - golden: 5シーン追加 (anime は通常許容で CPU/Vulkan max|Δ|=1 を実測。
   watercolor/sumie は notebook と同じジッタ読み waiver、impressionist/
   stainedglass/pixelart はハード選択 waiver — 根拠コメント付き)
-- filters_tour のカタログは自動で 6 タイル増える (テーブル駆動)。
-  wasm/dist は**未再ビルド** — ブラウザデモに出すには emsdk で
-  `./wasm/build.sh --webgpu` が必要
+- filters_tour のカタログは自動で 6 タイル増える (テーブル駆動)
+- wasm/dist 再ビルド済 (`./wasm/build.sh --webgpu`、naga の WGSL 機械翻訳が
+  新6本を通過)。node スモークで fs_filters_json 45種 + anime 適用 Scene の
+  CPU レンダを確認。filters.html にプリセット6個追加
 
 ## 0.10.1 — 2026-08-16 (フィルタ大量追加: 34〜39)
 
