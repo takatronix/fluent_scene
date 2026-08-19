@@ -279,6 +279,19 @@
   .palitem .t small { font: 9.5px ui-monospace, monospace; color: var(--faint); font-weight: 400; }
   .palitem .d { font-size: 10.5px; color: var(--dim); }
 
+  #shEdWrap { display: flex; width: 100%; background: #0a0912;
+           border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  #shEdWrap:focus-within { border-color: rgba(183, 240, 126, 0.4); }
+  #shGutter { flex: none; min-width: 30px; padding: 10px 7px 10px 4px; text-align: right;
+           color: #45415f; font: 12px/1.5 ui-monospace, monospace; overflow: hidden;
+           user-select: none; background: rgba(255, 255, 255, 0.025);
+           border-right: 1px solid var(--line); }
+  #shGutter .eline { color: #ff8f8f; font-weight: 700;
+           background: rgba(255, 111, 111, 0.14); border-radius: 4px; }
+  #shDot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+           background: #4a4664; transition: 0.2s; flex: none; }
+  #shDot.ok { background: #7ee87f; box-shadow: 0 0 8px rgba(126, 232, 127, 0.7); }
+  #shDot.bad { background: #ff6f6f; box-shadow: 0 0 8px rgba(255, 111, 111, 0.7); }
   .shchip { display: inline-flex; gap: 7px; align-items: center; font-size: 12px;
            background: rgba(183, 240, 126, 0.08); border: 1px solid rgba(183, 240, 126, 0.3);
            color: var(--ink); border-radius: 999px; padding: 5px 10px; cursor: pointer;
@@ -514,13 +527,21 @@
         style="flex:1;background:rgba(255,255,255,0.04);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;outline:none">
       <button id="shGen" class="save" style="padding:8px 18px">生成</button>
     </div>
-    <textarea id="shCode" rows="13" spellcheck="false"
-      style="width:100%;background:#0a0912;color:#cfd8ff;border:1px solid var(--line);border-radius:10px;padding:10px;font:12px/1.5 ui-monospace,monospace;outline:none"></textarea>
+    <div id="shKeyHint" style="display:none;gap:8px;align-items:center;font-size:12px;color:var(--dim);background:rgba(126,232,250,0.06);border:1px solid rgba(126,232,250,0.2);border-radius:10px;padding:8px 12px;margin-bottom:10px">
+      <span>🤖 AI生成にはAPIキーが必要です — 内蔵で反応するのは「万華鏡」「波」「色収差」だけ</span>
+      <button id="shCfgOpen" style="flex:none;background:none;border:1px solid var(--line);color:var(--ink);border-radius:999px;padding:5px 12px;font-size:12px;cursor:pointer">⚙ APIキーを設定</button>
+    </div>
+    <div id="shEdWrap">
+      <div id="shGutter"></div>
+      <textarea id="shCode" rows="13" spellcheck="false" wrap="off"
+        style="flex:1;background:transparent;color:#cfd8ff;border:none;padding:10px;font:12px/1.5 ui-monospace,monospace;outline:none;resize:vertical;white-space:pre;overflow:auto"></textarea>
+    </div>
     <div id="shErr" style="color:#ff8f8f;font:11px ui-monospace,monospace;min-height:16px;margin:6px 0;white-space:pre-wrap"></div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <button id="shApply" class="save">適用</button>
       <button id="shOff" style="background:none;border:1px solid var(--line);color:var(--dim);border-radius:999px;padding:8px 16px;cursor:pointer">オフ</button>
-      <span style="font-size:11px;color:var(--faint)">WebGL2で合成結果全体にかかります。⚙でLLMを繋ぐと指示どおりに書き、なしはテンプレ(万華鏡/波/色収差)</span>
+      <span id="shDot" title="コンパイル状態"></span>
+      <span style="font-size:11px;color:var(--faint)">打鍵で即コンパイル・成功したらその場で映像に反映。失敗中は直前に成功したシェーダを維持</span>
     </div>
     <div style="display:flex;gap:8px;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)">
       <input id="shName" placeholder="シェーダ名 (例: うねうね万華鏡)" maxlength="40"
@@ -2823,9 +2844,12 @@ function openShaderPanel(target) {
   $('shName').value = (n && n.name) || '';
   renderShLib();
   $('shErr').textContent = '';
+  shRenderGutter();
+  shDot.className = '';
+  $('shKeyHint').style.display = llmReady() ? 'none' : 'flex';
   $('shOverlay').classList.add('open');
 }
-function applyShader() {
+function applyShader(quiet = false) {   // quiet = live typing path: no toast/undo spam
   const code = $('shCode').value;
   if (shTarget === 'out') {
     const err = buildPost(code);
@@ -2834,7 +2858,7 @@ function applyShader() {
     postState.on = true;
     postState.c.classList.add('on');
     $('shErr').textContent = '';
-    say('仕上げシェーダを適用中 (出力ノードから編集できます)');
+    if (!quiet) say('仕上げシェーダを適用中 (出力ノードから編集できます)');
     return null;
   }
   const n = nodeById(shTarget);
@@ -2842,15 +2866,58 @@ function applyShader() {
   const err = compileNodeShader(code);
   if (err) { $('shErr').textContent = err; return err; }
   n.code = code;
-  n.on = true;
   const nm = $('shName').value.trim().slice(0, 40);
-  if (nm) n.name = nm;                 // 適用でも名前は反映 — 保存専用にしない
+  if (nm && nm !== n.name) { n.name = nm; renderGraph(); }  // 適用でも名前は反映 — 保存専用にしない
   delete procCache[n.id];
-  applyGraph(true);
+  if (!n.on) { n.on = true; applyGraph(true); }  // off→on はブランチ再コンパイル必須
+  else if (quiet) saveHash();          // on のままのコード差替は次フレームで効く
+  else applyGraph(true);
   $('shErr').textContent = '';
-  say('「' + (n.name || 'シェーダ') + '」をノードに適用しました — 後段のフィルタとも合成されます');
+  if (!quiet) say('「' + (n.name || 'シェーダ') + '」をノードに適用しました — 後段のフィルタとも合成されます');
   return null;
 }
+// ---- shadertoy-style live editing: compile as you type, keep last good -----
+const shDot = $('shDot'), shGutter = $('shGutter');
+const shErrLines = err =>              // "ERROR: 0:12: ..." → [12, ...]
+    [...String(err).matchAll(/ERROR:\s*\d+:(\d+)/g)].map(m => +m[1]);
+function shRenderGutter(errLines = []) {
+  const total = $('shCode').value.split('\n').length;
+  const bad = new Set(errLines);
+  shGutter.replaceChildren(...Array.from({ length: total }, (_, i) => {
+    const d = document.createElement('div');
+    d.textContent = i + 1;
+    if (bad.has(i + 1)) d.className = 'eline';
+    return d;
+  }));
+  shGutter.scrollTop = $('shCode').scrollTop;
+}
+function shReflect(err) {              // editor chrome after a compile attempt
+  shRenderGutter(err ? shErrLines(err) : []);
+  shDot.className = err ? 'bad' : 'ok';
+}
+let shLiveTimer = 0;
+$('shCode').addEventListener('input', () => {
+  shRenderGutter();                    // line count tracks immediately
+  clearTimeout(shLiveTimer);
+  shLiveTimer = setTimeout(() => shReflect(applyShader(true)), 300);
+});
+$('shCode').addEventListener('scroll', () => { shGutter.scrollTop = $('shCode').scrollTop; });
+$('shCode').addEventListener('keydown', e => {
+  const ta = e.currentTarget;
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    ta.setRangeText('  ', ta.selectionStart, ta.selectionEnd, 'end');
+    ta.dispatchEvent(new Event('input'));
+  } else if (e.key === 'Enter') {      // keep the current line's indentation
+    e.preventDefault();
+    const ind = (ta.value.slice(0, ta.selectionStart).split('\n').pop().match(/^\s*/) || [''])[0];
+    ta.setRangeText('\n' + ind, ta.selectionStart, ta.selectionEnd, 'end');
+    ta.dispatchEvent(new Event('input'));
+  }
+});
+const llmReady = () => (aiCfg.prov === 'claude' && aiCfg.claudeKey) ||
+                       (aiCfg.prov === 'openai' && aiCfg.oaiBase && aiCfg.oaiModel);
+$('shCfgOpen').addEventListener('click', () => cfgOverlay.classList.add('open'));
 async function genShader() {
   const text = $('shPrompt').value.trim();
   $('shErr').textContent = '';
@@ -2859,27 +2926,36 @@ async function genShader() {
             : (aiCfg.prov === 'openai' && aiCfg.oaiBase && aiCfg.oaiModel) ? askOpenAI : null;
   try {
     if (llm) {
+      $('shGen').textContent = '生成中…';
       $('shCode').value = stripFences(await llm(text || '面白い映像エフェクト', SYS_SHADER));
       let err = applyShader();
       if (err) {
         // one self-repair round: hand the compiler output back to the LLM
         $('shErr').textContent = 'コンパイル失敗 — AIが修正中…\n' + err;
+        shReflect(err);
         $('shCode').value = stripFences(await llm(
             '以下のGLSLがコンパイルエラーになりました。修正した完全なコードのみを出力してください。\n\nエラー:\n' +
             err + '\n\nコード:\n' + $('shCode').value, SYS_SHADER));
         err = applyShader();
         if (err) $('shErr').textContent = '自動修復も失敗:\n' + err;
       }
+      shReflect(err);
     } else {
       const hit = SHADER_TEMPLATES.find(([re]) => re.test(text));
-      $('shCode').value = (hit || SHADER_TEMPLATES[0])[1];
-      applyShader();
-      if (!hit) $('shErr').textContent = '内蔵はテンプレのみ — ⚙でLLMを繋ぐと指示どおりに書きます';
+      if (hit) {
+        $('shCode').value = hit[1];
+        shReflect(applyShader());
+      } else {
+        // no key + no template match: guide instead of silently applying kaleido
+        $('shKeyHint').style.display = 'flex';
+        $('shErr').textContent = 'この指示はAI(APIキー)が必要です — ⚙で設定すると何でも書けます。' +
+            '内蔵で反応する言葉は「万華鏡」「波」「色収差」';
+      }
     }
     // a fresh AI shader deserves a name — suggest the prompt, save is one tap
     if (!$('shName').value && text && !$('shErr').textContent) $('shName').value = text.slice(0, 24);
   } catch (e) { $('shErr').textContent = String(e.message || e); }
-  finally { $('shGen').disabled = false; }
+  finally { $('shGen').disabled = false; $('shGen').textContent = '生成'; }
 }
 $('tbShader').addEventListener('click', () => {
   // a shader is a NODE now: splice into the selected line and open the editor
@@ -2891,9 +2967,10 @@ $('tbShader').addEventListener('click', () => {
 });
 $('shGen').addEventListener('click', genShader);
 $('shPrompt').addEventListener('keydown', e => { if (e.key === 'Enter') genShader(); });
-$('shApply').addEventListener('click', applyShader);
+$('shApply').addEventListener('click', () => shReflect(applyShader()));
 $('shSave').addEventListener('click', () => {
   const err = applyShader();          // compile + apply so「保存したのに映らない」が起きない
+  shReflect(err);
   if (err) return;
   const name = $('shName').value.trim().slice(0, 40);
   const nameErr = libSave(name, $('shCode').value);
