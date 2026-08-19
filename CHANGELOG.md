@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.11.1 — 2026-08-19 (印象派 v2 / wobble 分離 / v2 リサーチ)
+
+オーナーフィードバック起点の改修 (評定と方針: docs/design/art_filters.ja.md §7)。
+
+- **impressionist v2**: 向きの基底場をカールノイズ (ノイズポテンシャルの
+  回転 = 発散ゼロ場) に変更 — 筆致の列が**ゴッホの渦に閉じる**。筆致を
+  細長く (len 1.7P/wid 0.42P)。`time` パラメータ追加 (slot 1 = デモ自動
+  アニメ規約): 渦がゆっくり流れ・dab が呼吸し・絵具がストロークに沿って
+  這い・色振動が明滅する「生きた絵」。canvas は定数化して枠を確保。
+  **API 変更**: params は stroke/time/vibrance/flow/relief に
+- **wobble** (`FS_WOBBLE=46`) 新設: notebook に内蔵だったページ振動を
+  独立フィルタ化 (オーナー指示)。2 オクターブのベクタノイズ歪みを
+  `fps` 回/秒で引き直すストップモーション式 (fps=0 で連続ドリフト)。
+  任意のフィルタとチェーン可
+- **notebook**: wobble と time を除去し静止画化。params は
+  scale/grid/chroma に (**API 変更**)。振動が欲しいときは
+  `.filter(Notebook()).filter(Wobble().time(t))`
+- §7 リサーチ追記: 様式別 SOTA (Flair 水彩 / Paint Transformer 系油絵 /
+  White-box Cartoonization・AnimeGANv3 / StreamDiffusion) と野心の階段
+  (A 単一パス / B persistent_buffers / C ニューラル外段)。次段の本線は B
+
 ## 0.11.0 — 2026-08-19 (アートフィルタ 6種: 40〜45)
 
 絵画様式ファミリー。全て論文アルゴリズムからの独自実装 (MIT、shadertoy

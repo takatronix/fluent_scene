@@ -248,13 +248,14 @@ FS_PARAM(4, chroma, 0.0f, Scalar)
 FS_END(Sumie)
 
 FS_FILTER(Impressionist, impressionist, FS_IMPRESSIONIST,
-          "impressionist oil — gradient-following brush dabs with broken "
-          "color, impasto relief and canvas (after Litwinowicz 1997)")
+          "impressionist oil — long brush strokes riding a swirling curl-"
+          "noise field (van Gogh vortices), broken color, impasto (after "
+          "Litwinowicz 1997; host drives `time` for a living painting)")
 FS_PARAM(0, stroke, 7.0f, Length)
-FS_PARAM(1, vibrance, 0.8f, Scalar)
-FS_PARAM(2, flow, 0.8f, Scalar)
-FS_PARAM(3, relief, 0.7f, Scalar)
-FS_PARAM(4, canvas, 0.35f, Scalar)
+FS_PARAM(1, time, 0.0f, Scalar)
+FS_PARAM(2, vibrance, 0.8f, Scalar)
+FS_PARAM(3, flow, 0.8f, Scalar)
+FS_PARAM(4, relief, 0.7f, Scalar)
 FS_END(Impressionist)
 
 FS_FILTER(Stainedglass, stainedglass, FS_STAINEDGLASS,
@@ -344,13 +345,21 @@ FS_END(Fractal)
 
 FS_FILTER(Notebook, notebook, FS_NOTEBOOK,
           "pencil sketch on squared paper (after flockaroo XtVGD1, "
-          "CC BY-NC-SA — non-commercial; host drives `time`)")
+          "CC BY-NC-SA — non-commercial); chain `wobble` for page shiver")
 FS_PARAM(0, scale, 0.5f, Scalar)
-FS_PARAM(1, time, 0.0f, Scalar)
-FS_PARAM(2, wobble, 1.0f, Scalar)
-FS_PARAM(3, grid, 1.0f, Scalar)
-FS_PARAM(4, chroma, 1.0f, Scalar)
+FS_PARAM(1, grid, 1.0f, Scalar)
+FS_PARAM(2, chroma, 1.0f, Scalar)
 FS_END(Notebook)
+
+FS_FILTER(Wobble, wobble, FS_WOBBLE,
+          "hand-drawn wobble — noise-warped reads, redrawn `fps` times a "
+          "second for the stop-motion shiver (host drives `time`); chain "
+          "before or after any filter")
+FS_PARAM(0, amount, 4.0f, Length)
+FS_PARAM(1, time, 0.0f, Scalar)
+FS_PARAM(2, scale, 1.0f, Scalar)
+FS_PARAM(3, fps, 6.0f, Scalar)
+FS_END(Wobble)
 
 #ifdef FS_FILTER_IMG_DEFAULTED
 #undef FS_FILTER_IMG

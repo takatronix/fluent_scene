@@ -186,6 +186,7 @@ const HIDDEN = new Set(['lut', 'face', 'opacity']);
 const CATALOG = JSON.parse(fs.filtersJson()).filter(f => !HIDDEN.has(f.name));
 const CATS = [
   ['ANALOG', ['ntsc', 'crt']],
+  ['PAINT', ['impressionist', 'anime', 'watercolor', 'sumie', 'stainedglass', 'pixelart', 'wobble']],
   ['ART', ['notebook', 'oilpaint', 'sketch', 'toon', 'halftone', 'emboss', 'edge_sobel', 'posterize', 'solarize']],
   ['LENS', ['bokeh', 'blur', 'bilateral', 'median', 'motion_blur', 'zoom_blur', 'sharpen', 'pixelate']],
   ['TRIP', ['lsd', 'fractal', 'swirl', 'ripple']],
@@ -256,7 +257,7 @@ for (const f of CATALOG) chainSel.add(new Option(f.name, f.name));
 const PRESETS = [
   ['📺 ブラウン管', 'ntsc', 'crt', {}],
   ['📼 深夜の電波', 'ntsc', 'crt', { noise: 0.18, artifacts: 1.0 }],
-  ['✏️ ノート', 'notebook', '', {}],
+  ['✏️ ノート', 'notebook', 'wobble', {}],
   ['🎨 油絵', 'oilpaint', 'median', { radius: 7, levels: 20 }],
   ['🌸 アニメ', 'anime', '', {}],
   ['💧 水彩', 'watercolor', '', {}],

@@ -430,9 +430,9 @@ void sceneImpressionist(Renderer& r) {
     stage.image(view).frame({330, 10, 140, 130})
         .filter(Impressionist().vibrance(1.6f).relief(1.5f));
     stage.image(view).frame({10, 160, 150, 130})
-        .filter(Impressionist().flow(0.0f).canvas(1.2f));
+        .filter(Impressionist().flow(0.0f).time(3.0f));
     stage.image(view).frame({170, 160, 150, 130})
-        .filter(Impressionist().vibrance(0.0f).relief(0.0f));
+        .filter(Impressionist().vibrance(0.0f).relief(0.0f).time(7.5f));
     const int saved_limit = g_max_diff_limit;
     const double saved_ratio = g_over_ratio_limit;
     g_max_diff_limit = 255;
@@ -488,17 +488,21 @@ void sceneNotebook(Renderer& r) {
     const auto img = makeTestImage(160, 120);
     const ImageView view{160, 120, img.data(), 0};
     stage.image(view).frame({10, 10, 150, 130}).filter(Notebook());
-    stage.image(view).frame({170, 10, 150, 130}).filter(Notebook().time(2.4f));
+    stage.image(view).frame({170, 10, 150, 130})
+        .filter(Notebook()).filter(Wobble().time(2.4f));   // page shiver chained
     stage.image(view).frame({330, 10, 140, 130})
         .filter(Notebook().chroma(0.0f).grid(0.0f));   // plain graphite
     stage.image(view).frame({10, 160, 150, 130})
-        .filter(Notebook().scale(0.25f).wobble(0.0f)); // still, fine strokes
+        .filter(Notebook().scale(0.25f));              // fine strokes
     stage.image(view).frame({170, 160, 150, 130})
-        .filter(Notebook().time(7.9f).chroma(1.0f).scale(0.8f));
+        .filter(Wobble().amount(8.0f).time(1.1f).fps(0.0f));  // wobble alone
     const int saved_limit = g_max_diff_limit;
+    const double saved_ratio = g_over_ratio_limit;
     g_max_diff_limit = 255;
+    g_over_ratio_limit = 0.02;   // the wobble tiles add noise-warped reads
     checkScene("notebook", r.render(stage, 0.0f));
     g_max_diff_limit = saved_limit;
+    g_over_ratio_limit = saved_ratio;
 }
 
 void sceneAnimation(Renderer& r) {

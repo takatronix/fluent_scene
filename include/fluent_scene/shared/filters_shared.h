@@ -75,6 +75,7 @@ const int FS_SUMIE = 42;
 const int FS_IMPRESSIONIST = 43;
 const int FS_STAINEDGLASS = 44;
 const int FS_PIXELART = 45;
+const int FS_WOBBLE = 46;
 
 #ifdef FS_SAMPLE
 
@@ -989,8 +990,8 @@ vec3 fs_sumie(vec2 uv, float ink, float bleed_px, float dry, float outline,
 // (coverage × z-hash, fine layer biased). Between dabs the canvas shows.
 // Impasto: bristle noise in stroke space tilts the shading, plus a rim
 // shadow at each dab's soft edge.
-vec3 fs_impressionist(vec2 uv, float stroke_px, float vibrance, float flow,
-                      float relief, float canvas) {
+vec3 fs_impressionist(vec2 uv, float stroke_px, float time_s, float vibrance,
+                      float flow, float relief) {
     float res_y = 1.0 / FS_TEXEL.y;
     float u = max(res_y / 400.0, 0.25);
     vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
@@ -998,13 +999,14 @@ vec3 fs_impressionist(vec2 uv, float stroke_px, float vibrance, float flow,
     float vib = clamp(vibrance, 0.0, 2.0);
     float fl = clamp(flow, 0.0, 1.0);
     float rlf = clamp(relief, 0.0, 2.0);
+    float t = time_s;
     vec3 best = vec3(0.0, 0.0, 0.0);
     float best_score = -1.0;
     float cov_any = 0.0;
     for (int layer = 0; layer < 2; ++layer) {
         float pitch = layer == 0 ? p_fine * 2.1 : p_fine;
         float zbias = layer == 0 ? 0.0 : 0.35;
-        float wid = layer == 0 ? pitch * 0.68 : pitch * 0.58;
+        float wid = layer == 0 ? pitch * 0.55 : pitch * 0.42;
         vec2 lofs = layer == 0 ? vec2(0.0, 0.0) : vec2(37.7, 17.3);
         vec2 cell = floor(px / pitch);
         for (int j = -1; j <= 1; ++j) {
@@ -1016,21 +1018,36 @@ vec3 fs_impressionist(vec2 uv, float stroke_px, float vibrance, float flow,
                 vec2 seed = (id - lofs + vec2(0.5, 0.5)
                              + (vec2(h1, h2) - vec2(0.5, 0.5)) * 0.9) * pitch;
                 vec2 rel = px - seed;
-                float lmax = pitch * 1.75;   // conservative cull, no taps yet
+                float lmax = pitch * 1.95;   // conservative cull, no taps yet
                 if (dot(rel, rel) > lmax * lmax) continue;
                 vec2 suv = clamp(vec2(seed.x * FS_TEXEL.x, seed.y * FS_TEXEL.y),
                                  vec2(0.0, 0.0), vec2(1.0, 1.0));
-                // orientation: edge tangent at the seed, yielding to a
-                // noise field where the picture is flat
                 float eps = max(pitch * 0.5, 1.0);
                 float gx = fs_luma(FS_SAMPLE(suv + FS_TEXEL * vec2(eps, 0.0)))
                          - fs_luma(FS_SAMPLE(suv - FS_TEXEL * vec2(eps, 0.0)));
                 float gy = fs_luma(FS_SAMPLE(suv + FS_TEXEL * vec2(0.0, eps)))
                          - fs_luma(FS_SAMPLE(suv - FS_TEXEL * vec2(0.0, eps)));
                 float gm = length(vec2(gx, gy));
-                float na = (fs_lsd_vnoise(seed * (0.013 / u)) - 0.5) * 6.28318531
-                         + (h1 - 0.5) * 0.9;
-                vec2 dir = vec2(cos(na), sin(na));
+                // orientation: where the picture is flat, strokes ride the
+                // CURL of a slowly drifting noise potential — a curl field
+                // is divergence-free, so stroke lanes close into the
+                // vortices van Gogh painted instead of running off. Strong
+                // edges still steer the stroke along the contour (flow).
+                vec2 fp = seed * (0.011 / u) + vec2(0.13 * t, -0.09 * t);
+                float fe2 = 0.35;
+                float dpx = fs_lsd_vnoise(fp + vec2(fe2, 0.0))
+                          - fs_lsd_vnoise(fp - vec2(fe2, 0.0));
+                float dpy = fs_lsd_vnoise(fp + vec2(0.0, fe2))
+                          - fs_lsd_vnoise(fp - vec2(0.0, fe2));
+                vec2 dirf = vec2(dpy, -dpx);
+                float dl = length(dirf);
+                vec2 dir = dl > 1e-5 ? dirf / dl : vec2(0.94, 0.34);
+                // each dab breathes around its lane — the painting lives
+                float wob = (h1 - 0.5) * 0.6
+                          + 0.22 * sin(t * (0.5 + 0.9 * h2) + h1 * 6.28318531);
+                float cw = cos(wob);
+                float sw = sin(wob);
+                dir = vec2(dir.x * cw - dir.y * sw, dir.x * sw + dir.y * cw);
                 if (gm > 1e-4) {
                     vec2 tg = vec2(gy, -gx) / gm;
                     if (dot(tg, dir) < 0.0) { tg = vec2(-tg.x, -tg.y); }
@@ -1038,9 +1055,10 @@ vec3 fs_impressionist(vec2 uv, float stroke_px, float vibrance, float flow,
                     vec2 dd = dir + (tg - dir) * wf;
                     dir = dd / max(length(dd), 1e-4);
                 }
-                // capsule footprint, shorter where edges are strong
-                // (Litwinowicz's stroke clipping, reduced to a statistic)
-                float len = pitch * (1.35 - 0.7 * smoothstep(0.05, 0.30, gm));
+                // long thin capsule = a loaded brush pulled through the
+                // paint; strokes shorten only where edges are strong
+                // (Litwinowicz's clipping, reduced to a statistic)
+                float len = pitch * (1.7 - 1.0 * smoothstep(0.05, 0.30, gm));
                 float s = dot(rel, dir);
                 float q = dot(rel, vec2(dir.y, -dir.x));
                 float edge_d = abs(q) / wid + (s * s) / max(len * len, 1e-4);
@@ -1055,15 +1073,19 @@ vec3 fs_impressionist(vec2 uv, float stroke_px, float vibrance, float flow,
                     // broken color: each dab mixes its pigment a bit wrong.
                     // LUMA-PRESERVING — divisionism vibrates hue while the
                     // values keep the large forms readable (a free jitter
-                    // turns a sky into confetti)
+                    // turns a sky into confetti); the vibration shimmers
+                    // slowly with time
+                    float vib_t = vib * (0.85 + 0.15 * sin(t * 0.7 + hz * 6.28318531));
                     vec3 cj = c * (vec3(1.0, 1.0, 1.0)
                                    + (vec3(h1, h2, hz) - vec3(0.5, 0.5, 0.5))
-                                     * (vib * 0.6));
+                                     * (vib_t * 0.6));
                     c = cj * (fs_luma(c) / max(fs_luma(cj), 1e-3));
                     // impasto: bristle streaks along the dab, lit top-left
                     // (two CLOSE noise reads = a directional derivative);
-                    // thick paint catches light mostly in the lights
-                    vec2 bp = vec2(s * (0.16 / u), q * (0.5 / u))
+                    // the phase drifts with time, so paint creeps along
+                    // the stroke like wet oil
+                    vec2 bp = vec2(s * (0.16 / u) - t * (0.5 + 0.5 * h2),
+                                   q * (0.5 / u))
                             + vec2(hz * 61.0, h1 * 47.0);
                     float b1 = fs_lsd_vnoise(bp);
                     float b2 = fs_lsd_vnoise(bp + vec2(0.2, 0.28));
@@ -1081,7 +1103,7 @@ vec3 fs_impressionist(vec2 uv, float stroke_px, float vibrance, float flow,
     float weave = (wx + wy) * 0.5;
     vec3 ground = vec3(0.92, 0.895, 0.85) * (0.93 + 0.14 * weave);
     vec3 c = mix(ground, best, smoothstep(0.10, 0.5, cov_any));
-    c = c * (1.0 + clamp(canvas, 0.0, 1.5) * 0.28 * (weave - 0.5));
+    c = c * (1.0 + 0.10 * (weave - 0.5));
     return clamp(c, 0.0, 1.0);
 }
 
@@ -1184,6 +1206,26 @@ vec3 fs_pixelart(vec2 uv, float size_px, float colors, float dither,
     float n = max(floor(colors + 0.5), 2.0) - 1.0;
     c = c + vec3(t * clamp(dither, 0.0, 1.5) / n);
     return clamp(floor(c * n + vec3(0.5)) / n, 0.0, 1.0);
+}
+
+// Hand-drawn wobble — the page-shiver that used to live inside notebook,
+// as its own chainable filter: reads are displaced by two octaves of vector
+// noise, and the noise field is re-rolled `fps` times a second (quantized
+// time + a hash phase per redraw), which is exactly the stop-motion "each
+// frame is a fresh drawing" effect. fps = 0 drifts continuously instead.
+vec3 fs_wobble(vec2 uv, float amount_px, float time_s, float scale_,
+               float fps) {
+    float res_y = 1.0 / FS_TEXEL.y;
+    float u = max(res_y / 400.0, 0.25);
+    vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
+    float tq = fps > 0.01 ? floor(time_s * fps) / max(fps, 0.01) : time_s;
+    vec2 ph = vec2(fs_lsd_hash(vec2(tq * 1.13, 3.7)),
+                   fs_lsd_hash(vec2(tq * 0.87, 9.1))) * 73.0;
+    float freq = 0.05 / (u * max(scale_, 0.1));
+    vec2 wn = fs_art_vnoise2(px * freq + ph) - vec2(0.5, 0.5)
+            + (fs_art_vnoise2(px * (freq * 2.3) + ph + vec2(31.7, 13.3))
+               - vec2(0.5, 0.5)) * 0.5;
+    return FS_SAMPLE(uv + FS_TEXEL * (wn * (2.0 * max(amount_px, 0.0))));
 }
 
 // ---- generative ------------------------------------------------------------
@@ -1489,19 +1531,18 @@ vec3 fs_nb_colht(vec2 px, float sc) {
                 smoothstep(0.95, 1.05, c.z));
 }
 
-vec3 fs_notebook(vec2 uv, float scale, float time_s, float wobble, float grid,
-                 float chroma) {
+vec3 fs_notebook(vec2 uv, float scale, float grid, float chroma) {
     float res_y = 1.0 / FS_TEXEL.y;
     float u = res_y / 400.0;               // logical unit: 1 at 400px height
-    // stop-motion shiver: the page is "redrawn" a few pixels off each frame
-    vec2 jit = vec2(sin(time_s), sin(time_s * 1.7)) * (4.0 * u * wobble);
     // The original's `zoom` both magnified the view AND the strokes; a
     // filter must leave the view alone, so `pos` stays in true image
     // pixels and only the stroke GEOMETRY (step, curvature, probe, grain,
     // grid) is magnified by 1/scale. Smaller scale = bolder pencil.
+    // (The original's page shiver moved out to the standalone `wobble`
+    // filter — chain it when the stop-motion look is wanted.)
     float sc = clamp(scale, 0.05, 1.0);
     float mag = 1.0 / sc;
-    vec2 pos = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y) + jit;
+    vec2 pos = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
 
     float ink = 0.0;                       // accumulated graphite
     vec3 tint = vec3(0.0, 0.0, 0.0);       // crayon layer numerator
@@ -1792,7 +1833,8 @@ vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p
 #endif
     else if (mode == FS_RIPPLE)          c = fs_ripple(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_LSD)             c = fs_lsd(uv, p0, p1, p2, p3, p4);
-    else if (mode == FS_NOTEBOOK)        c = fs_notebook(uv, p0, p1, p2, p3, p4);
+    else if (mode == FS_NOTEBOOK)        c = fs_notebook(uv, p0, p1, p2);
+    else if (mode == FS_WOBBLE)          c = fs_wobble(uv, p0, p1, p2, p3);
     else if (mode == FS_FRACTAL)         c = fs_fractal(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_BOKEH)           c = fs_bokeh(uv, p0, p1, p2, p3);
     else if (mode == FS_OILPAINT)        c = fs_oilpaint(uv, p0, p1, p2);

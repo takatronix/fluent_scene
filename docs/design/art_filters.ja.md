@@ -140,15 +140,20 @@ quantization (chroma 保存 = 色相が回らない) → 等方 XDoG 線 (太さ
 | 3 | outline | 0.8 | Scalar | 輪郭ストロークの濃さ |
 | 4 | chroma | 0.0 | Scalar | 淡彩 (0=純墨、0.3で彩色水墨) |
 
-### impressionist (FS_IMPRESSIONIST=43)
+### impressionist (FS_IMPRESSIONIST=43) — v2 (2026-08-19 オーナーFB反映)
 
 | slot | name | default | unit | 意味 |
 |---|---|---|---|---|
 | 0 | stroke | 7.0 | Length | 筆致の大きさ (種格子ピッチ) |
-| 1 | vibrance | 0.8 | Scalar | 筆触分割の色振動 |
-| 2 | flow | 0.8 | Scalar | 向きの勾配追従度 (0=ノイズ場) |
-| 3 | relief | 0.7 | Scalar | impasto 照明 (絵具の盛り) |
-| 4 | canvas | 0.35 | Scalar | キャンバス地の透け |
+| 1 | time | 0.0 | Scalar | ホスト駆動 — 生きた絵 (渦がゆっくり流れ、dabが呼吸し、絵具が這う) |
+| 2 | vibrance | 0.8 | Scalar | 筆触分割の色振動 (ゆっくり明滅) |
+| 3 | flow | 0.8 | Scalar | 向きの勾配追従度 (0=渦場のみ) |
+| 4 | relief | 0.7 | Scalar | impasto 照明 (絵具の盛り) |
+
+v2 変更: ①向きの基底場をランダム角ノイズ→**カールノイズ (ノイズポテン
+シャルの回転)** に変更 — 発散ゼロ場なので筆致の列がゴッホの渦に「閉じる」
+②筆致を細長く (len 1.7P / wid 0.42P、エッジでのみ短縮) ③time 追加 (slot 1
+= デモページの自動アニメ規約)、canvas は定数 0.35 に畳んで枠を空けた。
 
 ### stainedglass (FS_STAINEDGLASS=44)
 
@@ -243,3 +248,81 @@ quantization (chroma 保存 = 色相が回らない) → 等方 XDoG 線 (太さ
 - 実写・実カメラでの目視 (追い込みは合成写真ベース)
 - v2 候補: ETF/FDoG 線画 (persistent_buffers P2 後)、anisotropic
   Kuwahara、流体水彩
+
+---
+
+## 7. v2 リサーチ (2026-08-19、オーナーフィードバック起点)
+
+### 7.0 受領した評定
+
+| filter | 評定 | 指示 |
+|---|---|---|
+| impressionist | ◯ おもろい | ストロークを長く筆らしく / 常時動く / ゴッホ渦 → **v2 で対応済** |
+| sumie | ✗ 旧オーナー作に負ける | **和紙テクスチャ背景 + 太く強調したエッジを滲ませる** (エッジ主役) 方式へ |
+| oilpaint | ✗ 油絵に見えない | 本物の筆致・盛り (impasto) が要る |
+| anime | △ 勉強不足 | 線と平坦化の質 |
+| watercolor | ✗ 一番がっかり | 全面見直し |
+| notebook | wobble 不要 | → **wobble 分離済** (FS_WOBBLE=46) |
+
+総評=「制約に収まる古典だけを実装した。最新の調査をしてから作れ」。正当。
+v1 (§1) は 1976〜2011 の古典で、本節がその宿題。
+
+### 7.1 様式別の現代 SOTA と redo 案
+
+**水彩** — 実運用の基準は MNPR→Flair (Montesdeoca 2017〜,
+[artineering.io](https://artineering.io/software/maya-npr) /
+[GitHub](https://github.com/semontesdeoca/MNPR)):
+edge darkening・**4D joint-bilateral bleeding**・pigment application・
+paper distortion / granulation を**別々のバッファとパス**で持つ。v1 が
+平板なのは、この分解を 1 パスの密度式に全部畳んだから。redo:
+① bleed を実パス化 (persistent_buffers P1 の最初の顧客に)
+② 紙は手続きノイズをやめ**本物の紙スキャンを画像パラメータで**
+(FS_FILTER_IMG 機構は実装済み、lut がその前例)
+③ hand tremor は分離済み `wobble` をチェーン。
+
+**油絵** — 現代の本命は**ストローク列を予測するニューラル**:
+Paint Transformer (ICCV 2021 feed-forward)、Im2Oil (MM 2022,
+[arXiv:2209.13219](https://arxiv.org/pdf/2209.13219))、MambaPainter
+(SIGGRAPH Asia 2024 posters、1 ステップ化)、AttentionPainter (TVCG 2025)。
+写真→「筆順つきストローク列」→ 盛り付きレンダ。Thor なら TensorRT で
+実用域、ブラウザは onnxruntime-web WebGPU
+([MS blog](https://opensource.microsoft.com/blog/2024/02/29/onnx-runtime-web-unleashes-generative-ai-in-the-browser-using-webgpu/))。
+シェーダ枠に留まるなら anisotropic Kuwahara (Kyprianidis 2009) +
+**法線マップ付き impasto 照明** (Flair の油絵モードの構成)。
+
+**アニメ** — 「なぜアニメに見えるか」を分解したのが White-box
+Cartoonization (Wang & Yu, CVPR 2020): surface (平坦色面) / structure
+(セグメント単位の色) / texture (線・陰) の 3 表現に分けて学習。軽量 GAN
+系は AnimeGANv3
+([GitHub](https://github.com/TachibanaYoshino/AnimeGANv3)) が 1080p
+115ms/GPU・スマホ 50fps 級 = **ONNX 化して外段に置ける現実解**。
+シェーダ枠の改善は FDoG (Kang 2007) の首尾一貫線 — ETF 平滑化が要るので
+persistent_buffers P2 待ち。v1 の等方 XDoG 線が「勉強不足」に見える根因は
+線の**首尾一貫性の欠如**で、これは単一パスの構造的限界。
+
+**水墨** — 論文系はストローク合成か CA 滲みシミュだが、**オーナー旧作の
+方式を正とする**: 和紙テクスチャ背景 (実スキャン画像) + 太く強調した
+エッジ (首尾一貫線 = FDoG 系) + そのエッジ線を**滲ませる** (線マスクの
+ノイズ変調膨張+フェザー)。トーンウォッシュは脇役に降格。エッジの
+太さ・強調はまさに coherent line drawing の得意分野なので、アニメ線と
+同じ ETF 基盤に乗る。
+
+**生成系 (本物の「AI フィルタ」)** — StreamDiffusion
+([arXiv:2312.12491](https://arxiv.org/html/2312.12491v1)) が
+SD-Turbo + TensorRT で 91fps@512 (4090)。後継 StreamDiffusionV2・
+Live2Diff (単方向時間注意でライブ配信向け)・StreamV2V (feature bank)。
+任意の画風 (「ゴッホで」「浮世絵で」がプロンプト 1 行) になる代わり、
+決定性・golden 契約・依存ゼロは全部外れる → fluent_scene の外
+(fv ノード / 別プロセス) に置き、fluent_scene は合成に徹する。
+
+### 7.2 野心の階段 (どの段で作るかを選ぶ)
+
+| 段 | 内容 | 得られる質 | 破る契約 |
+|---|---|---|---|
+| A. 単一パス改良 | v2 impressionist がこの上限例 | 様式の記号は出る | なし |
+| B. 多パス+状態 (persistent_buffers P1/P2) | ETF/FDoG 線・実 bleed・LIC・JFA lowpoly | 2010 年代 NPR の本来品質。アニメ線/水墨エッジ/水彩滲みはここで別物になる | 機構追加 (設計凍結済 doc あり)、golden は「N フレーム後比較」に一般化 |
+| C. ニューラル外段 (ONNX/TensorRT、ブラウザは onnxruntime-web) | AnimeGANv3・Paint Transformer 系・StreamDiffusion | 「本物の油絵/アニメ」。任意画風 | 決定性・自己完結。fluent_scene 本体でなく外段ノードとして |
+
+推奨: **B を本線** (アニメ線・水墨エッジ・水彩 bleed の 3 つが同じ ETF/
+多パス基盤に乗る = 一石三鳥)、C は Thor 上の AnimeGANv3 ONNX を PoC。
+紙テクスチャの画像パラメータ化 (FS_FILTER_IMG) は A のまま今すぐできる。
