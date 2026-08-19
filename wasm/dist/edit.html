@@ -136,7 +136,18 @@
           border-radius: 16px; background: var(--glass); border: 1px solid var(--line);
           backdrop-filter: blur(20px); display: flex; flex-direction: column; gap: 6px;
           box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45); }
-  #toolbar { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+  #toolbar { display: flex; gap: 7px; align-items: center; flex-wrap: nowrap; }
+  #more { position: relative; }
+  #moreMenu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+          display: flex; flex-direction: column; gap: 2px; min-width: 160px;
+          background: rgba(16, 13, 28, 0.97); border: 1px solid var(--line);
+          border-radius: 12px; padding: 5px;
+          box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5); }
+  #moreMenu[hidden] { display: none; }
+  #toolbar #moreMenu button { border: none; background: none; border-radius: 8px;
+          text-align: left; padding: 7px 10px; font-size: 12.5px; width: 100%; }
+  #toolbar #moreMenu button:hover { background: rgba(255, 255, 255, 0.07);
+          transform: none; border: none; }
   #toolbar button { background: rgba(255,255,255,0.035); color: var(--ink);
           border: 1px solid var(--line); border-radius: 999px; padding: 5px 13px;
           font-size: 12.5px; cursor: pointer; transition: 0.15s; }
@@ -189,10 +200,10 @@
           stroke: rgba(255, 255, 255, 0.22); stroke-width: 1; transition: 0.12s; }
   #edgeSvg .cutbtn text { font-size: 11px; fill: #cfc9e8; user-select: none; }
   #edgeSvg .cutbtn:hover circle { stroke: var(--coral); fill: rgba(60, 20, 25, 0.95); }
-  .gnode { position: absolute; z-index: 2; width: 150px;
+  .gnode { position: absolute; z-index: 2; width: 104px;
           background: rgba(22, 19, 38, 0.94); border: 1px solid var(--line);
-          border-left: 3px solid var(--ac, var(--violet)); border-radius: 13px;
-          padding: 8px 12px 7px; cursor: grab; touch-action: none;
+          border-left: 3px solid var(--ac, var(--violet)); border-radius: 11px;
+          padding: 7px 9px 6px; cursor: grab; touch-action: none;
           transition: box-shadow 0.2s; }
   .gnode.sel { border-color: var(--ac, var(--violet));
           box-shadow: 0 0 0 1px var(--ac, var(--violet)), 0 0 24px color-mix(in srgb, var(--ac, var(--violet)) 45%, transparent); }
@@ -201,12 +212,13 @@
   .gnode.pop { animation: pop 0.42s cubic-bezier(0.24, 1.6, 0.4, 1); }
   @keyframes pop { 0% { transform: scale(0.2); opacity: 0; }
                    65% { transform: scale(1.1); opacity: 1; } 100% { transform: none; } }
-  .gnode .emoji { position: absolute; left: 10px; top: 8px; font-size: 17px; }
-  .gnode .jname { font-size: 12.5px; font-weight: 700; white-space: nowrap;
-          overflow: hidden; text-overflow: ellipsis; padding: 0 22px 0 24px; }
-  .gnode .ename { font: 9.5px ui-monospace, monospace; color: var(--faint);
-          white-space: nowrap; padding-left: 24px; }
-  .gnode .pw { position: absolute; top: 7px; right: 22px; width: 13px; height: 13px;
+  .gnode .emoji { position: absolute; left: 7px; top: 9px; font-size: 15px; }
+  .gnode .jname { font-size: 12px; font-weight: 700; white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis; padding: 0 20px 0 21px; }
+  .gnode .ename { font: 9px ui-monospace, monospace; color: var(--faint);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          padding-left: 21px; }
+  .gnode .pw { position: absolute; top: 7px; right: 20px; width: 13px; height: 13px;
           border-radius: 50%; border: 1px solid var(--faint); background: transparent;
           cursor: pointer; padding: 0; }
   .gnode:not(.off) .pw { background: var(--ac, var(--cyan)); border-color: transparent;
@@ -448,7 +460,9 @@
     #srcTag { font-size: 10px; padding: 3px 8px; }
     #pill { top: auto; bottom: 14px; font-size: 10px; }
     #hint { max-width: 55vw; overflow: hidden; text-overflow: ellipsis; }
-    #tail { flex-wrap: wrap; }
+    #toolbar { gap: 4px; }
+    #toolbar button { padding: 4px 8px; font-size: 11px; }
+    #viewTabs button { padding: 4px 9px; }
   }
 </style>
 <div id="aurora"><i></i><i></i><i></i></div>
@@ -505,15 +519,18 @@
     <button id="tbShader" hidden title="AIにシェーダを書かせる最終パス">🧪 シェーダ</button>
     <button id="tbUndo" title="もとに戻す (Ctrl+Z)">↩</button>
     <button id="tbTidy" title="ノードを自動整列 (画面外の迷子も回収)">⊞ 整理</button>
-    <button id="tbReset" title="グラフを最初から">🧹</button>
     <span id="zoomCtl" style="display:flex;gap:4px;align-items:center">
       <button id="zoomOut" title="縮小">−</button><button id="zoomPct"
-        title="100%に戻す">100%</button><button id="zoomIn" title="拡大">＋</button>
+        title="全体が見える倍率に">100%</button><button id="zoomIn" title="拡大">＋</button>
     </span>
     <span id="tail">
-      <span id="share">
-        <button id="btnShare" title="共有リンクをコピー">🔗</button>
-        <button id="btnSnap" title="PNGスナップ">📸</button>
+      <span id="more">
+        <button id="tbMore" title="その他">⋯</button>
+        <div id="moreMenu" hidden>
+          <button id="btnShare" title="共有リンクをコピー">🔗 共有リンク</button>
+          <button id="btnSnap" title="PNGスナップ">📸 スナップ</button>
+          <button id="tbReset" title="グラフを最初から">🧹 リセット</button>
+        </div>
       </span>
       <button id="dockClose" title="しまう (✏️編集で再表示)">✕</button>
     </span>
@@ -660,7 +677,7 @@ import createFluentScene from './fluent_scene.mjs';
 
 const STAGE_W = 1280, STAGE_H = 720;
 const SEG_W = 256, SEG_H = 144;
-const NODE_W = 150, NODE_H = 52;
+const NODE_W = 104, NODE_H = 52;
 const MAX_FILTERS = 14;                 // total filter nodes in the graph
 
 const $ = id => document.getElementById(id);
@@ -1390,11 +1407,8 @@ function renderGraph() {
     hookNodeDrag(card, n);
     gInner.append(card);
   }
-  if (justAddedId) {
-    const n = nodeById(justAddedId);
-    if (n) $('graph').scrollTo({ left: Math.max(0, n.x - 300),
-                                 top: Math.max(0, n.y - 120), behavior: 'smooth' });
-  }
+  sizeGInner();
+  if (justAddedId && nodeById(justAddedId)) fitAll();
   justAddedId = null;
   drawEdges();
 }
@@ -1565,6 +1579,34 @@ $('yamlPaneCopy').addEventListener('click', e =>
 
 // ---- graph zoom (Ctrl+ホイール / ±) ----------------------------------------
 let graphZoom = 1;
+// コンテンツに合わせて作業平面を広げる (深いチェーンが2200pxで頭打ちしない)
+function sizeGInner() {
+  let mx = 1200, my = 360;
+  for (const n of nodes) {
+    mx = Math.max(mx, n.x + NODE_W);
+    my = Math.max(my, n.y + nodeH(n));
+  }
+  gInner.style.width = (mx + 200) + 'px';
+  gInner.style.height = (my + 120) + 'px';
+}
+// 全ノードが視界に収まるようズーム+スクロールを再設定 (ノード座標は動かさない)
+// スケールだけ変えて scrollLeft が古いままだと左外へ消えるので必ず両方リセット
+function fitAll() {
+  const g = $('graph');
+  if (!nodes.length || !g.clientWidth) return;
+  const x0 = Math.min(...nodes.map(n => n.x)) - 30;
+  const y0 = Math.min(...nodes.map(n => n.y)) - 24;
+  const x1 = Math.max(...nodes.map(n => n.x + NODE_W)) + 30;
+  const y1 = Math.max(...nodes.map(n => n.y + nodeH(n))) + 24;
+  const z = Math.max(0.4, Math.min(1,
+      g.clientWidth / (x1 - x0), g.clientHeight / (y1 - y0)));
+  graphZoom = Math.round(z * 100) / 100;
+  gInner.style.transformOrigin = '0 0';
+  gInner.style.transform = graphZoom === 1 ? '' : `scale(${graphZoom})`;
+  $('zoomPct').textContent = Math.round(graphZoom * 100) + '%';
+  g.scrollLeft = Math.max(0, x0 * graphZoom);
+  g.scrollTop = Math.max(0, y0 * graphZoom);
+}
 function setZoom(z, cx, cy) {
   z = Math.max(0.4, Math.min(1.5, Math.round(z * 100) / 100));
   const g = $('graph');
@@ -1580,9 +1622,18 @@ function setZoom(z, cx, cy) {
   g.scrollTop = gy * z - ay;
   $('zoomPct').textContent = Math.round(z * 100) + '%';
 }
+$('tbMore').addEventListener('click', e => {
+  e.stopPropagation();
+  $('moreMenu').hidden = !$('moreMenu').hidden;
+});
+$('moreMenu').addEventListener('click', () =>
+    setTimeout(() => { $('moreMenu').hidden = true; }, 150));
+document.addEventListener('click', e => {
+  if (!e.target.closest('#more')) $('moreMenu').hidden = true;
+});
 $('zoomIn').addEventListener('click', () => setZoom(graphZoom * 1.15));
 $('zoomOut').addEventListener('click', () => setZoom(graphZoom / 1.15));
-$('zoomPct').addEventListener('click', () => setZoom(1));
+$('zoomPct').addEventListener('click', () => fitAll());
 $('graph').addEventListener('wheel', e => {
   // 素のホイール=ズーム (ノードエディタ標準)。パンは背景ドラッグで
   e.preventDefault();
@@ -1610,10 +1661,10 @@ $('tbTidy').addEventListener('click', () => {
   for (const d of Object.keys(cols)) {
     const arr = cols[d];
     arr.sort((a, b) => a.y - b.y);
-    arr.forEach((n, i) => { n.x = 50 + d * 200; n.y = 60 + i * 100; });
+    arr.forEach((n, i) => { n.x = 40 + d * 150; n.y = 50 + i * 92; });
   }
   applyGraph(true);
-  $('graph').scrollTo({ left: 0, top: 0, behavior: 'smooth' });
+  fitAll();
   say('整理しました — 左から入力→…→出力の順です');
 });
 
@@ -1673,9 +1724,19 @@ function applyGraph(structural) {
 
 // ---- toolbar ---------------------------------------------------------------
 function freeSpot(nearX, nearY) {
-  let x = nearX, y = nearY;
-  while (nodes.some(n => Math.abs(n.x - x) < 60 && Math.abs(n.y - y) < 46)) { x += 26; y += 30; }
-  return [Math.min(1900, x), Math.min(480, y)];
+  // 現在の可視域へクランプ — 画面外スポーンの根絶
+  const g = $('graph'), z = graphZoom;
+  const vx0 = g.scrollLeft / z, vy0 = g.scrollTop / z;
+  const vw = Math.max(300, g.clientWidth / z), vh = Math.max(200, g.clientHeight / z);
+  let x = Math.max(vx0 + 12, Math.min(nearX, vx0 + vw - NODE_W - 24));
+  let y = Math.max(vy0 + 10, Math.min(nearY, vy0 + vh - 90));
+  let guard = 0;
+  while (guard++ < 60 &&
+         nodes.some(n => Math.abs(n.x - x) < 60 && Math.abs(n.y - y) < 46)) {
+    x += 26; y += 30;
+    if (y > vy0 + vh - 70) y = vy0 + 14;
+  }
+  return [x, y];
 }
 $('tbFilter').addEventListener('click', () => openPalette());
 $('tbAdd').addEventListener('click', () => openPalette());
@@ -1692,7 +1753,7 @@ $('tbPerson').addEventListener('click', () => {
   // becomes the 背景 side, the 人物 side goes clean to the front
   const src = selectedSrc() || nodes.find(n => n.type === 'src');
   const out = outNode();
-  const [x, y] = freeSpot(src.x + 190, src.y + 90);
+  const [x, y] = freeSpot(src.x + 150, src.y + 90);
   const pn = addNode('person', x, y);
   const oldOuts = edges.filter(e => e.from === src.id);
   edges = edges.filter(e => e.from !== src.id);
@@ -1711,7 +1772,7 @@ $('tbHands').addEventListener('click', () => {
   // 枠外は素通し — 追加した瞬間から「指フレームの中だけフィルタ」になる
   const src = selectedSrc() || nodes.find(n => n.type === 'src');
   const out = outNode();
-  const [x, y] = freeSpot(src.x + 190, src.y + 90);
+  const [x, y] = freeSpot(src.x + 150, src.y + 90);
   const hn = addNode('hands', x, y);
   const oldOuts = edges.filter(e => e.from === src.id);
   edges = edges.filter(e => e.from !== src.id);
@@ -2116,11 +2177,11 @@ function loadHash() {
 const legacy = list => {          // old #c= / #s= chain links → linear graph
     nodes = []; edges = []; nextId = 1;
     const src = addNode('src', 40, 140, { kind: 'camera' });
-    const out = addNode('out', 40 + 190 * (list.length + 1), 140);
+    const out = addNode('out', 40 + 150 * (list.length + 1), 140);
     let prev = src;
     for (const o of list) {
       if (!SPEC[o.n]) continue;
-      const f = addNode('filter', prev.x + 190, 140, { name: o.n, params: o.v || {} });
+      const f = addNode('filter', prev.x + 150, 140, { name: o.n, params: o.v || {} });
       if (o.x) f.on = false;
       connect(prev.id, 0, f.id);
       prev = f;
@@ -2209,7 +2270,7 @@ function spliceNodeAfterSelected(n2) {
   const sel = nodeById(selId) || nodes.find(n => n.type === 'src');
   if (sel && sel.type !== 'out' && sel !== n2) {
     const e = edges.find(x => x.from === sel.id);
-    n2.x = Math.min(1900, sel.x + 190);
+    n2.x = Math.min(1900, sel.x + 150);
     n2.y = sel.y;
     if (e) {
       const toId = e.to, fp = e.fp;
@@ -2217,7 +2278,7 @@ function spliceNodeAfterSelected(n2) {
       connect(sel.id, fp, n2.id);
       connect(n2.id, 0, toId);
       const to = nodeById(toId);
-      if (to && to.x < n2.x + 190) to.x = n2.x + 190;
+      if (to && to.x < n2.x + 150) to.x = n2.x + 150;
     } else {
       connect(sel.id, sel.type === 'person' || sel.type === 'hands' ? 1 : 0, n2.id);
     }
@@ -2237,7 +2298,7 @@ function addFilterNode(name, params = {}) {
   let spliceEdge = null;
   if (sel && sel.type !== 'out') {
     spliceEdge = edges.find(e => e.from === sel.id);
-    x = sel.x + 190;
+    x = sel.x + 150;
     y = sel.y + (spliceEdge ? 0 : 0);
   }
   const [fx, fy] = spliceEdge ? [x, nodeById(spliceEdge.to).type === 'out' ? sel.y : sel.y]
@@ -2250,7 +2311,7 @@ function addFilterNode(name, params = {}) {
     connect(f.id, 0, toId);
     // nudge downstream nodes right so the row keeps breathing room
     const to = nodeById(toId);
-    if (to && to.x < f.x + 190) to.x = f.x + 190;
+    if (to && to.x < f.x + 150) to.x = f.x + 150;
   } else if (sel && sel.type !== 'out') {
     connect(sel.id, sel.type === 'person' ? 1 : 0, f.id);
   }
@@ -2429,13 +2490,13 @@ async function setBranchChain(spec, comment, pick = null) {
     if (!e) return;                            // user rewired mid-animation
     const f = addNode('filter', 0, 0, { name, params: over || {} });
     const a = nodeById(cur.id);
-    f.x = Math.min(1900, a.x + 190);
+    f.x = Math.min(1900, a.x + 150);
     f.y = a.type === 'person' || a.type === 'hands' ? a.y + (cur.fp === 0 ? -14 : 52) : a.y;
     edges = edges.filter(x => x !== e);
     connect(cur.id, cur.fp, f.id);
     connect(f.id, 0, tailId);
     const tailN = nodeById(tailId);
-    if (tailN.x < f.x + 190) tailN.x = f.x + 190;
+    if (tailN.x < f.x + 150) tailN.x = f.x + 150;
     selId = justAddedId = f.id;
     cur = { id: f.id, fp: 0 };
     applyGraph(true);
@@ -2455,7 +2516,7 @@ function applyTransformAsk(xf, pick = null) {
     const outId = outNode().id;
     const e = edges.find(x => x.from === headId && x.fp === headFp && x.to === outId);
     const a = nodeById(headId);
-    xn = addNode('xform', Math.min(1900, a.x + 190), a.y,
+    xn = addNode('xform', Math.min(1900, a.x + 150), a.y,
         { pos: [STAGE_W / 2, STAGE_H / 2], rot: 0, scale: 1, op: 1 });
     if (e) edges = edges.filter(x => x !== e);
     connect(headId, headFp, xn.id);
@@ -2792,7 +2853,8 @@ function catalogPrompt() {
       const [lo, hi] = rangeFor(p);
       return `${p.name}=${p.def} (${lo}..${hi})`;
     }).join(', ');
-    return `- ${f.name}: ${f.summary}${ps ? ` | params: ${ps}` : ''}`;
+    const sum = f.summary.length > 70 ? f.summary.slice(0, 70) + '…' : f.summary;
+    return `- ${f.name}: ${sum}${ps ? ` | params: ${ps}` : ''}`;
   }).join('\n');
 }
 const SYS_PROMPT = () => `あなたは映像フィルタチェーンの設計者です。ユーザーの求める見た目を、以下のフィルタカタログから1〜5個を順に適用するチェーンとして設計してください。
@@ -2813,7 +2875,7 @@ function fetchTimeout(url, opts, ms = 60000) {
   return fetch(url, { ...opts, signal: ac.signal })
       .catch(e => {
         throw (e && e.name === 'AbortError')
-            ? new Error('タイムアウト(60秒) — 接続先とキーを⚙で確認してください') : e;
+            ? new Error(`タイムアウト(${Math.round(ms / 1000)}秒) — 接続先とキーを⚙で確認してください`) : e;
       })
       .finally(() => clearTimeout(t));
 }
@@ -2845,7 +2907,7 @@ async function* sseEvents(body) {
 }
 // opts: pre = few-shot messages, onDelta(fullText) = stream into the caller,
 // maxTokens. Both providers share the same contract.
-async function askClaude(text, sys = null, { pre = [], onDelta = null, maxTokens = 2500 } = {}) {
+async function askClaude(text, sys = null, { pre = [], onDelta = null, maxTokens = 2500, ms = 120000 } = {}) {
   const r = await fetchTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -2861,7 +2923,7 @@ async function askClaude(text, sys = null, { pre = [], onDelta = null, maxTokens
       messages: [...pre, { role: 'user', content: text }],
       ...(onDelta ? { stream: true } : {}),
     }),
-  });
+  }, ms);
   if (!r.ok) throw new Error(`Claude API ${r.status}: ${(await r.text()).slice(0, 200)}`);
   if (onDelta) {
     let full = '', refused = false;
@@ -2881,7 +2943,7 @@ async function askClaude(text, sys = null, { pre = [], onDelta = null, maxTokens
   if (!block) throw new Error('テキスト応答がありません');
   return block.text;
 }
-async function askOpenAI(text, sys = null, { pre = [], onDelta = null, maxTokens = 2500 } = {}) {
+async function askOpenAI(text, sys = null, { pre = [], onDelta = null, maxTokens = 2500, ms = 120000 } = {}) {
   const base = aiCfg.oaiBase.replace(/\/$/, '');
   const headers = { 'content-type': 'application/json' };
   if (aiCfg.oaiKey) headers.authorization = 'Bearer ' + aiCfg.oaiKey;
@@ -2893,7 +2955,7 @@ async function askOpenAI(text, sys = null, { pre = [], onDelta = null, maxTokens
                  { role: 'user', content: text }],
       ...(onDelta ? { stream: true } : {}),
     }),
-  });
+  }, ms);
   if (!r.ok) throw new Error(`API ${r.status}: ${(await r.text()).slice(0, 200)}`);
   if (onDelta) {
     let full = '';
@@ -2940,8 +3002,17 @@ const aiText = $('aiText'), aiGo = $('aiGo'), aibar = $('aibar');
 async function generate() {
   const text = aiText.value.trim();
   if (!text) { const r = composeRandom(); setBranchChain(r.chain, r.comment); return; }
+  // NxN/グリッド指示はLLM不要 — その場でタイル合成を組む (タイムアウトとも無縁)
+  const grid = detectGrid(text);
+  if (grid) { buildGrid(grid.n, grid.asked); return; }
   aiGo.disabled = true;
   aibar.classList.add('busy');
+  const waitLabel = (aiCfg.prov === 'claude' && aiCfg.claudeKey)
+      ? 'Claudeが考えています…' : 'AIが考えています…';
+  let waitSec = 0;
+  const waitTimer = setInterval(() => {
+    if (aiGo.disabled) say(`${waitLabel} ${++waitSec}秒`);
+  }, 1000);
   try {
     if (aiCfg.prov === 'claude' && aiCfg.claudeKey) {
       say('Claudeが考えています…');
@@ -2981,9 +3052,55 @@ async function generate() {
     console.error('ai generate failed:', e);
     say('生成に失敗: ' + e.message, true);
   } finally {
+    clearInterval(waitTimer);
     aiGo.disabled = false;
     aibar.classList.remove('busy');
   }
+}
+
+// ---- n×n タイル合成 (監視モニタ壁) — 各タイルに別ルック --------------------
+function detectGrid(text) {
+  const m = text.match(/(\d+)\s*[x×✕*＊]\s*(\d+)/i);
+  const strong = /グリッド|タイル状|コラージュ|モニタ壁|多面/.test(text);
+  if (m) {
+    const a = Number(m[1]), b = Number(m[2]);
+    // 1280x720 のような解像度指定を誤爆させない
+    if (a >= 2 && a <= 12 && b >= 2 && b <= 12)
+      return { n: Math.min(3, Math.min(a, b)), asked: (a > 3 || b > 3) ? `${a}x${b}` : null };
+  }
+  return strong ? { n: 3, asked: null } : null;
+}
+function buildGrid(n, asked) {
+  const keep = selectedSrc() || nodes.find(x => x.type === 'src');
+  for (const x of nodes) if (x.type === 'src' && x !== keep) releaseSource(x);
+  const out = outNode();
+  nodes = [keep, out];
+  edges = [];
+  const midY = 30 + ((n - 1) * 130) / 2;
+  keep.x = 20;
+  keep.y = midY;
+  out.x = 170 + n * 310;
+  out.y = midY;
+  // ルック集から均等に散らして1タイル1フィルタ (負荷と上限の折衷)
+  const step = Math.max(1, Math.floor(LOOK_PRESETS.length / (n * n)));
+  for (let i = 0; i < n * n; i++) {
+    const col = i % n, row = (i / n) | 0;
+    const look = LOOK_PRESETS[(i * step) % LOOK_PRESETS.length];
+    const first = look.chain.find(c => SPEC[c.name]) || { name: 'grayscale', params: {} };
+    const f = addNode('filter', 170 + col * 310, 30 + row * 130,
+                      { name: first.name, params: first.params || {} });
+    const xf = addNode('xform', 320 + col * 310, 30 + row * 130, {
+      pos: [(col + 0.5) * STAGE_W / n, (row + 0.5) * STAGE_H / n],
+      rot: 0, scale: 1 / n, op: 1, blend: 'normal' });
+    connect(keep.id, 0, f.id);
+    connect(f.id, 0, xf.id);
+    connect(xf.id, 0, out.id);
+  }
+  selId = null;
+  applyGraph(true);
+  fitAll();
+  say((asked ? asked + ' はさすがに重すぎるので ' : '') +
+      `${n}×${n} の監視モニタ壁にしました — 各タイル別ルック、フィルタは差し替え自由`);
 }
 aiGo.addEventListener('click', generate);
 aiText.addEventListener('keydown', e => { if (e.key === 'Enter') generate(); });
