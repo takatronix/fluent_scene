@@ -187,11 +187,21 @@
   .port .plabel { position: absolute; right: 18px; top: -2px; font-size: 9px;
           color: var(--dim); white-space: nowrap; pointer-events: none; }
 
-  /* ---- inspector ---- */
-  #inspector { display: grid; gap: 8px 20px;
-          grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); min-height: 24px; }
-  #inspector .row input[type=range] { flex: 1; width: auto; min-width: 90px; }
-  #inspHead { display: flex; align-items: baseline; gap: 10px; width: 100%; }
+  /* ---- inspector: the selected node's params, a VERTICAL scrolling
+     column to the RIGHT of the graph (owner request — the horizontal strip
+     was unreadable and pushed everything below the fold) ---- */
+  #dockMain { display: flex; gap: 12px; flex: 1; min-height: 0; align-items: stretch; }
+  #dockMain #graph { flex: 1; min-width: 0; height: auto; min-height: 220px; }
+  #insp { width: 234px; flex: none; display: flex; flex-direction: column; gap: 8px;
+          min-height: 0; overflow-y: auto; overflow-x: hidden; padding-left: 12px;
+          border-left: 1px solid var(--line); scrollbar-width: thin;
+          scrollbar-color: #2c2745 transparent; }
+  #inspector { display: flex; flex-direction: column; gap: 10px; min-height: 24px; }
+  #inspector .row input[type=range] { flex: 1; width: auto; min-width: 0; }
+  #inspector .minmax { display: flex; justify-content: space-between;
+          font: 10px ui-monospace, monospace; color: var(--faint); margin-top: -3px; }
+  #inspHead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; }
+  #inspHead .psum { flex-basis: 100%; white-space: normal !important; }
   #inspHead .pname { font: 700 13px ui-monospace, monospace; color: var(--cyan); }
   #inspHead .psum { font-size: 11px; color: var(--faint); flex: 1; overflow: hidden;
           text-overflow: ellipsis; white-space: nowrap; }
@@ -311,8 +321,9 @@
   body.theater #aiSay { position: fixed; left: 0; right: 0; bottom: 72px; z-index: 30;
           margin: 0; text-shadow: 0 1px 6px #000; pointer-events: none; }
   body.theater #dock { position: fixed; right: 16px; top: 16px; z-index: 25;
-          width: min(640px, 94vw); height: auto; max-height: 86vh; min-width: 250px;
-          min-height: 42px; overflow: auto; resize: both;
+          width: min(720px, 94vw); height: min(560px, 86vh); max-height: 92vh;
+          min-width: 250px;
+          min-height: 42px; overflow: hidden; resize: both;
           background: rgba(13, 11, 24, 0.94); backdrop-filter: blur(20px);
           -webkit-backdrop-filter: blur(20px);
           box-shadow: 0 30px 90px rgba(0, 0, 0, 0.8); }
@@ -350,6 +361,9 @@
     .port.out { right: -11px; }
     #toolbar .tip { display: none; }
     #graph { height: 240px; }
+    #dockMain { flex-direction: column; }
+    #insp { width: 100%; border-left: none; padding-left: 0; max-height: 250px;
+            border-top: 1px solid var(--line); padding-top: 8px; }
     /* the top strip is tight on a phone: sources shrink, fps pill moves down */
     #srcBtns button { padding: 4px 8px; font-size: 12px; }
     #srcTag { font-size: 10px; padding: 3px 8px; }
@@ -415,6 +429,7 @@
       <label><input id="anim" type="checkbox" checked> アニメ</label>
     </span>
   </div>
+  <div id="dockMain">
   <div id="graph" title="●出力ポート→●入力ポートへドラッグで接続 / 線タップで切断 / 入力●からドラッグで繋ぎ替え / 縦位置=重なり順(下=手前)"><div id="gInner">
     <svg id="edgeSvg">
       <!-- userSpaceOnUse: the default objectBoundingBox degenerates (and the
@@ -429,12 +444,16 @@
       <path id="tempEdge" class="temp" d=""/>
     </svg>
   </div></div>
-  <div id="inspHead" hidden>
-    <span class="pname"></span><span class="psum"></span>
-    <button id="paramReset">リセット</button>
+  <div id="insp">
+    <div id="inspHead" hidden>
+      <span class="pname"></span><span class="psum"></span>
+      <button id="paramRand" title="パラメータをランダムに振る">🎲</button>
+      <button id="paramReset">リセット</button>
+    </div>
+    <div id="inspector">
+      <span id="params" style="display:contents"></span>
+    </div>
   </div>
-  <div id="inspector">
-    <span id="params" style="display:contents"></span>
   </div>
   <div id="presets">
     <span id="presetBtns" style="display:contents"></span>
@@ -1500,6 +1519,7 @@ function renderInspector() {
   if (!n) {
     inspHead.hidden = false;
     $('paramReset').hidden = true;
+    $('paramRand').hidden = true;
     inspHead.querySelector('.pname').textContent = '👆 ノードをタップ';
     inspHead.querySelector('.psum').textContent =
         'グラフのノードを選ぶと、ここにそのノードのパラメータUIが出ます';
@@ -1508,6 +1528,7 @@ function renderInspector() {
   const m = nodeMeta(n);
   inspHead.hidden = false;
   $('paramReset').hidden = n.type !== 'filter';
+  $('paramRand').hidden = n.type !== 'filter';
   inspHead.querySelector('.pname').textContent = m.emoji + ' ' + m.j + ' · ' + m.e;
   inspHead.querySelector('.psum').textContent =
       n.type === 'filter' ? SPEC[n.name].summary
@@ -1619,9 +1640,27 @@ function sliderRow(name, lo, hi, step, val, onInput) {
     onInput(v);
   });
   row.append(input, out);
-  label.append(name, row);
+  const mm = document.createElement('div');
+  mm.className = 'minmax';
+  const fmt = v => Number(v).toFixed(step >= 1 ? 0 : (Math.abs(v) >= 10 ? 0 : 1));
+  mm.append(Object.assign(document.createElement('span'), { textContent: fmt(lo) }),
+            Object.assign(document.createElement('span'), { textContent: fmt(hi) }));
+  label.append(name, row, mm);
   return label;
 }
+$('paramRand').addEventListener('click', () => {
+  const n = nodeById(selId);
+  if (!n || n.type !== 'filter') return;
+  n.vals = SPEC[n.name].params.map((p, i) => {
+    if (p.name === 'time') return n.vals[i];
+    const [lo, hi, step] = rangeFor(p);
+    const v = lo + Math.random() * (hi - lo);
+    return step >= 1 ? Math.round(v) : v;
+  });
+  pushChains(simT);
+  saveHash();
+  renderInspector();
+});
 $('paramReset').addEventListener('click', () => {
   const n = nodeById(selId);
   if (!n || n.type !== 'filter') return;
