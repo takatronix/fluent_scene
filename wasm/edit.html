@@ -279,6 +279,14 @@
   .palitem .t small { font: 9.5px ui-monospace, monospace; color: var(--faint); font-weight: 400; }
   .palitem .d { font-size: 10.5px; color: var(--dim); }
 
+  .shchip { display: inline-flex; gap: 7px; align-items: center; font-size: 12px;
+           background: rgba(183, 240, 126, 0.08); border: 1px solid rgba(183, 240, 126, 0.3);
+           color: var(--ink); border-radius: 999px; padding: 5px 10px; cursor: pointer;
+           transition: 0.13s; }
+  .shchip:hover { background: rgba(183, 240, 126, 0.16); border-color: rgba(183, 240, 126, 0.6); }
+  .shchip .shdel { color: var(--faint); font-size: 10px; padding: 2px 3px; border-radius: 50%; }
+  .shchip .shdel:hover { color: #ff8f8f; }
+
   #aiCfg label { display: flex; flex-direction: column; gap: 4px; font-size: 12px;
            color: var(--dim); margin-bottom: 10px; }
   #aiCfg input[type=text], #aiCfg input[type=password] { background: rgba(255,255,255,0.04);
@@ -514,6 +522,13 @@
       <button id="shOff" style="background:none;border:1px solid var(--line);color:var(--dim);border-radius:999px;padding:8px 16px;cursor:pointer">オフ</button>
       <span style="font-size:11px;color:var(--faint)">WebGL2で合成結果全体にかかります。⚙でLLMを繋ぐと指示どおりに書き、なしはテンプレ(万華鏡/波/色収差)</span>
     </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)">
+      <input id="shName" placeholder="シェーダ名 (例: うねうね万華鏡)" maxlength="40"
+        style="flex:1;background:rgba(255,255,255,0.04);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;outline:none">
+      <button id="shSave" class="save" style="padding:8px 16px">💾 保存</button>
+    </div>
+    <div id="shLib" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+    <div style="font-size:11px;color:var(--faint);margin-top:4px">保存したシェーダはこの端末に残り、パレット(+ フィルタ)の「🧪 マイシェーダ」からノードとして何個でも配線できます</div>
   </div>
 </div>
 <div id="cfgOverlay" class="overlay">
@@ -715,7 +730,8 @@ function addNode(type, x, y, extra = {}) {
   } else if (type === 'split') {
     // pure fan-out marker — compiles to nothing
   } else if (type === 'glsl') {
-    Object.assign(n, { code: extra.code || SHADER_TEMPLATES[1][1], on: true });
+    Object.assign(n, { code: extra.code || SHADER_TEMPLATES[1][1], on: true,
+        name: typeof extra.name === 'string' ? extra.name.slice(0, 40) : undefined });
   } else if (type === 'person') {
     n.feather = extra.feather ?? 5;
   } else if (type === 'hands') {
@@ -1206,7 +1222,7 @@ function nodeMeta(n) {
                                  ac: 'var(--green)', outs: ['', ''], ins: [''] };
   if (n.type === 'person') return { emoji: '🧍', j: '人物抽出', e: 'segment',
                                  ac: NODE_ACCENT.person, outs: ['人物', '背景'], ins: [''] };
-  if (n.type === 'glsl') return { emoji: '🧪', j: 'GLSLシェーダ', e: n.on ? 'glsl' : 'off',
+  if (n.type === 'glsl') return { emoji: '🧪', j: n.name || 'GLSLシェーダ', e: n.on ? 'glsl' : 'off',
                                  ac: '#b7f07e', outs: [''], ins: [''] };
   if (n.type === 'hands') return { emoji: '🖐', j: '手フレーム', e: 'hands',
                                  ac: NODE_ACCENT.hands, outs: ['枠内', '枠外'], ins: [''] };
@@ -1856,6 +1872,7 @@ function packGraph() {
       if (n.type === 'person' || n.type === 'hands') o.fe = +n.feather.toFixed(1);
       if (n.type === 'glsl') {
         o.c = n.code.slice(0, 20000);
+        if (n.name) o.nm = n.name;
         if (!n.on) o.off = 1;
       }
       if (n.type === 'mix') o.mx = [n.blend, +n.op.toFixed(2)];
@@ -1932,7 +1949,8 @@ function unpackGraph(packed) {
         } else if (o.t === 'hands' && !nodes.some(x => x.type === 'hands')) {
           n = addNode('hands', o.x, o.y, { feather: Number(o.fe) || 6 });
         } else if (o.t === 'glsl') {
-          n = addNode('glsl', o.x, o.y, { code: typeof o.c === 'string' ? o.c : undefined });
+          n = addNode('glsl', o.x, o.y, { code: typeof o.c === 'string' ? o.c : undefined,
+              name: typeof o.nm === 'string' ? o.nm : undefined });
           if (o.off) n.on = false;
         } else if (o.t === 'mix') {
           n = addNode('mix', o.x, o.y, Array.isArray(o.mx)
@@ -2069,6 +2087,48 @@ function buildPalette(q) {
     palBody.append(cat);
   }
 
+  // saved user shaders lead the filter list — each one is a wireable glsl node
+  const mine = shaderLib.filter(s => !q || s.n.toLowerCase().includes(q) ||
+                                     'シェーダ'.includes(q) || 'glsl'.includes(q));
+  if (mine.length) {
+    const cat = document.createElement('div');
+    cat.className = 'palcat';
+    const h = document.createElement('h4');
+    h.textContent = '🧪 マイシェーダ';
+    h.style.color = '#b7f07e';
+    const grid = document.createElement('div');
+    grid.className = 'palgrid';
+    for (const s of mine) {
+      const btn = document.createElement('button');
+      btn.className = 'palitem';
+      btn.style.setProperty('--ac', '#b7f07e');
+      const pe = document.createElement('span');
+      pe.className = 'pe';
+      pe.textContent = '🧪';
+      const tx = document.createElement('div');
+      const t = document.createElement('div');
+      t.className = 't';
+      t.textContent = s.n + ' ';
+      const sm = document.createElement('small');
+      sm.textContent = 'glsl';
+      t.append(sm);
+      const d = document.createElement('div');
+      d.className = 'd';
+      d.textContent = '保存した自作シェーダ';
+      tx.append(t, d);
+      btn.append(pe, tx);
+      btn.addEventListener('click', () => {
+        palOverlay.classList.remove('open');
+        const n2 = addNode('glsl', 0, 0, { code: s.c, name: s.n });
+        spliceNodeAfterSelected(n2);
+        applyGraph(true);
+        say('「' + s.n + '」をノードとして追加しました — 後段フィルタとも合成できます');
+      });
+      grid.append(btn);
+    }
+    cat.append(h, grid);
+    palBody.append(cat);
+  }
   for (const [label, names] of CATS) {
     const items = names.filter(n => SPEC[n]).filter(n => !q ||
         n.includes(q) || jaLabel(n).includes(q) || (JA[n] || ['', ''])[1].includes(q));
@@ -2703,6 +2763,53 @@ const stripFences = x => {
   const m = x.match(/```[a-z]*\s*([\s\S]*?)```/);
   return (m ? m[1] : x).trim();
 };
+// ---- shader library: named user shaders, endpoint = this browser only ------
+const SHLIB_KEY = 'fs_shader_lib';
+let shaderLib = [];
+try { shaderLib = JSON.parse(localStorage.getItem(SHLIB_KEY) || '[]'); } catch {}
+if (!Array.isArray(shaderLib)) shaderLib = [];
+shaderLib = shaderLib.filter(s => s && typeof s.n === 'string' && typeof s.c === 'string');
+function libPersist() {
+  try { localStorage.setItem(SHLIB_KEY, JSON.stringify(shaderLib)); }
+  catch (e) { say('シェーダを保存できません: ' + (e.message || e), true); }
+}
+function libSave(name, code) {
+  name = String(name || '').trim().slice(0, 40);
+  if (!name) return 'シェーダに名前をつけてください';
+  const hit = shaderLib.find(s => s.n === name);
+  if (hit) hit.c = code; else shaderLib.push({ n: name, c: code });
+  libPersist();
+  renderShLib();
+  return null;
+}
+function renderShLib() {
+  const box = $('shLib');
+  box.replaceChildren();
+  for (const s of shaderLib) {
+    const chip = document.createElement('button');
+    chip.className = 'shchip';
+    chip.title = 'クリックでエディタに読み込み';
+    chip.append('🧪 ' + s.n);
+    chip.addEventListener('click', () => {
+      $('shCode').value = s.c;
+      $('shName').value = s.n;
+      $('shErr').textContent = '';
+    });
+    const del = document.createElement('span');
+    del.className = 'shdel';
+    del.textContent = '✕';
+    del.title = 'ライブラリから削除';
+    del.addEventListener('click', e => {
+      e.stopPropagation();
+      shaderLib = shaderLib.filter(x => x !== s);
+      libPersist();
+      renderShLib();
+      say('「' + s.n + '」をライブラリから削除しました');
+    });
+    chip.append(del);
+    box.append(chip);
+  }
+}
 let shTarget = 'out';                 // 'out' = final pass / node id = branch input
 let postCode = '';
 function openShaderPanel(target) {
@@ -2711,6 +2818,8 @@ function openShaderPanel(target) {
   $('shCode').value = n ? n.code : (postCode || SHADER_TEMPLATES[1][1]);
   $('shTitle').textContent = n ? '🧪 GLSLシェーダノード — この枝の入力にかかります'
                                : '🧪 仕上げシェーダ — 出力全体への最終パス';
+  $('shName').value = (n && n.name) || '';
+  renderShLib();
   $('shErr').textContent = '';
   $('shOverlay').classList.add('open');
 }
@@ -2763,6 +2872,8 @@ async function genShader() {
       applyShader();
       if (!hit) $('shErr').textContent = '内蔵はテンプレのみ — ⚙でLLMを繋ぐと指示どおりに書きます';
     }
+    // a fresh AI shader deserves a name — suggest the prompt, save is one tap
+    if (!$('shName').value && text && !$('shErr').textContent) $('shName').value = text.slice(0, 24);
   } catch (e) { $('shErr').textContent = String(e.message || e); }
   finally { $('shGen').disabled = false; }
 }
@@ -2777,6 +2888,19 @@ $('tbShader').addEventListener('click', () => {
 $('shGen').addEventListener('click', genShader);
 $('shPrompt').addEventListener('keydown', e => { if (e.key === 'Enter') genShader(); });
 $('shApply').addEventListener('click', applyShader);
+$('shSave').addEventListener('click', () => {
+  const err = applyShader();          // compile + apply so「保存したのに映らない」が起きない
+  if (err) return;
+  const name = $('shName').value.trim().slice(0, 40);
+  const nameErr = libSave(name, $('shCode').value);
+  if (nameErr) { $('shErr').textContent = nameErr; $('shName').focus(); return; }
+  if (shTarget !== 'out') {
+    const n = nodeById(shTarget);
+    if (n && n.name !== name) { n.name = name; renderGraph(); saveHashNow(); }
+  }
+  say('「' + name + '」を保存しました — パレットの🧪マイシェーダからいつでも配線できます');
+});
+$('shName').addEventListener('keydown', e => { if (e.key === 'Enter') $('shSave').click(); });
 $('shOff').addEventListener('click', () => {
   if (shTarget === 'out') {
     postState.on = false;
@@ -3189,6 +3313,9 @@ window.__studio = {
   yaml: sceneYaml,
   // synthetic hand-frame quad (normalized coords) — headless CI has no hands
   handMask(pts, alpha = 1) { Object.assign(handPts, pts); writeHandMask(alpha); },
+  get shaderLib() { return shaderLib; },
+  saveShader: libSave,
+  buildPalette,
 };
 
 // ---- render loop -----------------------------------------------------------
