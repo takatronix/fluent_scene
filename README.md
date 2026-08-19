@@ -25,6 +25,8 @@ server-side processing; video never leaves your tab.
 
 | Demo | What it shows |
 |---|---|
+| [filter studio](https://takatronix.github.io/fluent_scene/edit.html) | GUI filter editor — chain, reorder and tune all 47 filters as nodes; ask the AI for "old camcorder footage" and watch the chain assemble itself (built-in offline composer, or your own Claude / OpenAI-compatible key — stored in localStorage only). Share links & Scene YAML export |
+| [filter lab](https://takatronix.github.io/fluent_scene/filters.html) | All 47 filters on the live webcam, one chip each — the single-source GLSL∩C++ catalog, live |
 | [Playground](https://takatronix.github.io/fluent_scene/) | The whole library running locally in a tab (CPU wasm, portrait effects) |
 | [beauty](https://takatronix.github.io/fluent_scene/beauty.html) | Beauty filter — variance-gated skin smoothing, skin-scoped whitening, 3D LUT; webcam wipe comparison |
 | [lsd](https://takatronix.github.io/fluent_scene/lsd.html) | The LSD filter — time-driven psychedelia, closed-eye visuals via webcam ([how it works](https://takatronix.github.io/fluent_scene/lsd_report.html)) |
@@ -199,4 +201,5 @@ Documentation is currently in Japanese (English versions planned):
 
 ## License
 
-[MIT](LICENSE) © 2026 takatronix
+[MIT](LICENSE) © 2026 takatronix — the one non-commercial exception
+(notebook) and full attribution live in [THIRD_PARTY.md](THIRD_PARTY.md).

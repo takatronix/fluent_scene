@@ -24,6 +24,8 @@ wasm ビルドです。サーバー処理はなく、映像はタブの外に出
 
 | デモ | 内容 |
 |---|---|
+| [filter studio](https://takatronix.github.io/fluent_scene/edit.html) | GUIフィルタエディタ — 47フィルタをノードでつなぎ・並べ替え・調整。「昔のカメラみたいに」とAIに頼むとチェーンが自動で組み上がる（内蔵オフラインAI、または自分のClaude / OpenAI互換キー。キーはlocalStorageのみ）。共有リンク・Scene YAML書き出し付き |
+| [filter lab](https://takatronix.github.io/fluent_scene/filters.html) | 全47フィルタをWebカメラでワンタップ切替 — 単一ソースGLSL∩C++のカタログ実演 |
 | [プレイグラウンド](https://takatronix.github.io/fluent_scene/) | ライブラリ一式が手元のタブで動く（CPU wasm・ポートレート演出付き） |
 | [beauty](https://takatronix.github.io/fluent_scene/beauty.html) | 美顔フィルタ — 磨皮(分散ゲートWiener)+肌限定美白+3D LUT、Webカメラでワイプ比較 |
 | [lsd](https://takatronix.github.io/fluent_scene/lsd.html) | LSD フィルタ — 時間駆動のサイケデリア、閉眼幻視対応（[解説レポート](https://takatronix.github.io/fluent_scene/lsd_report.html)） |
@@ -192,4 +194,5 @@ source ~/emsdk/emsdk_env.sh
 
 ## ライセンス
 
-[MIT](LICENSE) © 2026 takatronix
+[MIT](LICENSE) © 2026 takatronix — 例外 (notebook の非商用) と
+全出典は [THIRD_PARTY.md](THIRD_PARTY.md) に一覧。
