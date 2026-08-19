@@ -481,19 +481,30 @@ let CAM_W = 1280, CAM_H = 720;
 const grab = document.createElement('canvas');
 const grabCtx = grab.getContext('2d', { willReadFrequently: true });
 let video = null;
-try {
-  const stream = await navigator.mediaDevices.getUserMedia(
-      { video: { width: { ideal: CAM_W }, height: { ideal: CAM_H } }, audio: false });
-  video = document.createElement('video');
-  video.srcObject = stream; video.muted = true;
-  await video.play();
-  CAM_W = video.videoWidth || CAM_W;
-  CAM_H = video.videoHeight || CAM_H;
-  grab.width = CAM_W;
-  grab.height = CAM_H;
-} catch (e) {
-  bar.textContent = 'webcam: ' + e + ' (needs https or localhost)';
+async function camUp() {
+  if (video) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: CAM_W }, height: { ideal: CAM_H }, facingMode: 'user' },
+      audio: false,
+    });
+    const v = document.createElement('video');
+    v.srcObject = stream;
+    v.muted = true;
+    v.playsInline = true;                    // iOS: mandatory for inline play
+    v.setAttribute('playsinline', '');
+    await v.play();
+    video = v;
+    CAM_W = v.videoWidth || CAM_W;
+    CAM_H = v.videoHeight || CAM_H;
+    grab.width = CAM_W;
+    grab.height = CAM_H;
+  } catch (e) {
+    bar.textContent = 'webcam: ' + e + ' (needs https / タップで再試行)';
+  }
 }
+await camUp();
+document.addEventListener('pointerdown', () => { if (!video) camUp(); }, { passive: true });
 
 // ---- render loop -----------------------------------------------------------
 let last = performance.now(), frames = 0, fpsShown = 0;
