@@ -112,15 +112,6 @@
           transition: 0.15s; }
   #aibar .mini:hover { color: var(--ink); border-color: rgba(255,255,255,0.25);
           transform: translateY(-1px) rotate(15deg); }
-  #lookRow { display: flex; gap: 6px; align-items: center; overflow-x: auto;
-           width: min(93vw, 760px); margin-top: 8px; padding: 2px 4px 6px;
-           scrollbar-width: none; }
-  #lookRow::-webkit-scrollbar { display: none; }
-  #lookRow .preset { flex: none; padding: 5px 12px; font-size: 12px;
-           background: rgba(13, 11, 25, 0.72); backdrop-filter: blur(10px);
-           -webkit-backdrop-filter: blur(10px); }
-  body.theater #lookRow { position: fixed; left: 50%; transform: translateX(-50%);
-           bottom: 74px; z-index: 30; margin: 0; }
   #aiSay { min-height: 18px; font-size: 12.5px; color: var(--dim); margin-top: 7px;
            text-align: center; padding: 0 12px; }
   #aiSay b { color: var(--cyan); font-weight: 600; }
@@ -485,12 +476,13 @@
   <input id="aiText" placeholder="どんな見た目にしたい?">
   <button id="aiGo">生成</button>
   <button id="aiDice" class="mini" title="おまかせ">🎲</button>
+  <button id="aiLooks" class="mini" title="ルックプリセット">🎨</button>
   <button id="aiGear" class="mini" title="AI設定">⚙</button>
 </div>
-<div id="lookRow"></div>
 <div id="aiSay"></div>
 <div id="dock">
   <div id="dockBar"><span>🎛 フィルタ</span><span class="sp"></span>
+    <button id="inspToggle" title="パラメータパネルの表示/非表示">⫿</button>
     <button id="dockMin" title="最小化">–</button>
     <button id="dockClose" title="しまう">✕</button>
   </div>
@@ -560,6 +552,15 @@
 </div>
 <div id="bar">loading wasm…</div>
 <button id="dockRestore" title="フィルタウィンドウを開く">🎛</button>
+
+<div id="lookOverlay" class="overlay">
+  <div class="panel">
+    <button class="close" data-close="lookOverlay">✕</button>
+    <h3>ルックプリセット</h3>
+    <input id="lookSearch" placeholder="検索… (「夕焼け」「ホラー」「ゴッホ」)">
+    <div id="lookBody"></div>
+  </div>
+</div>
 
 <div id="palOverlay" class="overlay">
   <div class="panel">
@@ -1971,6 +1972,11 @@ function sliderRow(name, lo, hi, step, val, onInput) {
   label.append(name, row, mm);
   return label;
 }
+if (localStorage.getItem('fs_insp_hidden') === '1') document.body.classList.add('inspHidden');
+$('inspToggle').addEventListener('click', () => {
+  const on = document.body.classList.toggle('inspHidden');
+  localStorage.setItem('fs_insp_hidden', on ? '1' : '0');
+});
 $('paramRand').addEventListener('click', () => {
   const n = nodeById(selId);
   if (!n || n.type !== 'filter') return;
@@ -2443,31 +2449,191 @@ function say(text, isErr = false) {
 }
 
 // ---- presets ---------------------------------------------------------------
-const PRESETS = [
-  ['📼 VHSの夜', [['ntsc', { noise: 0.15 }], ['crt', {}]]],
-  ['🎬 シネマ', [['color_transform', { contrast: 1.15, saturation: 0.85 }], ['vignette', { start: 0.3 }]]],
-  ['🌸 アニメ', [['anime', { lines: 0 }], ['inkline', {}]]],
-  ['🖌 水墨画', [['sumie', {}]]],
-  ['🖼 ゴッホ', [['impressionist', {}]]],
-  ['💧 水彩', [['watercolor', {}]]],
-  ['✏️ ラクガキ帳', [['notebook', {}], ['wobble', {}]]],
-  ['🕹 レトロゲーム', [['pixelart', {}], ['crt', { curvature: 0.08 }]]],
-  ['👻 ホラー', [['grayscale', {}], ['vignette', { start: 0.15, end: 0.75 }], ['ntsc', { noise: 0.3, artifacts: 0.9 }]]],
-  ['🫧 ドリーミー', [['bilateral', { radius: 6 }], ['exposure', { stops: 0.35 }], ['vignette', {}]]],
-  ['⛪ 大聖堂', [['stainedglass', {}]]],
-  ['👁 トリップ', [['lsd', {}]]],
+const LOOK_PRESETS = [
+  // ---- シネマ ----
+  { cat: 'シネマ', emoji: '🌅', name: 'ゴールデンアワー', keys: ['夕方', '夕焼け', '黄昏', 'ゴールデン', '暖かい光'],
+    chain: [{ name: 'white_balance', params: { temperature: 0.55, tint: 0.05 } },
+            { name: 'exposure', params: { stops: 0.2 } },
+            { name: 'vignette', params: { start: 0.45, end: 1.0 } }] },
+  { cat: 'シネマ', emoji: '🌌', name: 'ムーンライト', keys: ['夜', '月', 'ムーンライト', '夜っぽく', 'ナイト'],
+    chain: [{ name: 'white_balance', params: { temperature: -0.6 } },
+            { name: 'exposure', params: { stops: -0.25 } },
+            { name: 'color_transform', params: { saturation: 0.75 } },
+            { name: 'vignette', params: {} }] },
+  { cat: 'シネマ', emoji: '🎞', name: 'フィルムノワール', keys: ['ノワール', '白黒映画', 'モノクロ映画', 'ハードボイルド'],
+    chain: [{ name: 'grayscale', params: {} },
+            { name: 'levels', params: { min: 0.06, max: 0.92, gamma: 0.85 } },
+            { name: 'vignette', params: { start: 0.3, end: 0.95 } }] },
+  { cat: 'シネマ', emoji: '🟦', name: 'ティール&オレンジ', keys: ['映画', 'シネマ', 'ハリウッド', '映画っぽく', 'ティール'],
+    chain: [{ name: 'white_balance', params: { temperature: 0.35, tint: -0.15 } },
+            { name: 'color_transform', params: { contrast: 1.18, saturation: 1.15 } },
+            { name: 'vignette', params: { start: 0.55, end: 1.05 } }] },
+  { cat: 'シネマ', emoji: '🌫', name: '靄の朝', keys: ['霧', '靄', 'もや', '朝', 'ミスト'],
+    chain: [{ name: 'haze', params: { distance: -0.15, slope: 0.2 } },
+            { name: 'white_balance', params: { temperature: -0.25 } },
+            { name: 'blur', params: { radius: 1.0 } }] },
+  // ---- レトロ ----
+  { cat: 'レトロ', emoji: '📼', name: '深夜のVHS', keys: ['vhs', 'ビデオ', 'テープ', '90年代', '平成'],
+    chain: [{ name: 'ntsc', params: { noise: 0.18, artifacts: 1.0 } },
+            { name: 'crt', params: {} }] },
+  { cat: 'レトロ', emoji: '🎞', name: '8ミリフィルム', keys: ['8ミリ', 'フィルム', '昔の映像', 'ホームビデオ', '昭和の映像'],
+    chain: [{ name: 'sepia', params: { intensity: 0.45 } },
+            { name: 'wobble', params: { amount: 2.5, fps: 12 } },
+            { name: 'ntsc', params: { noise: 0.12, artifacts: 0.2, fringing: 0.1 } },
+            { name: 'vignette', params: { start: 0.35, end: 1.0 } }] },
+  { cat: 'レトロ', emoji: '🟤', name: '古い写真', keys: ['古い写真', 'セピア', 'アンティーク', '色あせ'],
+    chain: [{ name: 'sepia', params: { intensity: 0.8 } },
+            { name: 'blur', params: { radius: 0.8 } },
+            { name: 'levels', params: { min: 0.08, max: 0.9 } },
+            { name: 'vignette', params: {} }] },
+  { cat: 'レトロ', emoji: '📰', name: '新聞写真', keys: ['新聞', 'ハーフトーン', '網点', '印刷'],
+    chain: [{ name: 'grayscale', params: {} },
+            { name: 'color_transform', params: { contrast: 1.3 } },
+            { name: 'halftone', params: { spacing: 5 } }] },
+  { cat: 'レトロ', emoji: '🖨', name: 'コピー機', keys: ['コピー', '白黒2値', 'スキャン'],
+    chain: [{ name: 'grayscale', params: {} },
+            { name: 'levels', params: { min: 0.35, max: 0.65 } }] },
+  { cat: 'レトロ', emoji: '☀️', name: '昭和の夏休み', keys: ['昭和', '夏休み', 'ノスタルジ', 'なつかしい'],
+    chain: [{ name: 'sepia', params: { intensity: 0.3 } },
+            { name: 'haze', params: { distance: -0.1, slope: 0.15 } },
+            { name: 'exposure', params: { stops: 0.15 } },
+            { name: 'wobble', params: { amount: 1.5, fps: 8 } }] },
+  // ---- アート ----
+  { cat: 'アート', emoji: '🖌', name: '水墨画', keys: ['水墨', '墨', 'sumi', '書', '和風'],
+    chain: [{ name: 'sumie', params: {} }] },  // studio側でpaper自動バインド
+  { cat: 'アート', emoji: '🏔', name: '水墨・抽象', keys: ['水墨 抽象', '墨 抽象'],
+    chain: [{ name: 'oilpaint', params: { radius: 8 } }, { name: 'sumie', params: {} }] },
+  { cat: 'アート', emoji: '💧', name: '水彩', keys: ['水彩', 'watercolor', '淡彩'],
+    chain: [{ name: 'watercolor', params: {} }] },
+  { cat: 'アート', emoji: '💦', name: '水彩・にじみ強', keys: ['にじみ', '水彩 強'],
+    chain: [{ name: 'watercolor', params: { wash: 10, edge: 1.5, wobble: 1.4 } }] },
+  { cat: 'アート', emoji: '🖼', name: '印象派', keys: ['印象派', 'モネ', '筆致'],
+    chain: [{ name: 'impressionist', params: {} }] },
+  { cat: 'アート', emoji: '🌻', name: 'ゴッホ風・強', keys: ['ゴッホ', 'ひまわり', '星月夜', '渦'],
+    chain: [{ name: 'impressionist', params: { stroke: 11, vibrance: 1.3, relief: 1.2 } }] },
+  { cat: 'アート', emoji: '🎨', name: '油絵', keys: ['油絵', '油彩', '絵画'],
+    chain: [{ name: 'oilpaint', params: { radius: 7, levels: 20 } }, { name: 'median', params: {} }] },
+  { cat: 'アート', emoji: '🌸', name: 'アニメ', keys: ['アニメ', 'セル画', '漫画', 'マンガ', 'cartoon'],
+    chain: [{ name: 'anime', params: { lines: 0 } }, { name: 'inkline', params: {} }] },
+  { cat: 'アート', emoji: '🖋', name: '線画', keys: ['線画', 'ラインアート', 'ペン画', '線だけ'],
+    chain: [{ name: 'color_transform', params: { saturation: 0, brightness: 0.35, contrast: 0.7 } },
+            { name: 'inkline', params: { ink: 1.3, width: 2.0 } }] },
+  { cat: 'アート', emoji: '✏️', name: '鉛筆ノート', keys: ['鉛筆', 'スケッチ', 'ノート', 'デッサン', '落書き', 'ラクガキ'],
+    chain: [{ name: 'notebook', params: {} }, { name: 'wobble', params: {} }] },
+  { cat: 'アート', emoji: '👘', name: '浮世絵風', keys: ['浮世絵', '和', '江戸', '北斎'],
+    chain: [{ name: 'oilpaint', params: { radius: 5, levels: 8 } },
+            { name: 'sepia', params: { intensity: 0.2 } },
+            { name: 'inkline', params: { ink: 0.9 } }] },
+  { cat: 'アート', emoji: '🟨', name: 'ポップアート', keys: ['ポップアート', 'ウォーホル', 'ポップ'],
+    chain: [{ name: 'posterize', params: { levels: 4 } },
+            { name: 'color_transform', params: { saturation: 1.8, contrast: 1.15 } },
+            { name: 'inkline', params: { ink: 0.7 } }] },
+  { cat: 'アート', emoji: '⛪', name: 'ステンドグラス', keys: ['ステンドグラス', '教会', 'ガラス', 'モザイク'],
+    chain: [{ name: 'stainedglass', params: {} }] },
+  // ---- ゲーム/テック ----
+  { cat: 'ゲーム', emoji: '🕹', name: 'レトロゲーム', keys: ['レトロゲーム', 'ファミコン', 'ゲーム', '8bit', 'ドット'],
+    chain: [{ name: 'pixelart', params: { size: 7, colors: 4 } }, { name: 'crt', params: { mask: 2 } }] },
+  { cat: 'ゲーム', emoji: '📟', name: 'グリーンモニタ', keys: ['端末', 'ターミナル', 'ハッカー', 'マトリックス', '緑'],
+    chain: [{ name: 'grayscale', params: {} },
+            { name: 'rgb', params: { red: 0.1, green: 1.0, blue: 0.25 } },
+            { name: 'levels', params: { gamma: 1.2 } },
+            { name: 'crt', params: { scan: 0.9 } }] },
+  { cat: 'ゲーム', emoji: '💾', name: 'デジタル劣化', keys: ['グリッチ', '劣化', '壊れた', 'バグ'],
+    chain: [{ name: 'pixelate', params: { size: 5 } },
+            { name: 'posterize', params: { levels: 5 } },
+            { name: 'ntsc', params: { artifacts: 0.9 } }] },
+  { cat: 'ゲーム', emoji: '🎮', name: 'ドット絵', keys: ['ドット絵', 'ピクセル', 'pixel'],
+    chain: [{ name: 'pixelart', params: {} }] },
+  // ---- ムード ----
+  { cat: 'ムード', emoji: '✨', name: 'ドリーミー', keys: ['ドリーミー', '夢', 'ふんわり', 'やわらか', 'グロー'],
+    chain: [{ name: 'blur', params: { radius: 2 } },
+            { name: 'exposure', params: { stops: 0.3 } },
+            { name: 'color_transform', params: { saturation: 1.2 } }] },
+  { cat: 'ムード', emoji: '🍬', name: 'パステル', keys: ['パステル', '淡い', 'かわいい'],
+    chain: [{ name: 'color_transform', params: { saturation: 0.7, brightness: 0.15 } },
+            { name: 'blur', params: { radius: 0.8 } }] },
+  { cat: 'ムード', emoji: '🥶', name: 'クール', keys: ['クール', '寒色', '青っぽく', '冷たい'],
+    chain: [{ name: 'white_balance', params: { temperature: -0.5 } },
+            { name: 'color_transform', params: { saturation: 0.85 } }] },
+  { cat: 'ムード', emoji: '🔥', name: 'ウォーム', keys: ['ウォーム', '暖色', '暖かく', 'オレンジ'],
+    chain: [{ name: 'white_balance', params: { temperature: 0.5 } },
+            { name: 'color_transform', params: { saturation: 1.1 } }] },
+  { cat: 'ムード', emoji: '🌈', name: 'サイケ', keys: ['サイケ', 'トリップ', '幻覚', 'psychedelic'],
+    chain: [{ name: 'lsd', params: { trip: 0.55 } }] },
+  { cat: 'ムード', emoji: '🌀', name: '夢とフラクタル', keys: ['フラクタル', '万華鏡', '異世界'],
+    chain: [{ name: 'fractal', params: { blend: 0.55, glow: 0.8 } }] },
+  // ---- ホラー/ネタ ----
+  { cat: 'ホラー', emoji: '👻', name: '心霊ビデオ', keys: ['心霊', '幽霊', '怖い映像', 'ホラービデオ'],
+    chain: [{ name: 'grayscale', params: {} },
+            { name: 'ntsc', params: { noise: 0.35, artifacts: 0.8 } },
+            { name: 'wobble', params: { amount: 3, fps: 6 } },
+            { name: 'vignette', params: { start: 0.25, end: 0.9 } }] },
+  { cat: 'ホラー', emoji: '🧟', name: 'ホラー映画', keys: ['ホラー', '怖く', '不気味', 'スリラー'],
+    chain: [{ name: 'white_balance', params: { temperature: -0.3, tint: 0.2 } },
+            { name: 'color_transform', params: { saturation: 0.5, contrast: 1.2 } },
+            { name: 'vignette', params: { start: 0.2, end: 0.85 } }] },
+  { cat: 'ホラー', emoji: '🚨', name: '監視カメラ', keys: ['監視カメラ', '防犯', 'セキュリティ', 'cctv'],
+    chain: [{ name: 'grayscale', params: {} },
+            { name: 'ntsc', params: { noise: 0.22, sharpness: 0.6 } },
+            { name: 'levels', params: { gamma: 1.25 } },
+            { name: 'pixelate', params: { size: 2 } }] },
+  { cat: 'ホラー', emoji: '🩸', name: 'クライムシーン', keys: ['事件', 'クライム', '刑事', 'サスペンス'],
+    chain: [{ name: 'rgb', params: { red: 1.2, green: 0.82, blue: 0.8 } },
+            { name: 'color_transform', params: { contrast: 1.2 } },
+            { name: 'vignette', params: { start: 0.3, end: 0.9 } }] },
 ];
-// look presets are GLOBAL — they live with the AI bar (same "make a look"
-// entry), not inside the node palette (owner: スコープ違い)
-{
-  const row = $('lookRow');
-  for (const [label, spec] of PRESETS) {
-    const b = document.createElement('button');
-    b.className = 'preset';
-    b.textContent = label;
-    b.addEventListener('click', () => setBranchChain(spec, ''));
-    row.append(b);
+
+// look presets are GLOBAL — a 🎨 button beside the dice opens a picker
+// (owner:常時チップ列でなくボタン→パレット形式). The same table doubles as
+// the built-in composer's primary vocabulary when no API key is set
+// (owner: AIないときの言語指示のデフォルト): each look carries keys.
+const lookOverlay = $('lookOverlay'), lookBody = $('lookBody'), lookSearch = $('lookSearch');
+function lookSpec(p) { return p.chain.map(c => [c.name, c.params || {}]); }
+function buildLookPicker() {
+  const q = (lookSearch.value || '').trim().toLowerCase();
+  const hit = p => !q || p.name.toLowerCase().includes(q) || p.cat.includes(q) ||
+      (p.keys || []).some(k => k.toLowerCase().includes(q) || q.includes(k.toLowerCase()));
+  lookBody.replaceChildren();
+  for (const cat of [...new Set(LOOK_PRESETS.map(p => p.cat))]) {
+    const items = LOOK_PRESETS.filter(p => p.cat === cat && hit(p));
+    if (!items.length) continue;
+    const h = document.createElement('div');
+    h.style.cssText = 'font:700 10px ui-monospace,monospace;color:var(--faint);' +
+        'letter-spacing:0.16em;margin:10px 0 6px';
+    h.textContent = cat;
+    lookBody.append(h);
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px';
+    for (const pr of items) {
+      const b = document.createElement('button');
+      b.className = 'preset';
+      b.textContent = pr.emoji + ' ' + pr.name;
+      b.addEventListener('click', async () => {
+        lookOverlay.classList.remove('open');
+        await setBranchChain(lookSpec(pr), pr.emoji + ' ' + pr.name + ' を適用');
+      });
+      row.append(b);
+    }
+    lookBody.append(row);
   }
+}
+$('aiLooks').addEventListener('click', () => {
+  buildLookPicker();
+  lookOverlay.classList.add('open');
+  lookSearch.value = '';
+});
+lookSearch.addEventListener('input', buildLookPicker);
+
+// built-in composer, first pass: match against the look vocabulary
+function bestLook(t) {
+  let best = null, bestScore = 0;
+  for (const p of LOOK_PRESETS) {
+    let sc = 0;
+    if (t.includes(p.name.toLowerCase())) sc += 3;
+    for (const k of p.keys || []) if (t.includes(k.toLowerCase())) sc += 2;
+    if (sc > bestScore) { bestScore = sc; best = p; }
+  }
+  return bestScore >= 2 ? best : null;
 }
 
 // ---- built-in composer (offline "AI") --------------------------------------
@@ -2518,6 +2684,15 @@ function parseTransformAsk(t) {
 }
 function composeBuiltin(text) {
   const t = text.toLowerCase();
+  // the look vocabulary is the primary offline dictionary (owner default);
+  // person-splitting asks keep the dedicated branch below
+  if (!/人物|背景|ポートレ|自分以外|人だけ/.test(t)) {
+    const lk = bestLook(t);
+    if (lk) {
+      return { chain: lookSpec(lk), comment: lk.emoji + ' ' + lk.name + ' を適用',
+               person: false, xf: parseTransformAsk(t) };
+    }
+  }
   const frags = [];
   const comments = [];
   for (const [re, spec, comment] of RECIPES) {
