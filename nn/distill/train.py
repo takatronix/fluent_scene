@@ -14,6 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 import onnxruntime as ort
+from ink_target import STYLES, simplify
 
 TEACHER_URL = 'https://takatronix.github.io/fluent_scene/models/id_lineart.onnx'
 
@@ -84,6 +85,14 @@ def main():
     ap.add_argument('--batch', type=int, default=16)
     ap.add_argument('--crop', type=int, default=384)
     ap.add_argument('--lr', type=float, default=2e-3)
+    ap.add_argument('--style', choices=['raw'] + list(STYLES), default='raw',
+                    help="raw = the teacher's pencil; gpen/brush = thick ink, "
+                         'built from the same MIT teacher by ink_target.py')
+    ap.add_argument('--ink-weight', type=float, default=0.0,
+                    help='extra BCE weight on the teacher\'s ink pixels. Lines are '
+                         '~4%% of pixels, so an unweighted loss is dominated by paper '
+                         'and the student settles for lines that are too light '
+                         '(measurably ~1.5x brighter than the teacher).')
     ap.add_argument('--loss', choices=['l1', 'bce'], default='bce',
                     help='pixel term; l1 on sigmoid collapses to all-white (see design doc)')
     ap.add_argument('--out', default='runs/v1')
@@ -104,19 +113,32 @@ def main():
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.steps)
 
+    style = STYLES.get(args.style)   # None for 'raw'
+    # portrait_ink's simplification happens on the teacher's *input*: the photo
+    # is flattened first so the teacher never draws the texture. The student
+    # still sees the untouched photo, so it learns photo -> simplified ink.
+    pre = simplify if args.style == 'portrait_ink' else None
+
     val = batch(files, 4, args.crop)
-    val_t = teacher.run(None, {t_in: val})[0]
+    val_in = simplify(torch.from_numpy(val)).numpy() if pre else val
+    val_t = teacher.run(None, {t_in: val_in})[0]
+    if style:
+        val_t = style(torch.from_numpy(val_t)).numpy()
 
     t0 = time.time()
     for step in range(1, args.steps + 1):
         x = batch(files, args.batch, args.crop)
         with torch.no_grad():
-            y_t = torch.from_numpy(teacher.run(None, {t_in: x})[0]).to(dev)
+            t_x = simplify(torch.from_numpy(x).to(dev)).cpu().numpy() if pre else x
+            y_t = torch.from_numpy(teacher.run(None, {t_in: t_x})[0]).to(dev)
+            if style:
+                y_t = style(y_t)
         x = torch.from_numpy(x).to(dev)
         z = net(x, return_logits=True)
         y = torch.sigmoid(z)
-        px = (F.binary_cross_entropy_with_logits(z, y_t) if args.loss == 'bce'
-              else F.l1_loss(y, y_t))
+        w = 1.0 + args.ink_weight * (1.0 - y_t) if args.ink_weight else None
+        px = (F.binary_cross_entropy_with_logits(z, y_t, weight=w)
+              if args.loss == 'bce' else F.l1_loss(y, y_t))
         loss = px + 0.5 * F.l1_loss(sobel(y), sobel(y_t))
         opt.zero_grad(); loss.backward(); opt.step(); sched.step()
         if step % 200 == 0:

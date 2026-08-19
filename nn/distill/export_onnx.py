@@ -13,11 +13,30 @@ from train import TinyLines
 ap = argparse.ArgumentParser()
 ap.add_argument('--ckpt', required=True)
 ap.add_argument('--out', default='tiny_lines')
+ap.add_argument('--harden', type=float, default=0.0,
+                help='contrast gain baked after the sigmoid, for the near-binary '
+                     'ink styles. The student\'s greys are its uncertainty about '
+                     'which side of a hard edge a pixel falls on; re-deciding '
+                     'that with clip((v-0.5)*k+0.5) is reading the distilled '
+                     'answer out, not cosmetics. Measured on the ink model: '
+                     'mid-greys 27%% -> 8%%, against a target of 8.3%%. Leave 0 '
+                     'for the pencil styles, whose greys are real tone.')
 args = ap.parse_args()
 
 net = TinyLines()
 net.load_state_dict(torch.load(args.ckpt, map_location='cpu'))
 net.eval()
+
+if args.harden:
+    class Hardened(torch.nn.Module):
+        def __init__(self, net, k):
+            super().__init__()
+            self.net, self.k = net, k
+
+        def forward(self, x):
+            return ((self.net(x) - 0.5) * self.k + 0.5).clamp(0, 1)
+
+    net = Hardened(net, args.harden).eval()
 
 x = torch.rand(1, 3, 384, 512)
 torch.onnx.export(net, x, f'{args.out}.onnx', opset_version=17,

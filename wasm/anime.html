@@ -30,6 +30,7 @@
     <option value="models/AnimeGANv3_PortraitSketch.onnx">portrait sketch (ink)</option>
     <option value="models/id_lineart.onnx">pencil lines (MIT)</option>
     <option value="models/tiny_lines.onnx">tiny pencil (ours, MIT)</option>
+    <option value="models/tiny_ink.onnx">tiny ink (ours, MIT)</option>
   </select>
   <select id="res" title="inference size">
     <option value="256">256px (bold)</option>
@@ -119,7 +120,7 @@ async function loadModel(url) {
     } catch (e) { lastErr = e; }
   }
   if (!session) { bar.textContent = 'model load failed: ' + lastErr; throw lastErr; }
-  modelKind = /id_lineart|tiny_lines/.test(url) ? 'lines' : 'animegan';
+  modelKind = /id_lineart|tiny_lines|tiny_ink/.test(url) ? 'lines' : 'animegan';
 }
 
 // ---- face lock: detect -> square crop -> stylize -> paste back -------------
@@ -363,7 +364,14 @@ async function start() {
   } catch (e) { startBtn.disabled = false; startBtn.textContent = '▶ start camera'; }
 }
 startBtn.addEventListener('click', start);
+// tiny_ink's stroke width is baked in pixels (3px, trained on 384 crops), so
+// the bold illustration look only lands near that scale — at 1024 the same
+// model draws a fine line drawing instead. Snap to 512 when it is picked.
+const nativeRes = url => /tiny_ink/.test(url) ? '512' : null;
+
 document.getElementById('model').addEventListener('change', async e => {
+  const want = nativeRes(e.target.value);
+  if (want) document.getElementById('res').value = want;
   updateFaceBtn();
   if (faceActive()) ensureDetector();
   if (!stream) return;

@@ -47,9 +47,27 @@ is the teacher's style, not the photographs. Because the teacher is MIT,
 these distilled weights are ours to license as MIT — unlike the AnimeGANv3
 models above, they carry no non-commercial restriction.
 
-~40x smaller and ~10x faster than the teacher (512² CPU: 8ms multi-threaded
-/ 84ms single-threaded on a Ryzen desktop, vs 1136ms for the teacher on
+~40x smaller and ~10x faster than the teacher (512² CPU: 12ms multi-threaded
+/ 92ms single-threaded on a Ryzen desktop, vs 1136ms for the teacher on
 Jetson Thor). The style is a lighter pencil sketch: contours are kept,
 the teacher's fine hatching on flat areas is not. opset 17, dynamic HxW.
+
+---
+
+tiny_ink.onnx / tiny_ink_fp16.onnx — **our own weights, MIT license**
+(same terms as this repository).
+
+Same 105k architecture, same MIT teacher, but distilled against a thick-ink
+target that nn/distill/ink_target.py builds from the teacher's output: the
+photo is flattened with a guided filter first (so the teacher never draws
+skin pores or foliage, which is where the illustration-like simplification
+comes from), the surviving strokes are joined by hysteresis and dilated to
+3px, and the exported graph ends in a contrast step that re-decides the
+student's greys. No AnimeGANv3 weights were used, as a teacher or otherwise
+— the style is ours, so these weights carry no non-commercial restriction.
+
+The stroke width is baked in pixels, so the bold look lands at ~512²; at
+1024² the same model draws a fine line drawing instead (anime.html snaps
+the inference size to 512 when this model is picked).
 
 Training record: nn/distill/runs/NOTES.md
