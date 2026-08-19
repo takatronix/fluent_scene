@@ -129,6 +129,8 @@
   #toolbar button:hover { border-color: rgba(255,255,255,0.3); transform: translateY(-1px); }
   #toolbar button:disabled { opacity: 0.35; cursor: default; transform: none; }
   #toolbar #tail { margin-left: auto; }
+  #zoomCtl button { min-width: 30px; padding: 5px 7px; font-size: 11.5px;
+          font-family: ui-monospace, monospace; }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 3px; }
@@ -446,16 +448,22 @@
     <button id="dockClose" title="しまう">✕</button>
   </div>
   <div id="toolbar">
-    <button id="tbFilter">+ フィルタ</button>
-    <button id="tbSrc">+ 入力</button>
-    <button id="tbPerson">+ 人物抽出</button>
-    <button id="tbHands">+ 手フレーム</button>
-    <button id="tbMix">+ ミキサー</button>
-    <button id="tbSplit">+ 分岐</button>
-    <button id="tbXform">+ 変形</button>
-    <button id="tbShader" title="AIにシェーダを書かせる最終パス">🧪 シェーダ</button>
+    <button id="tbAdd" title="ノード/フィルタ/プリセット/マイシェーダを追加">＋ 追加</button>
+    <button id="tbFilter" hidden>+ フィルタ</button>
+    <button id="tbSrc" hidden>+ 入力</button>
+    <button id="tbPerson" hidden>+ 人物抽出</button>
+    <button id="tbHands" hidden>+ 手フレーム</button>
+    <button id="tbMix" hidden>+ ミキサー</button>
+    <button id="tbSplit" hidden>+ 分岐</button>
+    <button id="tbXform" hidden>+ 変形</button>
+    <button id="tbShader" hidden title="AIにシェーダを書かせる最終パス">🧪 シェーダ</button>
     <button id="tbUndo" title="もとに戻す (Ctrl+Z)">↩</button>
+    <button id="tbTidy" title="ノードを自動整列 (画面外の迷子も回収)">⊞ 整理</button>
     <button id="tbReset" title="グラフを最初から">🧹</button>
+    <span id="zoomCtl" style="display:flex;gap:4px;align-items:center">
+      <button id="zoomOut" title="縮小">−</button><button id="zoomPct"
+        title="100%に戻す">100%</button><button id="zoomIn" title="拡大">＋</button>
+    </span>
     <span id="tail">
       <span id="share">
         <button id="btnShare" title="共有リンクをコピー">🔗</button>
@@ -975,8 +983,12 @@ inputs:
            `${pad}  scale: [${sx.toFixed(3)}, ${sy.toFixed(3)}]\n` +
            `${pad}  opacity: $params.o_${u.id}\n`;
       if (win) o += `${pad}  corner_radius: 22\n${pad}  masks_to_bounds: true\n${pad}  shadow: {}\n`;
-    } else if (extra && extra.op < 0.999) {
-      o += `${pad}  opacity: ${extra.op.toFixed(2)}\n`;
+    } else {
+      if (extra || u.kind === 'group') {
+        o += `${pad}  bounds: [0, 0, ${STAGE_W}, ${STAGE_H}]\n` +
+             `${pad}  position: [${STAGE_W / 2}, ${STAGE_H / 2}]\n`;
+      }
+      if (extra && extra.op < 0.999) o += `${pad}  opacity: ${extra.op.toFixed(2)}\n`;
     }
     if (extra && extra.blend && extra.blend !== 'normal') o += `${pad}  blend: ${extra.blend}\n`;
     o += filtersYaml(u, pad + '  ');
@@ -1428,7 +1440,7 @@ function hookNodeDrag(card, n) {
     const ox = n.x, oy = n.y;
     let moved = false;
     const onMove = ev => {
-      const dx = ev.clientX - startX, dy = ev.clientY - startY;
+      const dx = (ev.clientX - startX) / graphZoom, dy = (ev.clientY - startY) / graphZoom;
       if (!moved && Math.hypot(dx, dy) > 5) moved = true;
       if (moved) {
         n.x = Math.max(0, Math.min(2050, ox + dx));
@@ -1463,7 +1475,8 @@ function startWireDrag(fromId, fp) {
   const onMove = ev => {
     const r = gRect();
     const [x1, y1] = portXY(from, true, fp);
-    tempEdge.setAttribute('d', edgePath(x1, y1, ev.clientX - r.left, ev.clientY - r.top));
+    tempEdge.setAttribute('d', edgePath(x1, y1,
+        (ev.clientX - r.left) / graphZoom, (ev.clientY - r.top) / graphZoom));
   };
   const onUp = ev => {
     window.removeEventListener('pointermove', onMove);
@@ -1500,6 +1513,60 @@ function hookInPort(p, n, tp = 0) {
     startWireDrag(inn.from, inn.fp);
   });
 }
+// ---- graph zoom (Ctrl+ホイール / ±) ----------------------------------------
+let graphZoom = 1;
+function setZoom(z, cx, cy) {
+  z = Math.max(0.4, Math.min(1.5, Math.round(z * 100) / 100));
+  const g = $('graph');
+  const box = g.getBoundingClientRect();
+  const ax = cx !== undefined ? cx - box.left : box.width / 2;
+  const ay = cy !== undefined ? cy - box.top : box.height / 2;
+  const gx = (g.scrollLeft + ax) / graphZoom;
+  const gy = (g.scrollTop + ay) / graphZoom;
+  graphZoom = z;
+  gInner.style.transformOrigin = '0 0';
+  gInner.style.transform = z === 1 ? '' : `scale(${z})`;
+  g.scrollLeft = gx * z - ax;
+  g.scrollTop = gy * z - ay;
+  $('zoomPct').textContent = Math.round(z * 100) + '%';
+}
+$('zoomIn').addEventListener('click', () => setZoom(graphZoom * 1.15));
+$('zoomOut').addEventListener('click', () => setZoom(graphZoom / 1.15));
+$('zoomPct').addEventListener('click', () => setZoom(1));
+$('graph').addEventListener('wheel', e => {
+  if (!e.ctrlKey && !e.metaKey) return;        // 素のホイールはスクロールのまま
+  e.preventDefault();
+  setZoom(graphZoom * (e.deltaY < 0 ? 1.1 : 0.9), e.clientX, e.clientY);
+}, { passive: false });
+
+// ---- ⊞ 整理: 深さでカラム整列 (迷子ノードの回収) ---------------------------
+$('tbTidy').addEventListener('click', () => {
+  const depth = {};
+  const calc = (id, stack) => {
+    if (depth[id] !== undefined) return depth[id];
+    if (stack.has(id)) return 0;               // ループ線は深さに数えない
+    stack.add(id);
+    const ins = edges.filter(e => e.to === id && !isDelayEdge(e));
+    const d = ins.length ? Math.max(...ins.map(e => calc(e.from, stack) + 1)) : 0;
+    stack.delete(id);
+    depth[id] = d;
+    return d;
+  };
+  for (const n of nodes) calc(n.id, new Set());
+  const out = outNode();
+  if (out) depth[out.id] = Math.max(0, ...nodes.filter(n => n !== out).map(n => depth[n.id])) + 1;
+  const cols = {};
+  for (const n of nodes) (cols[depth[n.id]] = cols[depth[n.id]] || []).push(n);
+  for (const d of Object.keys(cols)) {
+    const arr = cols[d];
+    arr.sort((a, b) => a.y - b.y);
+    arr.forEach((n, i) => { n.x = 50 + d * 200; n.y = 60 + i * 100; });
+  }
+  applyGraph(true);
+  $('graph').scrollTo({ left: 0, top: 0, behavior: 'smooth' });
+  say('整理しました — 左から入力→…→出力の順です');
+});
+
 $('graph').addEventListener('pointerdown', e => {
   if (e.target.closest('.gnode') || e.target.closest('.port')) return;
   selId = null;
@@ -1542,6 +1609,7 @@ function freeSpot(nearX, nearY) {
   return [Math.min(1900, x), Math.min(480, y)];
 }
 $('tbFilter').addEventListener('click', () => openPalette());
+$('tbAdd').addEventListener('click', () => openPalette());
 $('tbSrc').addEventListener('click', () => {
   const [x, y] = freeSpot(60, 300);
   const n = addNode('src', x, y, { kind: 'sample' });
@@ -2086,8 +2154,50 @@ function addFilterNode(name, params = {}) {
   selId = justAddedId = f.id;
   return f;
 }
+const NODE_ADDERS = [
+  ['📷', '入力', 'カメラ/画像/動画/サンプルの取り込み口', 'tbSrc'],
+  ['🎚', 'ミキサー', 'AとBをブレンドで1本に合成', 'tbMix'],
+  ['🔀', '分岐', '1入力を2出力へ — フィードバックにも', 'tbSplit'],
+  ['🎛', '変形', '小窓/全面ミキサー・回転/反転', 'tbXform'],
+  ['🧍', '人物抽出', '人物と背景に分けて別フィルタ', 'tbPerson'],
+  ['🖐', '手フレーム', '両手の指フレーム枠内だけ', 'tbHands'],
+  ['🧪', 'GLSLシェーダ', 'AIに書かせる自作パス', 'tbShader'],
+];
 function buildPalette(q) {
   palBody.replaceChildren();
+  if (!q) {
+    const ncat = document.createElement('div');
+    ncat.className = 'palcat';
+    const nh = document.createElement('h4');
+    nh.textContent = 'ノード';
+    nh.style.color = 'var(--cyan)';
+    const ngrid = document.createElement('div');
+    ngrid.className = 'palgrid';
+    for (const [em, label, desc, bid] of NODE_ADDERS) {
+      const btn = document.createElement('button');
+      btn.className = 'palitem';
+      btn.style.setProperty('--ac', 'var(--cyan)');
+      const pe = document.createElement('span');
+      pe.className = 'pe';
+      pe.textContent = em;
+      const tx = document.createElement('div');
+      const t = document.createElement('div');
+      t.className = 't';
+      t.textContent = label;
+      const d = document.createElement('div');
+      d.className = 'd';
+      d.textContent = desc;
+      tx.append(t, d);
+      btn.append(pe, tx);
+      btn.addEventListener('click', () => {
+        palOverlay.classList.remove('open');
+        $(bid).click();
+      });
+      ngrid.append(btn);
+    }
+    ncat.append(nh, ngrid);
+    palBody.append(ncat);
+  }
   if (!q) {
     const cat = document.createElement('div');
     cat.className = 'palcat';
@@ -2415,8 +2525,18 @@ ${catalogPrompt()}
 - デフォルトで良いパラメータは省略。値は範囲内で。
 - ntscの後にcrt、oilpaintの後にmedianは好相性。`;
 
+function fetchTimeout(url, opts, ms = 60000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  return fetch(url, { ...opts, signal: ac.signal })
+      .catch(e => {
+        throw (e && e.name === 'AbortError')
+            ? new Error('タイムアウト(60秒) — 接続先とキーを⚙で確認してください') : e;
+      })
+      .finally(() => clearTimeout(t));
+}
 async function askClaude(text, sys = null) {
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
+  const r = await fetchTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -2442,7 +2562,7 @@ async function askOpenAI(text, sys = null) {
   const base = aiCfg.oaiBase.replace(/\/$/, '');
   const headers = { 'content-type': 'application/json' };
   if (aiCfg.oaiKey) headers.authorization = 'Bearer ' + aiCfg.oaiKey;
-  const r = await fetch(base + '/chat/completions', {
+  const r = await fetchTimeout(base + '/chat/completions', {
     method: 'POST', headers,
     body: JSON.stringify({
       model: aiCfg.oaiModel,
