@@ -346,27 +346,33 @@ function buildSliders(overrides = {}) {
 
 // washi paper for sumie — a real scan-based sheet (CC0 base + synthesized
 // kozo fibers), fed through the generic filter-image parameter.
-let paperReady = false;
-(async () => {
-  try {
-    const img = new Image();
-    img.src = './washi.jpg';
-    await img.decode();
-    const c = document.createElement('canvas');
-    c.width = c.height = 1024;
-    const cx = c.getContext('2d');
-    cx.drawImage(img, 0, 0, 1024, 1024);
-    const d = cx.getImageData(0, 0, 1024, 1024).data;
-    const ptr = fs.imageBuffer(inst, 'paper', 1024, 1024);
-    mod.HEAPU8.set(d, ptr);
-    paperReady = true;
-    bindPaper();
-  } catch (e) { console.error('washi load failed:', e); }
-})();
+const papers = { sumie: ['./washi.jpg', 'paper', false],
+                 watercolor: ['./wcpaper.jpg', 'wcpaper', false] };
+for (const k of Object.keys(papers)) {
+  (async () => {
+    try {
+      const [src, input] = papers[k];
+      const img = new Image();
+      img.src = src;
+      await img.decode();
+      const c = document.createElement('canvas');
+      c.width = c.height = 1024;
+      const cx = c.getContext('2d');
+      cx.drawImage(img, 0, 0, 1024, 1024);
+      const d = cx.getImageData(0, 0, 1024, 1024).data;
+      const ptr = fs.imageBuffer(inst, input, 1024, 1024);
+      mod.HEAPU8.set(d, ptr);
+      papers[k][2] = true;
+      bindPaper();
+    } catch (e) { console.error(k + ' paper load failed:', e); }
+  })();
+}
 function bindPaper() {
-  if (!paperReady) return;
-  if (current === 'sumie' || chainSel.value === 'sumie') {
-    fs.setFilterImage(inst, 'after', 'sumie', 'paper', 1024, 1024);
+  for (const k of Object.keys(papers)) {
+    const [, input, ready] = papers[k];
+    if (ready && (current === k || chainSel.value === k)) {
+      fs.setFilterImage(inst, 'after', k, input, 1024, 1024);
+    }
   }
 }
 

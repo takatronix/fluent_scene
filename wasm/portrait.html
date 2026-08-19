@@ -151,22 +151,26 @@ const featherOut = document.getElementById('featherOut');
 const spec = () => CATALOG.find(f => f.name === styleName);
 const timeSlot = s => s && s.params.length > 1 && s.params[1].name === 'time' ? 1 : -1;
 
-let paperReady = false;
-(async () => {
-  try {
-    const img = new Image();
-    img.src = './washi.jpg';
-    await img.decode();
-    const c = document.createElement('canvas');
-    c.width = c.height = 1024;
-    const cx = c.getContext('2d');
-    cx.drawImage(img, 0, 0, 1024, 1024);
-    const ptr = fs.imageBuffer(inst, 'paper', 1024, 1024);
-    mod.HEAPU8.set(cx.getImageData(0, 0, 1024, 1024).data, ptr);
-    paperReady = true;
-    pushStyle(simT);
-  } catch (e) { console.error('washi load failed:', e); }
-})();
+const papers = { sumie: ['./washi.jpg', 'paper', false],
+                 watercolor: ['./wcpaper.jpg', 'wcpaper', false] };
+for (const k of Object.keys(papers)) {
+  (async () => {
+    try {
+      const [src, input] = papers[k];
+      const img = new Image();
+      img.src = src;
+      await img.decode();
+      const c = document.createElement('canvas');
+      c.width = c.height = 1024;
+      const cx = c.getContext('2d');
+      cx.drawImage(img, 0, 0, 1024, 1024);
+      const ptr = fs.imageBuffer(inst, input, 1024, 1024);
+      mod.HEAPU8.set(cx.getImageData(0, 0, 1024, 1024).data, ptr);
+      papers[k][2] = true;
+      pushStyle(simT);
+    } catch (e) { console.error(k + ' paper load failed:', e); }
+  })();
+}
 
 function pushStyle(t) {
   const s = spec();
@@ -180,8 +184,9 @@ function pushStyle(t) {
   fs.clearFilters(inst, other);
   fs.clearFilters(inst, target);
   fs.setFilter(inst, target, s.name, v[0] || 0, v[1] || 0, v[2] || 0, v[3] || 0, v[4] || 0);
-  if (styleName === 'sumie' && paperReady) {
-    fs.setFilterImage(inst, target, 'sumie', 'paper', 1024, 1024);
+  const pp = papers[styleName];
+  if (pp && pp[2]) {
+    fs.setFilterImage(inst, target, styleName, pp[1], 1024, 1024);
   }
 }
 onPerson.addEventListener('change', () => { pushStyle(simT); pushMasks(); });

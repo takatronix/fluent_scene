@@ -245,9 +245,13 @@ FS_PARAM(3, smooth, 0.7f, Scalar)
 FS_PARAM(4, vivid, 0.3f, Scalar)
 FS_END(Anime)
 
-FS_FILTER(Watercolor, watercolor, FS_WATERCOLOR,
-          "watercolor wash — pigment-density model with edge darkening, "
-          "granulation and paper (after Bousseau 2006)")
+// Like sumie, the optional `paper` image replaces the procedural sheet;
+// the renderer signals it by adding +2 to the dilute slot.
+FS_FILTER_STATEFUL_IMG(Watercolor, watercolor, FS_WATERCOLOR, paper,
+          "living watercolor — a persistent pigment/water field: washes "
+          "genuinely bleed while wet, pigment migrates to drying rims "
+          "(the coffee-ring edge, not a painted one), Beer-Lambert "
+          "transmittance over the paper. Feed `paper` a cold-press scan")
 FS_PARAM(0, wash, 6.0f, Length)
 FS_PARAM(1, edge, 0.9f, Scalar)
 FS_PARAM(2, grain, 0.7f, Scalar)

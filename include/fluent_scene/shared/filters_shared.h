@@ -837,61 +837,136 @@ vec3 fs_anime(vec2 uv, float levels, float lines, float width_px,
     return mix(clamp(c, 0.0, 1.0), vec3(0.05, 0.045, 0.08), ink);
 }
 
-// Watercolor — Bousseau 2006's pigment-density model carries the whole look
-// in one expression: C' = C·(1 − (1−C)·(d−1)), where density d>1 deposits
-// pigment (a second pass of the brush) and d<1 thins it. The density field
-// is built from three watercolor phenomena: pigment pooling at wet-edge
-// boundaries (gradient magnitude), granulation into the paper's tooth (fine
-// value noise, strongest in mid-tone washes), and slow wash unevenness. On
-// top: hand wobble (domain-warped reads), dilution toward paper white in
-// the highlights (watercolor has no white paint), and the paper's own tint
-// and tooth relief.
-vec3 fs_watercolor(vec2 uv, float wash_px, float edge, float grain,
-                   float wobble, float dilute) {
+// ---- watercolor, the living kind -------------------------------------------
+// v2 (persistent_buffers P1): the wash is a real pigment/water field.
+// Every frame the picture deposits pigment toward a target absorbance
+// (signed, so live video repaints itself), water diffuses fast and
+// evaporates, pigment only walks where the paper is wet, and — the part
+// no painted-on edge can fake — pigment transfers from wetter texels to
+// drier ones, so every wash dries with a darker rim exactly where its
+// boundary receded (the coffee-ring effect). Output is Beer-Lambert
+// transmittance over the paper, which is why the washes glow instead of
+// going muddy (v1's density formula, by owner review, "the biggest
+// disappointment"). State: rgb = pigment absorbance, w = wetness.
+
+#ifdef FS_SAMPLE_STATE
+
+vec4 fs_watercolor_flow(vec2 uv, float wash_px, float edge, float grain,
+                        float wobble, float dilute) {
     float res_y = 1.0 / FS_TEXEL.y;
     float u = max(res_y / 400.0, 0.25);
     vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
-    // hand wobble: two octaves of vector noise displace where we read
-    vec2 wn = fs_art_vnoise2(px * (0.045 / u)) - vec2(0.5, 0.5)
-            + (fs_art_vnoise2(px * (0.11 / u) + vec2(31.7, 13.3)) - vec2(0.5, 0.5)) * 0.5;
-    vec2 wuv = uv + FS_TEXEL * (wn * (7.0 * u * clamp(wobble, 0.0, 2.0)));
-    // wash: golden-angle spiral mean — pigment spreading in water softens
-    // detail without the greasy look a box blur gives
-    float r = max(wash_px, 0.75);
-    vec3 mean = FS_SAMPLE(wuv);
-    for (int i = 0; i < 12; ++i) {
-        float ang = 2.39996323 * float(i) + 0.9;
-        float rad = r * sqrt((float(i) + 0.5) / 12.0);
-        mean += FS_SAMPLE(wuv + FS_TEXEL * (vec2(cos(ang), sin(ang)) * rad));
+    vec4 st = FS_SAMPLE_STATE(uv);
+    float dl = dilute >= 1.5 ? dilute - 2.0 : dilute;   // paper flag rides +2
+    // hand wobble on where the brush reads the picture
+    vec2 wn = fs_art_vnoise2(px * (0.045 / u)) - vec2(0.5, 0.5);
+    vec2 wuv = uv + FS_TEXEL * (wn * (6.0 * u * clamp(wobble, 0.0, 2.0)));
+    // target absorbance: a small ring mean (the painter states shapes,
+    // not texels), diluted by taste
+    vec3 csrc = FS_SAMPLE(wuv) * 0.28;
+    for (int i = 0; i < 4; ++i) {
+        float a = 1.5707963 * float(i) + 0.4;
+        csrc += FS_SAMPLE(wuv + FS_TEXEL * (vec2(cos(a), sin(a)) * (2.6 * u))) * 0.18;
     }
-    mean = mean / 13.0;
-    // edge darkening: pigment pools where a wash meets a boundary
-    float eps = max(r * 0.75, 1.0);
-    float gx = fs_luma(FS_SAMPLE(wuv + FS_TEXEL * vec2(eps, 0.0)))
-             - fs_luma(FS_SAMPLE(wuv - FS_TEXEL * vec2(eps, 0.0)));
-    float gy = fs_luma(FS_SAMPLE(wuv + FS_TEXEL * vec2(0.0, eps)))
-             - fs_luma(FS_SAMPLE(wuv - FS_TEXEL * vec2(0.0, eps)));
-    float pool = clamp(length(vec2(gx, gy)) * 2.2, 0.0, 1.0) * clamp(edge, 0.0, 2.0);
-    // granulation: pigment settles into the tooth, mostly in mid washes
-    float lmn = fs_luma(mean);
-    float tooth = fs_lsd_vnoise(px * (0.55 / u))
-                + fs_lsd_vnoise(px * (1.1 / u) + vec2(53.1, 97.7)) * 0.5;
-    float mid = 4.0 * lmn * (1.0 - lmn);
-    float gran = (tooth * 0.6667 - 0.5) * clamp(grain, 0.0, 2.0) * (0.10 + 0.90 * mid);
-    // a big soft brush is never perfectly even
-    float uneven = (fs_lsd_vnoise(px * (0.012 / u) + vec2(7.7, 71.3)) - 0.5) * 0.5;
-    float d = clamp(1.0 + 0.9 * pool + 0.38 * gran + uneven, 0.4, 2.5);
-    vec3 c = mean * mean * (d - 1.0) + mean * (2.0 - d);
-    // dilution: highlights thin out to paper
-    vec3 paper = vec3(0.99, 0.975, 0.94);
-    c = mix(c, paper, clamp(dilute, 0.0, 1.0) * smoothstep(0.55, 0.97, fs_luma(c)));
-    // paper tint + tooth relief lit from the top-left (the two noise reads
-    // sit close together — a directional derivative, not independent salt)
-    float t1 = fs_lsd_vnoise(px * (0.5 / u) + vec2(211.0, 17.0));
-    float t2 = fs_lsd_vnoise(px * (0.5 / u) + vec2(211.35, 17.35));
-    c = c * paper * (1.0 + (t1 - t2) * (0.08 + 0.18 * clamp(grain, 0.0, 2.0)));
+    vec3 target = (vec3(1.0, 1.0, 1.0) - csrc) * (1.2 - 0.7 * clamp(dl, 0.0, 1.0));
+    // the buffer rim (layer edge × transparent padding) stays dry
+    float bd = min(min(uv.x, 1.0 - uv.x) / FS_TEXEL.x,
+                   min(uv.y, 1.0 - uv.y) / FS_TEXEL.y);
+    target = target * smoothstep(2.0 * u, 10.0 * u, bd);
+    // gathers: near ring carries pigment+water, far ring water only
+    float r1 = clamp(wash_px * 0.5, 1.0, 9.0);
+    float fa = (fs_lsd_vnoise(px * (0.03 / u) + vec2(3.7, 91.0)) - 0.5) * 6.28318531;
+    vec2 fdir = vec2(cos(fa), sin(fa));
+    vec3 psum = vec3(0.0, 0.0, 0.0);
+    float wnear = 0.0;
+    float wfar = 0.0;
+    float wsum = 0.0;
+    vec2 gw = vec2(0.0, 0.0);
+    for (int i = 0; i < 8; ++i) {
+        float a = 0.785398163 * float(i);
+        vec2 dirv = vec2(cos(a), sin(a));
+        vec4 n = FS_SAMPLE_STATE(uv + FS_TEXEL * (dirv * r1));
+        vec4 nf = FS_SAMPLE_STATE(uv + FS_TEXEL * (dirv * (r1 * 2.2)));
+        float al = dot(dirv, fdir);
+        float w = 1.0 + 0.6 * al * al;
+        psum += vec3(n.x, n.y, n.z) * w;
+        wnear += n.w * w;
+        wfar += nf.w * w;
+        wsum += w;
+        gw = gw + dirv * nf.w;   // COARSE wetness gradient (far ring only)
+    }
+    vec3 pmean = psum / wsum;
+    wnear = wnear / wsum;
+    wfar = wfar / wsum;
+    // water spreads ahead of the pigment and evaporates
+    float wet = mix(st.w, wnear * 0.55 + wfar * 0.45, 0.6);
+    // pigment walks only on wet paper
+    float mobility = clamp(wet, 0.0, 1.0);
+    vec3 pig = vec3(st.x, st.y, st.z);
+    pig = pig + (pmean - pig) * (0.5 * mobility);
+    // coffee ring, the stable spelling: the first draft moved pigment on
+    // PER-NEIGHBOR wetness differences and the positive feedback grew a
+    // checkerboard out of lattice noise. Now the front is measured at the
+    // COARSE scale only: where a smoothed wetness gradient crosses a
+    // drying band, this texel drinks from its wetter upwind neighbor —
+    // one smooth advection, gated off both in soaked interiors and on
+    // dry paper, gain bounded by the drying window itself.
+    float gwl = length(gw) / 8.0;
+    float front = smoothstep(0.015, 0.08, gwl)
+                * smoothstep(0.10, 0.30, st.w)
+                * (1.0 - smoothstep(0.75, 1.1, st.w));
+    if (front > 0.001) {
+        vec2 gdir = gw / max(length(gw), 1e-5);
+        vec4 up = FS_SAMPLE_STATE(uv + FS_TEXEL * (gdir * (r1 * 1.5)));
+        float ek = clamp(edge, 0.0, 2.0) * 0.10;
+        pig = pig + vec3(up.x, up.y, up.z) * (ek * front);
+    }
+    // the brush: signed relaxation toward the target (repaints live video)
+    vec3 dep = target - pig;
+    pig = pig + clamp(dep, -0.4, 1.0) * 0.16;
+    float depw = max(max(dep.x, dep.y), dep.z);
+    wet = wet * 0.955 + clamp(depw, 0.0, 1.0) * 0.55;
+    return vec4(clamp(pig, 0.0, 1.6), clamp(wet, 0.0, 2.0));
+}
+
+vec3 fs_watercolor_shade(vec2 uv, float wash_px, float edge, float grain,
+                         float wobble, float dilute) {
+    float res_y = 1.0 / FS_TEXEL.y;
+    float u = max(res_y / 400.0, 0.25);
+    vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
+    vec4 st = FS_SAMPLE_STATE(uv);
+    float has_paper = dilute >= 1.5 ? 1.0 : 0.0;
+    // paper: a real cold-press scan when fed, else a quiet bright tooth
+    vec3 paper;
+    float tooth = fs_lsd_vnoise(px * (0.293 / u) + vec2(17.0, 231.0))
+                + 0.62 * fs_lsd_vnoise(px * (0.731 / u) + vec2(53.1, 97.7))
+                + 0.31 * fs_lsd_vnoise(px * (1.618 / u) + vec2(5.7, 41.3));
+    tooth = tooth * 0.518 - 0.5;
+    if (has_paper > 0.5) {
+        float ts = 1.0 / (2.2 * res_y);
+        vec2 mt = vec2(px.x * ts, px.y * ts);
+        vec2 muv = mt - floor(mt);
+        paper = FS_SAMPLE_LUT(muv);
+    } else {
+        float mot = fs_lsd_vnoise(px * (0.014 / u) + vec2(211.0, 17.0)) - 0.5;
+        paper = vec3(0.985, 0.975, 0.955) * (1.0 + 0.03 * tooth + 0.035 * mot);
+    }
+    // granulation: pigment settles into the tooth's hollows
+    // granulation lives in the mid washes — an even stipple over the whole
+    // sheet is canvas noise, not pigment (the first draft's old sin)
+    vec3 pig = vec3(st.x, st.y, st.z);
+    float pmag = max(max(pig.x, pig.y), pig.z);
+    float ggate = smoothstep(0.10, 0.35, pmag) * (1.0 - smoothstep(0.9, 1.4, pmag));
+    pig = pig * (1.0 + clamp(grain, 0.0, 2.0) * 0.075 * tooth * ggate);
+    pig = max(pig, vec3(0.0, 0.0, 0.0));
+    // damp paper shows the live wash as a moving sheen
+    paper = paper * (1.0 - 0.08 * clamp(st.w * 0.5, 0.0, 1.0));
+    // Beer-Lambert transmittance: washes stay luminous, never muddy
+    vec3 c = paper * vec3(exp(-pig.x * 1.9), exp(-pig.y * 1.9), exp(-pig.z * 1.9));
     return clamp(c, 0.0, 1.0);
 }
+
+#endif  // FS_SAMPLE_STATE
 
 // ---- sumi-e, the living kind -----------------------------------------------
 // v2 (owner-directed): Chinese ink painting, dynamic — washi paper, BOLD
@@ -2087,9 +2162,9 @@ vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p
     else if (mode == FS_NTSC)            c = fs_ntsc(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_CRT)             c = fs_crt(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_ANIME)           c = fs_anime(uv, p0, p1, p2, p3, p4);
-    else if (mode == FS_WATERCOLOR)      c = fs_watercolor(uv, p0, p1, p2, p3, p4);
 #ifdef FS_SAMPLE_STATE
     else if (mode == FS_SUMIE)           c = fs_sumie_shade(uv, p0, p1, p2, p3, p4);
+    else if (mode == FS_WATERCOLOR)      c = fs_watercolor_shade(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_INKLINE) {
         vec4 r = fs_inkline_shade(uv, p0, p1, p2, p3, p4);
         c = vec3(r.x, r.y, r.z);
@@ -2113,6 +2188,9 @@ vec4 fs_apply_state(int mode, vec2 uv, float p0, float p1, float p2, float p3,
     }
     if (mode == FS_INKLINE) {
         return fs_inkline_flow(uv, p0, p1, p2, p3, p4);
+    }
+    if (mode == FS_WATERCOLOR) {
+        return fs_watercolor_flow(uv, p0, p1, p2, p3, p4);
     }
     return FS_SAMPLE_STATE(uv);
 }

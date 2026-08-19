@@ -241,10 +241,11 @@ inline void scaleFilterValues(const Filter& f, float scale, Rect ext, float buf_
     for (int i = 0; i < 5; ++i) {
         out[i] = f.values[i];
     }
-    // Sumie's paper flag: no sixth slot exists, so a bound paper image is
-    // signalled to the body by adding +2 to the chroma slot (values[4]).
-    // One shared spot = all three backends agree for free.
-    if (f.mode == FS_SUMIE && f.image.valid()) {
+    // Paper flag for the stateful painters: no sixth slot exists, so a
+    // bound paper image is signalled to the body by adding +2 to slot 4
+    // (sumie: chroma, watercolor: dilute). One shared spot = all three
+    // backends agree for free.
+    if ((f.mode == FS_SUMIE || f.mode == FS_WATERCOLOR) && f.image.valid()) {
         out[4] += 2.0f;
     }
     if (const FilterSpec* spec = findFilterSpec(f.mode)) {

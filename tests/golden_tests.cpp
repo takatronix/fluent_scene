@@ -393,7 +393,8 @@ void sceneWatercolor(Renderer& r) {
     stage.image(view).frame({170, 10, 150, 130}).filter(Watercolor().wash(9.0f).wobble(1.6f));
     stage.image(view).frame({330, 10, 140, 130}).filter(Watercolor().grain(1.5f).edge(1.6f));
     stage.image(view).frame({10, 160, 150, 130}).filter(Watercolor().dilute(0.8f).grain(0.0f));
-    stage.image(view).frame({170, 160, 150, 130}).filter(Watercolor().edge(0.0f).wobble(0.0f));
+    stage.image(view).frame({170, 160, 150, 130})
+        .filter(Watercolor().edge(0.0f).wobble(0.0f).paper(view));  // paper flag path
     const int saved_limit = g_max_diff_limit;
     const double saved_ratio = g_over_ratio_limit;
     g_max_diff_limit = 255;
@@ -437,6 +438,25 @@ void sceneSumieLiving(Renderer& r) {
     g_max_diff_limit = 255;
     checkScene("sumie_living", r.render(stage, 0.016f));
     g_max_diff_limit = saved_limit;
+}
+
+// The living watercolor: 30 ticks of the pigment/water field.
+void sceneWatercolorLiving(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 300, 280}).filter(Watercolor());
+    stage.image(view).frame({320, 10, 150, 130}).filter(Watercolor().wash(10.0f).edge(1.8f));
+    for (int i = 0; i < 29; ++i) {
+        r.render(stage, 0.016f);
+    }
+    const int saved_limit = g_max_diff_limit;
+    const double saved_ratio = g_over_ratio_limit;
+    g_max_diff_limit = 255;
+    g_over_ratio_limit = 0.02;
+    checkScene("watercolor_living", r.render(stage, 0.016f));
+    g_max_diff_limit = saved_limit;
+    g_over_ratio_limit = saved_ratio;
 }
 
 // Inkline's ETF field converges over frames (P1 state) — render 4 ticks,
@@ -724,6 +744,7 @@ int main(int argc, char** argv) {
     sceneWatercolor(r);
     sceneSumie(r);
     sceneSumieLiving(r);
+    sceneWatercolorLiving(r);
     sceneInkline(r);
     sceneImpressionist(r);
     sceneStainedglassPixelart(r);
