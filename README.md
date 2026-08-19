@@ -109,14 +109,20 @@ three backends to the same reference images.
 - **CALayer-style attributes** — frame / position / anchor / rotation /
   scale / opacity / shadow / border / background / cornerRadius /
   masksToBounds / blend. One coordinate system: top-left origin, +y down
-- **38 filters** — blur / bilateral / color_transform / toon / halftone /
+- **44 filters** — blur / bilateral / color_transform / toon / halftone /
   ripple / beauty (smoothing + whitening + NR) / lut (3D LUT) / lsd /
   bokeh (polygonal iris) / oilpaint (Kuwahara) / ntsc + crt (real composite
   modulation → tube, after MAME ntsc.fx BSD-3, Lottes PD, Cathode-Retro MIT)
   / fractal (endless KIFS flight) /
   notebook (pencil sketch, after [flockaroo's XtVGD1](https://www.shadertoy.com/view/XtVGD1),
   CC BY-NC-SA — that one filter is **non-commercial**; everything else stays
-  MIT) … — applicable to any layer or to a group's composited result
+  MIT) / the art-style family: anime (cel shading + XDoG ink lines) /
+  watercolor (Bousseau pigment density) / sumie (ink wash with kasure and
+  bleed) / impressionist (gradient-following brush dabs) / stainedglass
+  (Worley panes + lead came) / pixelart (Bayer-dithered quantization) —
+  survey and parameter rationale in
+  [docs/design/art_filters.ja.md](docs/design/art_filters.ja.md) … —
+  applicable to any layer or to a group's composited result
 
   ![Filter catalog (filters_tour output)](docs/images/filters_tour.png)
 

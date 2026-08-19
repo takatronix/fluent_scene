@@ -366,6 +366,103 @@ void sceneOilpaint(Renderer& r) {
     g_max_diff_limit = saved_limit;
 }
 
+// The art-style family (docs/design/art_filters.ja.md). The scenes exercise
+// every parameter slot across its intended range. Anime is continuous
+// end-to-end (soft quantization, smoothstep ink) and holds the normal
+// tolerance; watercolor and sumie read the source at noise-wobbled
+// positions, so they share notebook's waiver — ~1e-4 of CPU/GPU drift in
+// the wobble moves a read across a full-contrast test edge at an isolated
+// texel. over_ratio carries the guard.
+void sceneAnime(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Anime());
+    stage.image(view).frame({170, 10, 150, 130}).filter(Anime().levels(3.0f).lines(1.6f));
+    stage.image(view).frame({330, 10, 140, 130}).filter(Anime().lines(0.0f).vivid(1.0f));
+    stage.image(view).frame({10, 160, 150, 130}).filter(Anime().smooth(0.0f).width(3.0f));
+    stage.image(view).frame({170, 160, 150, 130}).filter(Anime().levels(8.0f).smooth(1.0f));
+    checkScene("anime", r.render(stage, 0.0f));
+}
+
+void sceneWatercolor(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Watercolor());
+    stage.image(view).frame({170, 10, 150, 130}).filter(Watercolor().wash(9.0f).wobble(1.6f));
+    stage.image(view).frame({330, 10, 140, 130}).filter(Watercolor().grain(1.5f).edge(1.6f));
+    stage.image(view).frame({10, 160, 150, 130}).filter(Watercolor().dilute(0.8f).grain(0.0f));
+    stage.image(view).frame({170, 160, 150, 130}).filter(Watercolor().edge(0.0f).wobble(0.0f));
+    const int saved_limit = g_max_diff_limit;
+    const double saved_ratio = g_over_ratio_limit;
+    g_max_diff_limit = 255;
+    g_over_ratio_limit = 0.02;
+    checkScene("watercolor", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
+    g_over_ratio_limit = saved_ratio;
+}
+
+void sceneSumie(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Sumie());
+    stage.image(view).frame({170, 10, 150, 130}).filter(Sumie().ink(1.7f).outline(1.5f));
+    stage.image(view).frame({330, 10, 140, 130}).filter(Sumie().bleed(9.0f).dry(1.3f));
+    stage.image(view).frame({10, 160, 150, 130}).filter(Sumie().chroma(0.4f));
+    stage.image(view).frame({170, 160, 150, 130}).filter(Sumie().ink(0.4f).dry(0.0f).outline(0.0f));
+    const int saved_limit = g_max_diff_limit;
+    g_max_diff_limit = 255;
+    checkScene("sumie", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
+}
+
+// Impressionist wears the covering dab with the best score — a hard argmax
+// like oilpaint's quadrant pick, but a flipped tie here repaints a whole
+// DAB (hundreds of texels), so the ratio guard sits above the default.
+void sceneImpressionist(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Impressionist());
+    stage.image(view).frame({170, 10, 150, 130}).filter(Impressionist().stroke(12.0f));
+    stage.image(view).frame({330, 10, 140, 130})
+        .filter(Impressionist().vibrance(1.6f).relief(1.5f));
+    stage.image(view).frame({10, 160, 150, 130})
+        .filter(Impressionist().flow(0.0f).canvas(1.2f));
+    stage.image(view).frame({170, 160, 150, 130})
+        .filter(Impressionist().vibrance(0.0f).relief(0.0f));
+    const int saved_limit = g_max_diff_limit;
+    const double saved_ratio = g_over_ratio_limit;
+    g_max_diff_limit = 255;
+    g_over_ratio_limit = 0.03;
+    checkScene("impressionist", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
+    g_over_ratio_limit = saved_ratio;
+}
+
+// Stainedglass picks the nearest Worley site (hard selection at pane
+// borders), pixelart quantizes hard against the Bayer threshold — both get
+// the oilpaint waiver for the same reason.
+void sceneStainedglassPixelart(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Stainedglass());
+    stage.image(view).frame({170, 10, 150, 130})
+        .filter(Stainedglass().size(40.0f).lead(1.4f).light(1.2f));
+    stage.image(view).frame({330, 10, 140, 130})
+        .filter(Stainedglass().irregular(0.15f).saturate(1.2f));
+    stage.image(view).frame({10, 160, 150, 130}).filter(Pixelart());
+    stage.image(view).frame({170, 160, 150, 130})
+        .filter(Pixelart().size(10.0f).colors(3.0f).dither(1.0f).saturate(0.8f));
+    const int saved_limit = g_max_diff_limit;
+    g_max_diff_limit = 255;
+    checkScene("stainedglass_pixelart", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
+}
+
 void sceneBokeh(Renderer& r) {
     Stage stage(480, 300);
     const auto img = makeTestImage(160, 120);
@@ -545,6 +642,11 @@ int main(int argc, char** argv) {
     sceneNotebook(r);
     sceneBokeh(r);
     sceneOilpaint(r);
+    sceneAnime(r);
+    sceneWatercolor(r);
+    sceneSumie(r);
+    sceneImpressionist(r);
+    sceneStainedglassPixelart(r);
     sceneTv(r);
     sceneAnimation(r);
     sceneImagePaste(r);

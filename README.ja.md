@@ -106,13 +106,18 @@ golden テストが3バックエンドを同じ基準画像に対して検証し
 - **CALayer 準拠の属性** — frame / position / anchor / rotation / scale /
   opacity / shadow / border / background / cornerRadius / masksToBounds /
   blend。左上原点・+y 下の**1座標系のみ**（反転スイッチは存在しない）
-- **フィルタ 38種** — blur / bilateral / color_transform / toon / halftone /
+- **フィルタ 44種** — blur / bilateral / color_transform / toon / halftone /
   ripple / beauty（磨皮+美白+NR） / lut（3D LUT） / lsd /
   bokeh（多角形絞り） / oilpaint（Kuwahara油絵） / ntsc + crt（コンポジット
   信号の実変調→ブラウン管。MAME ntsc.fx BSD-3 / Lottes PD / Cathode-Retro
   MIT 系譜） / fractal（無限KIFS飛行） /
   notebook（鉛筆スケッチ、[flockaroo XtVGD1](https://www.shadertoy.com/view/XtVGD1)
-  移植・CC BY-NC-SA につき**この1本のみ非商用限定**、他は MIT のまま）…
+  移植・CC BY-NC-SA につき**この1本のみ非商用限定**、他は MIT のまま）/
+  アート様式ファミリー: anime（セル影+XDoG線画）/ watercolor（Bousseau
+  顔料密度水彩）/ sumie（水墨・掠れと滲み）/ impressionist（勾配追従の
+  筆致点描）/ stainedglass（Worleyステンドグラス）/ pixelart（Bayerディザ
+  ドット絵）— 調査とパラメータ設計は
+  [docs/design/art_filters.ja.md](docs/design/art_filters.ja.md) …
   任意のレイヤーにもグループ（合成後の1枚）にも掛かる
 
   ![フィルタカタログ（filters_tour の出力）](docs/images/filters_tour.png)

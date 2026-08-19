@@ -69,6 +69,12 @@ const int FS_OILPAINT = 36;
 const int FS_NTSC = 37;
 const int FS_CRT = 38;
 const int FS_FRACTAL = 39;
+const int FS_ANIME = 40;
+const int FS_WATERCOLOR = 41;
+const int FS_SUMIE = 42;
+const int FS_IMPRESSIONIST = 43;
+const int FS_STAINEDGLASS = 44;
+const int FS_PIXELART = 45;
 
 #ifdef FS_SAMPLE
 
@@ -762,6 +768,424 @@ vec3 fs_oilpaint(vec2 uv, float radius_px, float levels, float jitter) {
     return best;
 }
 
+// ---- painting and drawing styles -------------------------------------------
+// The art-style family: anime, watercolor, sumie, impressionist,
+// stainedglass, pixelart. Survey, algorithm choices and parameter rationale:
+// docs/design/art_filters.ja.md. All are original implementations from the
+// cited papers (MIT) — same golden discipline as the LSD/notebook kits:
+// value noise only (continuous everywhere), fract-free spellings.
+
+// Two decorrelated value-noise channels as a vector.
+vec2 fs_art_vnoise2(vec2 p) {
+    return vec2(fs_lsd_vnoise(p), fs_lsd_vnoise(p + vec2(19.19, 7.33)));
+}
+
+// Ring-sampled gaussian-ish luma blur: center + 8 taps at radius r_px.
+// Absolute blur quality is irrelevant here — only DoG *differences* of two
+// radii are consumed, and those stay smooth under this estimate.
+float fs_art_luma_ring(vec2 uv, float r_px) {
+    float acc = fs_luma(FS_SAMPLE(uv)) * 0.25;
+    for (int i = 0; i < 8; ++i) {
+        float a = 0.785398163 * float(i) + 0.35;
+        vec2 o = vec2(cos(a), sin(a)) * r_px;
+        acc += fs_luma(FS_SAMPLE(uv + FS_TEXEL * o)) * 0.09375;
+    }
+    return acc;
+}
+
+// XDoG-style ink line mass at uv (Winnemoeller 2011's soft thresholding in
+// a smoothstep spelling — steadier across backends than tanh at a cliff).
+// The difference of two ring blurs goes negative on the dark side of an
+// edge; that is where the pen puts ink. Higher strength both darkens and
+// (by lowering the threshold) thickens the line, like pressing the pen.
+float fs_art_ink_line(vec2 uv, float width_px, float strength) {
+    float w = max(width_px, 0.6);
+    float dog = fs_art_luma_ring(uv, w) - fs_art_luma_ring(uv, w * 1.8);
+    float s = clamp(strength, 0.0, 2.0);
+    return clamp(smoothstep(0.014 / (0.4 + 0.6 * s), 0.08, -dog) * s, 0.0, 1.0);
+}
+
+// Anime cel shading — Winnemoeller 2006's real-time abstraction folded into
+// one pass: edge-preserving pre-smoothing (fs_bilateral, mixable), LUMA-only
+// soft quantization (chroma untouched, so hues never rotate the way the RGB
+// posterize in `toon` does — the cel-shadow steps land on the same paint),
+// XDoG ink lines, and a saturation lift. `toon` stays as the cheap look;
+// this is the drawn-by-hand one.
+vec3 fs_anime(vec2 uv, float levels, float lines, float width_px,
+              float smooth_amt, float vivid) {
+    float res_y = 1.0 / FS_TEXEL.y;
+    float u = max(res_y / 400.0, 0.25);
+    vec3 c = FS_SAMPLE(uv);
+    float sm = clamp(smooth_amt, 0.0, 1.0);
+    if (sm > 0.001) {
+        c = mix(c, fs_bilateral(uv, 5.0 * u, 0.14), sm);
+    }
+    // luma soft quantization: a plateau plus a soft ramp inside each band
+    float l = fs_luma(c);
+    float n = max(levels, 2.0);
+    float band = l * n - floor(l * n);
+    float soft = clamp((band - 0.5) * 5.0, -0.5, 0.5);
+    float lq = clamp((floor(l * n) + 0.5 + soft) / n, 0.0, 1.0);
+    c = c * (lq / max(l, 1e-3));
+    // cel colors are flat and confident
+    float lm = fs_luma(c);
+    c = mix(vec3(lm), c, 1.0 + clamp(vivid, 0.0, 1.5));
+    // ink rides on top, slightly blue-black like animation ink
+    float ink = fs_art_ink_line(uv, width_px, lines);
+    return mix(clamp(c, 0.0, 1.0), vec3(0.05, 0.045, 0.08), ink);
+}
+
+// Watercolor — Bousseau 2006's pigment-density model carries the whole look
+// in one expression: C' = C·(1 − (1−C)·(d−1)), where density d>1 deposits
+// pigment (a second pass of the brush) and d<1 thins it. The density field
+// is built from three watercolor phenomena: pigment pooling at wet-edge
+// boundaries (gradient magnitude), granulation into the paper's tooth (fine
+// value noise, strongest in mid-tone washes), and slow wash unevenness. On
+// top: hand wobble (domain-warped reads), dilution toward paper white in
+// the highlights (watercolor has no white paint), and the paper's own tint
+// and tooth relief.
+vec3 fs_watercolor(vec2 uv, float wash_px, float edge, float grain,
+                   float wobble, float dilute) {
+    float res_y = 1.0 / FS_TEXEL.y;
+    float u = max(res_y / 400.0, 0.25);
+    vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
+    // hand wobble: two octaves of vector noise displace where we read
+    vec2 wn = fs_art_vnoise2(px * (0.045 / u)) - vec2(0.5, 0.5)
+            + (fs_art_vnoise2(px * (0.11 / u) + vec2(31.7, 13.3)) - vec2(0.5, 0.5)) * 0.5;
+    vec2 wuv = uv + FS_TEXEL * (wn * (7.0 * u * clamp(wobble, 0.0, 2.0)));
+    // wash: golden-angle spiral mean — pigment spreading in water softens
+    // detail without the greasy look a box blur gives
+    float r = max(wash_px, 0.75);
+    vec3 mean = FS_SAMPLE(wuv);
+    for (int i = 0; i < 12; ++i) {
+        float ang = 2.39996323 * float(i) + 0.9;
+        float rad = r * sqrt((float(i) + 0.5) / 12.0);
+        mean += FS_SAMPLE(wuv + FS_TEXEL * (vec2(cos(ang), sin(ang)) * rad));
+    }
+    mean = mean / 13.0;
+    // edge darkening: pigment pools where a wash meets a boundary
+    float eps = max(r * 0.75, 1.0);
+    float gx = fs_luma(FS_SAMPLE(wuv + FS_TEXEL * vec2(eps, 0.0)))
+             - fs_luma(FS_SAMPLE(wuv - FS_TEXEL * vec2(eps, 0.0)));
+    float gy = fs_luma(FS_SAMPLE(wuv + FS_TEXEL * vec2(0.0, eps)))
+             - fs_luma(FS_SAMPLE(wuv - FS_TEXEL * vec2(0.0, eps)));
+    float pool = clamp(length(vec2(gx, gy)) * 2.2, 0.0, 1.0) * clamp(edge, 0.0, 2.0);
+    // granulation: pigment settles into the tooth, mostly in mid washes
+    float lmn = fs_luma(mean);
+    float tooth = fs_lsd_vnoise(px * (0.55 / u))
+                + fs_lsd_vnoise(px * (1.1 / u) + vec2(53.1, 97.7)) * 0.5;
+    float mid = 4.0 * lmn * (1.0 - lmn);
+    float gran = (tooth * 0.6667 - 0.5) * clamp(grain, 0.0, 2.0) * (0.10 + 0.90 * mid);
+    // a big soft brush is never perfectly even
+    float uneven = (fs_lsd_vnoise(px * (0.012 / u) + vec2(7.7, 71.3)) - 0.5) * 0.5;
+    float d = clamp(1.0 + 0.9 * pool + 0.38 * gran + uneven, 0.4, 2.5);
+    vec3 c = mean * mean * (d - 1.0) + mean * (2.0 - d);
+    // dilution: highlights thin out to paper
+    vec3 paper = vec3(0.99, 0.975, 0.94);
+    c = mix(c, paper, clamp(dilute, 0.0, 1.0) * smoothstep(0.55, 0.97, fs_luma(c)));
+    // paper tint + tooth relief lit from the top-left (the two noise reads
+    // sit close together — a directional derivative, not independent salt)
+    float t1 = fs_lsd_vnoise(px * (0.5 / u) + vec2(211.0, 17.0));
+    float t2 = fs_lsd_vnoise(px * (0.5 / u) + vec2(211.35, 17.35));
+    c = c * paper * (1.0 + (t1 - t2) * (0.08 + 0.18 * clamp(grain, 0.0, 2.0)));
+    return clamp(c, 0.0, 1.0);
+}
+
+// Sumi-e ink wash. Tone is the story: luma is bent through an ink curve and
+// softly quantized into a few washes (the classical graded strokes), then
+// smeared along the local edge tangent — the brush travels along contours,
+// not across them (Way 2002's wash/contour split; the stroke-space dry
+// brush after Strassmann 1986's bristle idea; the bleed is a one-shot ring
+// approximation of the cellular ink-diffusion models). XDoG contours with
+// pressure wobble draw the bones. Warm washi paper with fiber noise carries
+// it; `chroma` washes a little of the source color back in (tansai).
+vec3 fs_sumie(vec2 uv, float ink, float bleed_px, float dry, float outline,
+              float chroma) {
+    float res_y = 1.0 / FS_TEXEL.y;
+    float u = max(res_y / 400.0, 0.25);
+    vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
+    // slight hand wobble keeps ruled edges out of an ink painting
+    vec2 wn = fs_art_vnoise2(px * (0.06 / u)) - vec2(0.5, 0.5);
+    vec2 wuv = uv + FS_TEXEL * (wn * (3.0 * u));
+    // local flow: the brush runs along the edge tangent. The gradient is
+    // taken COARSE and blended toward one master stroke direction where the
+    // picture is flat — a per-pixel tangent in texture turns every noise
+    // below into per-pixel speckle (ask the first draft).
+    float fe = 3.2 * u;
+    float ggx = fs_luma(FS_SAMPLE(wuv + FS_TEXEL * vec2(fe, 0.0)))
+              - fs_luma(FS_SAMPLE(wuv - FS_TEXEL * vec2(fe, 0.0)));
+    float ggy = fs_luma(FS_SAMPLE(wuv + FS_TEXEL * vec2(0.0, fe)))
+              - fs_luma(FS_SAMPLE(wuv - FS_TEXEL * vec2(0.0, fe)));
+    float gm = length(vec2(ggx, ggy));
+    float coh = smoothstep(0.02, 0.09, gm);
+    vec2 tang = gm > 1e-4 ? vec2(ggy, -ggx) / gm : vec2(0.94, 0.34);
+    tang = tang * coh + vec2(0.94, 0.34) * (1.0 - coh);
+    tang = tang / max(length(tang), 1e-4);
+    // smear the ink along the tangent: anisotropic 5-tap gather
+    vec3 mean = FS_SAMPLE(wuv) * 0.28;
+    for (int i = 0; i < 4; ++i) {
+        float o = (float(i) - 1.5) * (2.9 * u);
+        mean += FS_SAMPLE(wuv + FS_TEXEL * (tang * o)) * 0.18;
+    }
+    // ink tone curve: the exponent sits on DENSITY, so mid-tones thin out
+    // toward reserved paper (sumi-e lives on its whites) while true darks
+    // keep their ink; `ink` lowers the exponent and the whole picture
+    // wets. Then soft-quantized into four washes.
+    float dexp = 2.6 - 0.9 * clamp(ink, 0.0, 2.0);
+    float dens0 = pow(clamp(1.0 - fs_luma(mean), 0.0, 1.0), dexp);
+    float band = dens0 * 4.0 - floor(dens0 * 4.0);
+    float soft = clamp((band - 0.5) * 2.6, -0.5, 0.5);
+    float dq = clamp((floor(dens0 * 4.0) + 0.5 + soft) * 0.25, 0.0, 1.0);
+    float dens = mix(dens0, dq, 0.75);   // washes, not a poster
+    // kasure: the brush runs dry in mid-density sweeps — stroke-space
+    // noise, long along the travel, fine across it
+    float s_along = dot(px, tang);
+    float s_cross = dot(px, vec2(tang.y, -tang.x));
+    float kn = fs_lsd_vnoise(vec2(s_along * (0.10 / u), s_cross * (0.55 / u)));
+    float midmask = 4.0 * dens * (1.0 - dens);
+    dens = dens * (1.0 - clamp(dry, 0.0, 1.5) * 0.42 * midmask
+                         * smoothstep(0.5, 0.95, kn) * smoothstep(0.15, 0.35, dens));
+    // nijimi: dark cores bleed a soft halo into the paper. AVERAGED over
+    // the ring — a max here reads as speckle wherever one tap lands dark
+    float rb = max(bleed_px, 0.5);
+    float halo = 0.0;
+    for (int i = 0; i < 8; ++i) {
+        float a = 0.785398163 * float(i) + 0.6;
+        float rr = rb * (0.85 + 0.3 * fs_lsd_vnoise(px * (0.09 / u)
+                                                    + vec2(float(i) * 13.7, 5.1)));
+        float ln = fs_luma(FS_SAMPLE(wuv + FS_TEXEL * (vec2(cos(a), sin(a)) * rr)));
+        halo += clamp(pow(clamp(1.0 - ln, 0.0, 1.0), dexp) - 0.45, 0.0, 1.0);
+    }
+    dens = max(dens, halo * 0.125 * 0.9);
+    // highlights snap clean to paper — a wash never leaves a gray film,
+    // and sumi-e lives on its reserved whites
+    dens = dens * smoothstep(0.06, 0.16, dens);
+    // contours: pressure-wobbled ink lines
+    float press = 0.55 + 0.7 * fs_lsd_vnoise(px * (0.07 / u) + vec2(99.1, 3.3));
+    float bones = fs_art_ink_line(wuv, 1.9 * u, clamp(outline, 0.0, 2.0) * press);
+    dens = max(dens, bones * 0.9);
+    // washi with fibers; sumi is a warm blue-black, never pure black
+    float fib = fs_lsd_vnoise(vec2(px.x * (0.10 / u), px.y * (0.5 / u))
+                              + vec2(17.0, 231.0));
+    vec3 paper = vec3(0.965, 0.945, 0.895) * (0.965 + 0.07 * (fib - 0.5));
+    vec3 c = mix(paper, vec3(0.09, 0.088, 0.10), clamp(dens, 0.0, 1.0));
+    // tansai: a light color wash over the ink drawing
+    float ch = clamp(chroma, 0.0, 1.0);
+    if (ch > 0.001) {
+        vec3 tinted = mean * (1.0 - dens * 0.75) * paper;
+        c = mix(c, tinted, ch);
+    }
+    return clamp(c, 0.0, 1.0);
+}
+
+// Impressionist brush dabs, single pass. Litwinowicz 1997 lays short
+// strokes along the local edge tangent and clips them at strong edges;
+// Hertzmann 1998 layers big background strokes under small ones. Both are
+// stroke-serial algorithms, so this reformulates them for a gather: every
+// pixel searches the 3×3 neighborhood of a jittered stroke-seed grid (two
+// layers, coarse under fine), rebuilds each nearby dab — position, tangent
+// orientation, capsule footprint, per-seed broken color (the divisionist
+// color vibration) — and wears the covering dab with the best score
+// (coverage × z-hash, fine layer biased). Between dabs the canvas shows.
+// Impasto: bristle noise in stroke space tilts the shading, plus a rim
+// shadow at each dab's soft edge.
+vec3 fs_impressionist(vec2 uv, float stroke_px, float vibrance, float flow,
+                      float relief, float canvas) {
+    float res_y = 1.0 / FS_TEXEL.y;
+    float u = max(res_y / 400.0, 0.25);
+    vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
+    float p_fine = max(stroke_px, 2.0);
+    float vib = clamp(vibrance, 0.0, 2.0);
+    float fl = clamp(flow, 0.0, 1.0);
+    float rlf = clamp(relief, 0.0, 2.0);
+    vec3 best = vec3(0.0, 0.0, 0.0);
+    float best_score = -1.0;
+    float cov_any = 0.0;
+    for (int layer = 0; layer < 2; ++layer) {
+        float pitch = layer == 0 ? p_fine * 2.1 : p_fine;
+        float zbias = layer == 0 ? 0.0 : 0.35;
+        float wid = layer == 0 ? pitch * 0.68 : pitch * 0.58;
+        vec2 lofs = layer == 0 ? vec2(0.0, 0.0) : vec2(37.7, 17.3);
+        vec2 cell = floor(px / pitch);
+        for (int j = -1; j <= 1; ++j) {
+            for (int i = -1; i <= 1; ++i) {
+                vec2 id = cell + vec2(float(i), float(j)) + lofs;
+                float h1 = fs_lsd_hash(id * 0.731 + vec2(0.17, 0.37));
+                float h2 = fs_lsd_hash(id * 0.593 + vec2(7.13, 3.71));
+                float hz = fs_lsd_hash(id * 0.419 + vec2(1.91, 8.23));
+                vec2 seed = (id - lofs + vec2(0.5, 0.5)
+                             + (vec2(h1, h2) - vec2(0.5, 0.5)) * 0.9) * pitch;
+                vec2 rel = px - seed;
+                float lmax = pitch * 1.75;   // conservative cull, no taps yet
+                if (dot(rel, rel) > lmax * lmax) continue;
+                vec2 suv = clamp(vec2(seed.x * FS_TEXEL.x, seed.y * FS_TEXEL.y),
+                                 vec2(0.0, 0.0), vec2(1.0, 1.0));
+                // orientation: edge tangent at the seed, yielding to a
+                // noise field where the picture is flat
+                float eps = max(pitch * 0.5, 1.0);
+                float gx = fs_luma(FS_SAMPLE(suv + FS_TEXEL * vec2(eps, 0.0)))
+                         - fs_luma(FS_SAMPLE(suv - FS_TEXEL * vec2(eps, 0.0)));
+                float gy = fs_luma(FS_SAMPLE(suv + FS_TEXEL * vec2(0.0, eps)))
+                         - fs_luma(FS_SAMPLE(suv - FS_TEXEL * vec2(0.0, eps)));
+                float gm = length(vec2(gx, gy));
+                float na = (fs_lsd_vnoise(seed * (0.013 / u)) - 0.5) * 6.28318531
+                         + (h1 - 0.5) * 0.9;
+                vec2 dir = vec2(cos(na), sin(na));
+                if (gm > 1e-4) {
+                    vec2 tg = vec2(gy, -gx) / gm;
+                    if (dot(tg, dir) < 0.0) { tg = vec2(-tg.x, -tg.y); }
+                    float wf = fl * smoothstep(0.02, 0.12, gm);
+                    vec2 dd = dir + (tg - dir) * wf;
+                    dir = dd / max(length(dd), 1e-4);
+                }
+                // capsule footprint, shorter where edges are strong
+                // (Litwinowicz's stroke clipping, reduced to a statistic)
+                float len = pitch * (1.35 - 0.7 * smoothstep(0.05, 0.30, gm));
+                float s = dot(rel, dir);
+                float q = dot(rel, vec2(dir.y, -dir.x));
+                float edge_d = abs(q) / wid + (s * s) / max(len * len, 1e-4);
+                if (edge_d > 1.15) continue;
+                float cover = 1.0 - smoothstep(0.75, 1.05, edge_d);
+                if (cover < 0.03) continue;
+                cov_any = max(cov_any, cover);
+                float score = cover * (0.35 + 0.65 * hz) + zbias;
+                if (score > best_score) {
+                    best_score = score;
+                    vec3 c = FS_SAMPLE(suv);
+                    // broken color: each dab mixes its pigment a bit wrong.
+                    // LUMA-PRESERVING — divisionism vibrates hue while the
+                    // values keep the large forms readable (a free jitter
+                    // turns a sky into confetti)
+                    vec3 cj = c * (vec3(1.0, 1.0, 1.0)
+                                   + (vec3(h1, h2, hz) - vec3(0.5, 0.5, 0.5))
+                                     * (vib * 0.6));
+                    c = cj * (fs_luma(c) / max(fs_luma(cj), 1e-3));
+                    // impasto: bristle streaks along the dab, lit top-left
+                    // (two CLOSE noise reads = a directional derivative);
+                    // thick paint catches light mostly in the lights
+                    vec2 bp = vec2(s * (0.16 / u), q * (0.5 / u))
+                            + vec2(hz * 61.0, h1 * 47.0);
+                    float b1 = fs_lsd_vnoise(bp);
+                    float b2 = fs_lsd_vnoise(bp + vec2(0.2, 0.28));
+                    float shade = (b1 - b2) * 0.9 * (0.35 + 0.65 * fs_luma(c))
+                                + (0.5 - edge_d) * 0.18;
+                    best = c * (1.0 + rlf * shade);
+                }
+            }
+        }
+    }
+    // the canvas ground shows between dabs, and its weave sits faintly in
+    // the paint everywhere
+    float wx = fs_lsd_vnoise(vec2(px.x * (0.5 / u), px.y * (0.09 / u)));
+    float wy = fs_lsd_vnoise(vec2(px.x * (0.09 / u) + 43.0, px.y * (0.5 / u)));
+    float weave = (wx + wy) * 0.5;
+    vec3 ground = vec3(0.92, 0.895, 0.85) * (0.93 + 0.14 * weave);
+    vec3 c = mix(ground, best, smoothstep(0.10, 0.5, cov_any));
+    c = c * (1.0 + clamp(canvas, 0.0, 1.5) * 0.28 * (weave - 0.5));
+    return clamp(c, 0.0, 1.0);
+}
+
+// Stained glass — Worley 1996 cellular noise: each pixel finds the nearest
+// (F1) and second-nearest (F2) jittered cell sites; F2−F1 measures the
+// distance to the pane border, so the lead came is a smoothstep on it.
+// Panes are tinted from the source at the site (posterized, saturated, and
+// nudged in hue per pane so a flat sky still breaks into distinct glass),
+// shaded by a light gradient across the pane and a faint ripple in the
+// glass itself.
+vec3 fs_stainedglass(vec2 uv, float size_px, float lead, float irregular,
+                     float sat_amt, float light_amt) {
+    float pitch = max(size_px, 4.0);
+    float res_y = 1.0 / FS_TEXEL.y;
+    float u = max(res_y / 400.0, 0.25);
+    vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
+    vec2 cell = floor(px / pitch);
+    float f1 = 1e9;
+    float f2 = 1e9;
+    vec2 site1 = px;
+    vec2 id1 = cell;
+    float jit = clamp(irregular, 0.0, 1.0) * 0.95;
+    for (int j = -1; j <= 1; ++j) {
+        for (int i = -1; i <= 1; ++i) {
+            vec2 id = cell + vec2(float(i), float(j));
+            float h1 = fs_lsd_hash(id * 0.677 + vec2(0.31, 0.71));
+            float h2 = fs_lsd_hash(id * 0.531 + vec2(5.17, 2.93));
+            vec2 site = (id + vec2(0.5, 0.5)
+                         + (vec2(h1, h2) - vec2(0.5, 0.5)) * jit) * pitch;
+            float d = length(px - site);
+            if (d < f1) {
+                f2 = f1;
+                f1 = d;
+                site1 = site;
+                id1 = id;
+            } else if (d < f2) {
+                f2 = d;
+            }
+        }
+    }
+    vec2 suv = clamp(vec2(site1.x * FS_TEXEL.x, site1.y * FS_TEXEL.y),
+                     vec2(0.0, 0.0), vec2(1.0, 1.0));
+    vec3 c = FS_SAMPLE(suv);
+    float sat = clamp(sat_amt, 0.0, 1.5);
+    c = fs_posterize(c, 7.0 - 3.0 * sat);
+    c = mix(vec3(fs_luma(c)), c, 1.0 + 0.9 * sat);
+    float hn = fs_lsd_hash(id1 * 0.913 + vec2(9.71, 4.13)) - 0.5;
+    c = fs_hue_rotate(c, hn * (14.0 + 30.0 * sat));
+    // transmitted light: a soft gradient across each pane toward the sun
+    float lt = clamp(light_amt, 0.0, 1.5);
+    vec2 rel = (px - site1) / pitch;
+    float grad = dot(rel, vec2(-0.55, -0.75));
+    float ripple = fs_lsd_vnoise(px * (0.16 / u) + id1 * 3.7) - 0.5;
+    c = c * (1.0 + lt * (0.30 * grad + 0.18 * ripple) + lt * 0.10);
+    // lead came: dark, slightly warm metal, thin bevel light near the glass
+    float lw = pitch * 0.055 * clamp(lead, 0.0, 2.0) + 0.6;
+    float border = f2 - f1;
+    float m = lead < 0.01 ? 1.0 : smoothstep(lw, lw * 1.9, border);
+    float bevel = smoothstep(lw * 0.4, lw * 1.6, border);
+    vec3 came = vec3(0.13, 0.125, 0.12) * (0.75 + 0.5 * bevel);
+    return clamp(mix(came, c, m), 0.0, 1.0);
+}
+
+// Pixel art — block-average resample (2×2 inside each block), a gentle
+// saturation-and-contrast conditioning toward confident retro palettes,
+// Bayer 4×4 ordered dithering, then per-channel quantization: n³ effective
+// colors. The threshold matrix comes from the classic recursive
+// construction, computed arithmetically — no lookup table:
+//   M2(x,y) = 2x + 3y − 4xy,  M4(x,y) = 4·M2(x mod 2, y mod 2)
+//                                       + M2(⌊x/2⌋, ⌊y/2⌋).
+vec3 fs_pixelart(vec2 uv, float size_px, float colors, float dither,
+                 float sat_amt) {
+    float bs = max(size_px, 2.0);
+    vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
+    vec2 block = floor(px / bs);
+    vec2 base = (block + vec2(0.5, 0.5)) * bs;
+    vec3 c = vec3(0.0, 0.0, 0.0);
+    for (int j = 0; j < 2; ++j) {
+        for (int i = 0; i < 2; ++i) {
+            vec2 o = vec2(float(i) - 0.5, float(j) - 0.5) * (bs * 0.35);
+            vec2 tuv = clamp(vec2((base.x + o.x) * FS_TEXEL.x,
+                                  (base.y + o.y) * FS_TEXEL.y),
+                             vec2(0.0, 0.0), vec2(1.0, 1.0));
+            c += FS_SAMPLE(tuv);
+        }
+    }
+    c = c / 4.0;
+    float sat = clamp(sat_amt, 0.0, 1.5);
+    c = mix(vec3(fs_luma(c)), c, 1.0 + sat);
+    c = clamp((c - vec3(0.5)) * (1.0 + 0.25 * sat) + vec3(0.5), 0.0, 1.0);
+    float bx = block.x - 4.0 * floor(block.x / 4.0);
+    float by = block.y - 4.0 * floor(block.y / 4.0);
+    float x1 = bx - 2.0 * floor(bx / 2.0);
+    float y1 = by - 2.0 * floor(by / 2.0);
+    float x2 = floor(bx / 2.0);
+    float y2 = floor(by / 2.0);
+    float m4 = 4.0 * (2.0 * x1 + 3.0 * y1 - 4.0 * x1 * y1)
+             + (2.0 * x2 + 3.0 * y2 - 4.0 * x2 * y2);
+    float t = (m4 + 0.5) / 16.0 - 0.5;
+    float n = max(floor(colors + 0.5), 2.0) - 1.0;
+    c = c + vec3(t * clamp(dither, 0.0, 1.5) / n);
+    return clamp(floor(c * n + vec3(0.5)) / n, 0.0, 1.0);
+}
+
 // ---- generative ------------------------------------------------------------
 // fs_fractal — eternal flight through a self-morphing kaleidoscopic IFS.
 // Design: docs/design/fractal_filter.ja.md. Original composition; the
@@ -1374,6 +1798,12 @@ vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p
     else if (mode == FS_OILPAINT)        c = fs_oilpaint(uv, p0, p1, p2);
     else if (mode == FS_NTSC)            c = fs_ntsc(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_CRT)             c = fs_crt(uv, p0, p1, p2, p3, p4);
+    else if (mode == FS_ANIME)           c = fs_anime(uv, p0, p1, p2, p3, p4);
+    else if (mode == FS_WATERCOLOR)      c = fs_watercolor(uv, p0, p1, p2, p3, p4);
+    else if (mode == FS_SUMIE)           c = fs_sumie(uv, p0, p1, p2, p3, p4);
+    else if (mode == FS_IMPRESSIONIST)   c = fs_impressionist(uv, p0, p1, p2, p3, p4);
+    else if (mode == FS_STAINEDGLASS)    c = fs_stainedglass(uv, p0, p1, p2, p3, p4);
+    else if (mode == FS_PIXELART)        c = fs_pixelart(uv, p0, p1, p2, p3);
     return vec4(clamp(c, 0.0, 1.0), alpha);
 }
 

@@ -87,6 +87,21 @@ stage.image(cam).filter(Bilateral().radius(4).sigma_color(0.2f))
 でも画面上で同じ見た目になります。グループに掛ければ合成後の1枚に
 掛かります（グループぼかし）。
 
+## アートフィルタ（絵画様式）
+
+```cpp
+stage.image(cam).filter(Anime());                            // セル画+線画
+stage.image(cam).filter(Watercolor().wash(8).dilute(0.5f));  // 水彩
+stage.image(cam).filter(Sumie().chroma(0.3f));               // 淡彩水墨
+stage.image(cam).filter(Impressionist().stroke(10));         // 印象派筆致
+stage.image(cam).filter(Stainedglass().size(30));            // ステンドグラス
+stage.image(cam).filter(Pixelart().colors(4));               // ドット絵
+```
+
+どれもデフォルトで様式が出るよう調整済み。各様式の採用アルゴリズムと
+パラメータ設計（何を 5 slot に残したか）は
+[docs/design/art_filters.ja.md](design/art_filters.ja.md)。
+
 ## メーター / ゲージ
 
 ```cpp

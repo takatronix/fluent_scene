@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.11.0 — 2026-08-19 (アートフィルタ 6種: 40〜45)
+
+絵画様式ファミリー。全て論文アルゴリズムからの独自実装 (MIT、shadertoy
+借用なし)。調査サーベイ・採用判断・パラメータ設計の凍結表は
+`docs/design/art_filters.ja.md`。
+
+- **anime** (`FS_ANIME=40`): セル画。Winnemöller 2006 の実時間抽象化を
+  単一パスに畳む — bilateral 前平滑 (mix可変) + **輝度のみ** soft
+  quantization (chroma 保存なので `toon` と違い色相が回らない) +
+  XDoG (2011) インク線 (smoothstep 連続閾値) + 彩度リフト。
+  levels / lines / width / smooth / vivid
+- **watercolor** (`FS_WATERCOLOR=41`): 水彩。Bousseau 2006 の顔料密度式
+  `C' = C·(1−(1−C)·(d−1))` に全現象を畳む — エッジ顔料溜まり・
+  granulation (中間調ゲート) ・ウォッシュむら・手ぶれ UV 歪み・
+  ハイライト希釈・紙 tooth 照明。wash / edge / grain / wobble / dilute
+- **sumie** (`FS_SUMIE=42`): 水墨画。濃度側指数のトーンカーブ (中間調が
+  紙へ抜ける=余白が生きる) + soft 4段ウォッシュ + 粗視化接線に沿う運筆
+  スメア + ストローク空間ノイズの掠れ + リング平均の滲みハロー +
+  筆圧ゆらぎ付き輪郭 + 和紙。ink / bleed / dry / outline / chroma (淡彩)
+- **impressionist** (`FS_IMPRESSIONIST=43`): 印象派筆致。Litwinowicz 1997
+  (勾配接線ストローク+エッジクリップ) と Hertzmann 1998 (粗→細の多層) を
+  ギャザー型に再定式化 — ジッタ種格子 3×3 逆引き×2層、カプセル距離場の
+  dab、**輝度保存**の筆触分割色振動、ストローク空間剛毛ノイズの impasto
+  照明、キャンバス地。stroke / vibrance / flow / relief / canvas
+- **stainedglass** (`FS_STAINEDGLASS=44`): ステンドグラス。Worley 1996
+  F1/F2 セルラー — F2−F1 の smoothstep が鉛線。パネルは posterize+彩度+
+  パネル毎色相ネジ、透過光グラデ+ガラスむら。
+  size / lead / irregular / saturate / light
+- **pixelart** (`FS_PIXELART=45`): ドット絵。ブロック平均 + Bayer 4×4
+  ordered dither (再帰構成を算術で、テーブル無し) + チャンネル量子化 n³
+  色。size / colors / dither / saturate
+- golden: 5シーン追加 (anime は通常許容で CPU/Vulkan max|Δ|=1 を実測。
+  watercolor/sumie は notebook と同じジッタ読み waiver、impressionist/
+  stainedglass/pixelart はハード選択 waiver — 根拠コメント付き)
+- filters_tour のカタログは自動で 6 タイル増える (テーブル駆動)。
+  wasm/dist は**未再ビルド** — ブラウザデモに出すには emsdk で
+  `./wasm/build.sh --webgpu` が必要
+
 ## 0.10.1 — 2026-08-16 (フィルタ大量追加: 34〜39)
 
 - **bokeh** (`FS_BOKEH=35`): レンズボケ。絞り形状指定 (blades: 0=円形,

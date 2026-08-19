@@ -212,6 +212,70 @@ FS_PARAM(1, levels, 0.0f, Scalar)
 FS_PARAM(2, jitter, 0.6f, Scalar)
 FS_END(Oilpaint)
 
+// ---- painting and drawing styles -------------------------------------------
+// Own implementations from the papers — no borrowed shader code, MIT like the
+// rest of the catalog. Survey, algorithm choices and parameter rationale:
+// docs/design/art_filters.ja.md.
+
+FS_FILTER(Anime, anime, FS_ANIME,
+          "anime cel shading — chroma-preserving soft luma quantization + "
+          "XDoG ink lines (after Winnemoeller 2006/2011)")
+FS_PARAM(0, levels, 5.0f, Scalar)
+FS_PARAM(1, lines, 1.0f, Scalar)
+FS_PARAM(2, width, 1.6f, Length)
+FS_PARAM(3, smooth, 0.7f, Scalar)
+FS_PARAM(4, vivid, 0.3f, Scalar)
+FS_END(Anime)
+
+FS_FILTER(Watercolor, watercolor, FS_WATERCOLOR,
+          "watercolor wash — pigment-density model with edge darkening, "
+          "granulation and paper (after Bousseau 2006)")
+FS_PARAM(0, wash, 6.0f, Length)
+FS_PARAM(1, edge, 0.9f, Scalar)
+FS_PARAM(2, grain, 0.7f, Scalar)
+FS_PARAM(3, wobble, 1.0f, Scalar)
+FS_PARAM(4, dilute, 0.35f, Scalar)
+FS_END(Watercolor)
+
+FS_FILTER(Sumie, sumie, FS_SUMIE,
+          "sumi-e ink wash — tone washes, flow-smeared strokes, dry-brush "
+          "kasure, bleed halos and washi paper")
+FS_PARAM(0, ink, 1.0f, Scalar)
+FS_PARAM(1, bleed, 4.0f, Length)
+FS_PARAM(2, dry, 0.6f, Scalar)
+FS_PARAM(3, outline, 0.8f, Scalar)
+FS_PARAM(4, chroma, 0.0f, Scalar)
+FS_END(Sumie)
+
+FS_FILTER(Impressionist, impressionist, FS_IMPRESSIONIST,
+          "impressionist oil — gradient-following brush dabs with broken "
+          "color, impasto relief and canvas (after Litwinowicz 1997)")
+FS_PARAM(0, stroke, 7.0f, Length)
+FS_PARAM(1, vibrance, 0.8f, Scalar)
+FS_PARAM(2, flow, 0.8f, Scalar)
+FS_PARAM(3, relief, 0.7f, Scalar)
+FS_PARAM(4, canvas, 0.35f, Scalar)
+FS_END(Impressionist)
+
+FS_FILTER(Stainedglass, stainedglass, FS_STAINEDGLASS,
+          "stained glass — cellular panes (Worley F1/F2) with lead came, "
+          "per-pane tint and transmitted light")
+FS_PARAM(0, size, 24.0f, Length)
+FS_PARAM(1, lead, 0.8f, Scalar)
+FS_PARAM(2, irregular, 0.85f, Scalar)
+FS_PARAM(3, saturate, 0.5f, Scalar)
+FS_PARAM(4, light, 0.6f, Scalar)
+FS_END(Stainedglass)
+
+FS_FILTER(Pixelart, pixelart, FS_PIXELART,
+          "pixel art — block resample, per-channel quantization and Bayer "
+          "4x4 ordered dithering")
+FS_PARAM(0, size, 6.0f, Length)
+FS_PARAM(1, colors, 5.0f, Scalar)
+FS_PARAM(2, dither, 0.5f, Scalar)
+FS_PARAM(3, saturate, 0.25f, Scalar)
+FS_END(Pixelart)
+
 // ---- analog television -----------------------------------------------------
 // The pair reads: signal first, tube second —
 //   layer.filter(Ntsc().time(t)).filter(Crt())
