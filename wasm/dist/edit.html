@@ -536,6 +536,7 @@
         style="flex:1;background:rgba(255,255,255,0.04);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;outline:none">
       <button id="shGen" class="save" style="padding:8px 18px">生成</button>
     </div>
+    <label id="shEditWrap" style="display:none;align-items:center;gap:6px;font-size:11.5px;color:var(--dim);margin:-2px 0 8px;cursor:pointer"><input type="checkbox" id="shEditMode" style="accent-color:var(--violet)"> いまのコードをベースに改変(外すと新規作成)</label>
     <div id="shKeyHint" style="display:none;gap:8px;align-items:center;font-size:12px;color:var(--dim);background:rgba(126,232,250,0.06);border:1px solid rgba(126,232,250,0.2);border-radius:10px;padding:8px 12px;margin-bottom:10px">
       <span id="shKeyHintText">🤖 AI生成にはAPIキーが必要です — 内蔵で反応するのは「万華鏡」「波」「色収差」だけ</span>
       <button id="shCfgOpen" style="flex:none;background:none;border:1px solid var(--line);color:var(--ink);border-radius:999px;padding:5px 12px;font-size:12px;cursor:pointer">⚙ APIキーを設定</button>
@@ -2551,7 +2552,35 @@ function fetchTimeout(url, opts, ms = 60000) {
       })
       .finally(() => clearTimeout(t));
 }
-async function askClaude(text, sys = null) {
+// SSE line parser over a fetch body. fetchTimeout only guards until headers
+// arrive, so each chunk read gets its own 45s stall guard here.
+async function* sseEvents(body) {
+  const rd = body.getReader(), dec = new TextDecoder();
+  let buf = '';
+  try {
+    while (true) {
+      const { done, value } = await Promise.race([
+        rd.read(),
+        new Promise((_, rej) => setTimeout(() =>
+            rej(new Error('ストリーミングが止まりました(45秒) — ⚙で接続先を確認してください')), 45000)),
+      ]);
+      if (done) return;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') return;
+        try { yield JSON.parse(payload); } catch {}
+      }
+    }
+  } finally { try { rd.cancel(); } catch {} }
+}
+// opts: pre = few-shot messages, onDelta(fullText) = stream into the caller,
+// maxTokens. Both providers share the same contract.
+async function askClaude(text, sys = null, { pre = [], onDelta = null, maxTokens = 2500 } = {}) {
   const r = await fetchTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -2562,19 +2591,32 @@ async function askClaude(text, sys = null) {
     },
     body: JSON.stringify({
       model: aiCfg.claudeModel || 'claude-opus-5',
-      max_tokens: 2500,
+      max_tokens: maxTokens,
       system: sys || SYS_PROMPT(),
-      messages: [{ role: 'user', content: text }],
+      messages: [...pre, { role: 'user', content: text }],
+      ...(onDelta ? { stream: true } : {}),
     }),
   });
   if (!r.ok) throw new Error(`Claude API ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  if (onDelta) {
+    let full = '', refused = false;
+    for await (const ev of sseEvents(r.body)) {
+      if (ev.type === 'content_block_delta' && ev.delta && typeof ev.delta.text === 'string') {
+        full += ev.delta.text;
+        onDelta(full);
+      } else if (ev.type === 'message_delta' && ev.delta?.stop_reason === 'refusal') refused = true;
+    }
+    if (refused) throw new Error('モデルが生成を辞退しました');
+    if (!full) throw new Error('テキスト応答がありません');
+    return full;
+  }
   const data = await r.json();
   if (data.stop_reason === 'refusal') throw new Error('モデルが生成を辞退しました');
   const block = (data.content || []).find(b => b.type === 'text');
   if (!block) throw new Error('テキスト応答がありません');
   return block.text;
 }
-async function askOpenAI(text, sys = null) {
+async function askOpenAI(text, sys = null, { pre = [], onDelta = null, maxTokens = 2500 } = {}) {
   const base = aiCfg.oaiBase.replace(/\/$/, '');
   const headers = { 'content-type': 'application/json' };
   if (aiCfg.oaiKey) headers.authorization = 'Bearer ' + aiCfg.oaiKey;
@@ -2582,10 +2624,24 @@ async function askOpenAI(text, sys = null) {
     method: 'POST', headers,
     body: JSON.stringify({
       model: aiCfg.oaiModel,
-      messages: [{ role: 'system', content: sys || SYS_PROMPT() }, { role: 'user', content: text }],
+      messages: [{ role: 'system', content: sys || SYS_PROMPT() }, ...pre,
+                 { role: 'user', content: text }],
+      ...(onDelta ? { stream: true } : {}),
     }),
   });
   if (!r.ok) throw new Error(`API ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  if (onDelta) {
+    let full = '';
+    for await (const ev of sseEvents(r.body)) {
+      const d = ev.choices?.[0]?.delta?.content;
+      if (typeof d === 'string') {
+        full += d;
+        onDelta(full);
+      }
+    }
+    if (!full) throw new Error('応答が空です');
+    return full;
+  }
   const data = await r.json();
   const out = data.choices?.[0]?.message?.content;
   if (!out) throw new Error('応答が空です');
@@ -2755,8 +2811,30 @@ $('cfgSave').addEventListener('click', async () => {
 // top — the LLM writes a fragment shader, we compile it in-page and draw it
 // on an overlay canvas fed from the output canvas every frame.
 const GLSL_HEAD = '#version 300 es\nprecision highp float;\nuniform sampler2D u_src;\nuniform float u_time;\nuniform vec2 u_res;\nout vec4 outColor;\n';
+// fs_std — always prepended to user shader bodies. The LLM is told these
+// exist so it never wastes tokens (or quality) rewriting noise functions.
+const FS_STD = `float hash12(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
+float vnoise(vec2 p){ vec2 i=floor(p),f=fract(p); vec2 u=f*f*(3.-2.*f);
+  return mix(mix(hash12(i),hash12(i+vec2(1,0)),u.x),
+             mix(hash12(i+vec2(0,1)),hash12(i+vec2(1,1)),u.x),u.y); }
+float fbm(vec2 p){ float a=0.5,s=0.; for(int i=0;i<5;i++){ s+=a*vnoise(p); p*=2.03; a*=0.5; } return s; }
+vec3 hsv2rgb(vec3 c){ vec3 p=abs(fract(c.xxx+vec3(0.,2./3.,1./3.))*6.-3.);
+  return c.z*mix(vec3(1.),clamp(p-1.,0.,1.),c.y); }
+vec3 pal(float t, vec3 a, vec3 b, vec3 c, vec3 d){ return a+b*cos(6.28318*(c*t+d)); }
+float luma(vec3 c){ return dot(c, vec3(0.2126,0.7152,0.0722)); }
+vec3 srcAt(vec2 uv){ return texture(u_src, clamp(uv, 0.0, 1.0)).rgb; }
+float edgeAt(vec2 uv){ vec2 t=1.0/u_res;
+  return length(vec2(luma(srcAt(uv+vec2(t.x,0.)))-luma(srcAt(uv-vec2(t.x,0.))),
+                     luma(srcAt(uv+vec2(0.,t.y)))-luma(srcAt(uv-vec2(0.,t.y))))); }
+vec2 rot(vec2 p, float a){ float c=cos(a),s=sin(a); return vec2(c*p.x-s*p.y, s*p.x+c*p.y); }
+`;
+// editor holds BODIES (helpers + void main). #line 1 keeps compiler error
+// numbers aligned with the editor gutter. Full sources with their own
+// #version (old saves / shared links) pass through untouched.
+const assembleShader = code => /#version/.test(code) ? code
+    : GLSL_HEAD + FS_STD + '#line 1\n' + code;
 const SHADER_TEMPLATES = [
-  [/万華鏡|カレイド/, GLSL_HEAD + `void main() {
+  [/万華鏡|カレイド/, `void main() {
   vec2 uv = gl_FragCoord.xy / u_res;
   vec2 p = uv - 0.5;
   p.x *= u_res.x / u_res.y;
@@ -2766,34 +2844,92 @@ const SHADER_TEMPLATES = [
   a = abs(a - seg * 0.5) + u_time * 0.15;
   vec2 q = vec2(cos(a), sin(a)) * r;
   q.x *= u_res.y / u_res.x;
-  outColor = texture(u_src, fract(q + 0.5));
+  outColor = vec4(srcAt(fract(q + 0.5)), 1.0);
 }`],
-  [/波|うね|ゆら/, GLSL_HEAD + `void main() {
+  [/波|うね|ゆら/, `void main() {
   vec2 uv = gl_FragCoord.xy / u_res;
   uv.x += 0.02 * sin(uv.y * 12.0 + u_time * 1.5);
   uv.y += 0.02 * sin(uv.x * 10.0 - u_time * 1.2);
-  outColor = texture(u_src, uv);
+  outColor = vec4(srcAt(uv), 1.0);
 }`],
-  [/色収差|にじ|ズレ|ずれ/, GLSL_HEAD + `void main() {
+  [/色収差|にじ|ズレ|ずれ/, `void main() {
   vec2 uv = gl_FragCoord.xy / u_res;
   vec2 d = (uv - 0.5) * 0.02;
-  outColor = vec4(texture(u_src, uv + d).r, texture(u_src, uv).g,
-                  texture(u_src, uv - d).b, 1.0);
+  outColor = vec4(srcAt(uv + d).r, srcAt(uv).g, srcAt(uv - d).b, 1.0);
 }`],
 ];
-const SYS_SHADER = `あなたはWebGL2のシェーダ作家です。ユーザーの指示から、映像にかける GLSL ES 3.00 のフラグメントシェーダを1本書いてください。
+const SYS_SHADER = `あなたは一流のリアルタイム映像シェーダ作家です(Shadertoyのトップ作品水準)。
+ユーザーの指示から、Webカメラ映像にかける GLSL ES 3.00 フラグメントシェーダを書きます。
 
-契約(厳守):
-#version 300 es
-precision highp float;
-uniform sampler2D u_src;   // 入力映像
-uniform float u_time;      // 秒
-uniform vec2 u_res;        // 出力解像度(px)
-out vec4 outColor;
-void main() { vec2 uv = gl_FragCoord.xy / u_res; ... outColor = ...; }
+環境(宣言はページ側で自動付与済み — あなたは本文だけを書く):
+- 入力: u_src(映像) / u_time(秒) / u_res(出力px)。出力は outColor
+- 標準ライブラリも定義済み(再定義禁止・積極的に使う):
+  hash12(p) vnoise(p) fbm(p) hsv2rgb(c) pal(t,a,b,c,d) luma(c) srcAt(uv) edgeAt(uv) rot(p,a)
 
-- コードのみを出力(説明・マークダウン不要)。補助関数の追加は自由。
-- 映像は texture(u_src, uv) で読む。uvは0..1。過激な点滅は避ける。`;
+作法(品質の要):
+- 原則「映像を素材に加工」する。映像を捨てて無関係な絵にするのは指示された時だけ
+- 構図: 効果は一様に塗らず空間変化させる(中心/エッジ/明暗で強弱)
+- 色: pal() か hsv2rgb() で設計されたパレットを使う。生RGB加算の白飛び禁止
+- 動き: u_time は1つの主リズム+弱い副リズム。0.2〜0.5Hz が心地よい
+- edgeAt() で輪郭を拾うと映像との一体感が出る
+- 30行を超える複雑さより、2〜3個の効果の丁寧な合成
+
+出力形(厳守): 補助関数(任意)+ void main() のみ。#version や uniform 宣言を書いてはいけない。
+コードのみ出力(説明文・マークダウン禁止)。コメントは日本語可。
+void main() { vec2 uv = gl_FragCoord.xy / u_res; ... outColor = vec4(col, 1.0); }`;
+// few-shot pairs: one color-treatment, one edge-driven, one uv-warp example.
+// Compile-verified — keep them valid if you edit.
+const SHADER_SHOTS = [
+  { role: 'user', content: 'VHSっぽく' },
+  { role: 'assistant', content: `void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  float t = u_time;
+  // ヘッドスイッチング: 下端で横に引きちぎれる
+  float tear = smoothstep(0.97, 1.0, uv.y + 0.02 * sin(t * 0.7));
+  uv.x += tear * 0.15 * hash12(vec2(floor(uv.y * 90.0), floor(t * 12.0)));
+  // 行単位の弱いジッタ
+  uv.x += (hash12(vec2(floor(uv.y * 240.0), floor(t * 24.0))) - 0.5) * 0.003;
+  // 色ずれ
+  vec3 col = vec3(srcAt(uv + vec2(0.004, 0.0)).r, srcAt(uv).g, srcAt(uv - vec2(0.004, 0.0)).b);
+  // 走査線
+  col *= 0.82 + 0.18 * sin(uv.y * u_res.y * 1.6);
+  // テープノイズは暗部に乗せる
+  float n = hash12(uv * u_res + t * 60.0);
+  col += (n - 0.5) * 0.12 * (1.0 - luma(col));
+  // 白飛びさせず褪せた色へ
+  col = mix(col, vec3(luma(col)), 0.25) * vec3(0.95, 1.02, 0.95);
+  outColor = vec4(col, 1.0);
+}` },
+  { role: 'user', content: '輪郭が光る近未来スキャン' },
+  { role: 'assistant', content: `void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  vec3 base = srcAt(uv) * 0.35;                     // 素材は暗く残す
+  float e = smoothstep(0.06, 0.35, edgeAt(uv));     // 輪郭
+  // 下から上へ走るスキャン帯 (主リズム0.3Hz)
+  float band = smoothstep(0.12, 0.0, fract(uv.y - u_time * 0.3));
+  // 輪郭は設計パレットで発光、帯で増幅
+  vec3 glow = pal(luma(srcAt(uv)) + u_time * 0.05,
+      vec3(0.1, 0.4, 0.5), vec3(0.4, 0.4, 0.4), vec3(1.0), vec3(0.0, 0.15, 0.4));
+  vec3 col = base + glow * e * (0.6 + 1.4 * band);
+  col *= 0.9 + 0.1 * sin(uv.y * u_res.y * 2.0);     // 細い走査線
+  outColor = vec4(col, 1.0);
+}` },
+  { role: 'user', content: '映像を万華鏡に' },
+  { role: 'assistant', content: `void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  vec2 p = uv - 0.5;
+  p.x *= u_res.x / u_res.y;
+  // 6枚鏡: 角度を折りたたむ
+  float a = atan(p.y, p.x), r = length(p);
+  float seg = 6.2831853 / 6.0;
+  a = abs(mod(a, seg) - seg * 0.5);
+  // ゆっくり回転(主リズム)+半径の弱い脈動(副リズム)
+  vec2 q = rot(vec2(cos(a), sin(a)) * r, u_time * 0.15);
+  q *= 1.0 + 0.03 * sin(u_time * 0.8);
+  q.x *= u_res.y / u_res.x;
+  outColor = vec4(srcAt(fract(q + 0.5)), 1.0);
+}` },
+];
 const postState = { c: null, gl: null, prog: null, uT: null, uR: null, tex: null, on: false };
 function ensurePost() {
   if (postState.c) return true;
@@ -2830,7 +2966,7 @@ function buildPost(fsSrc) {
   try {
     const prog = gl.createProgram();
     gl.attachShader(prog, mk(gl.VERTEX_SHADER, POST_VS));
-    gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, fsSrc));
+    gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, assembleShader(fsSrc)));
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     if (postState.prog) gl.deleteProgram(postState.prog);
@@ -2869,7 +3005,7 @@ function compileGL(gl, fsSrc) {
   };
   const prog = gl.createProgram();
   gl.attachShader(prog, mk(gl.VERTEX_SHADER, POST_VS));
-  gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, fsSrc));
+  gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, assembleShader(fsSrc)));
   gl.linkProgram(prog);
   if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
   return { prog, uT: gl.getUniformLocation(prog, 'u_time'),
@@ -3004,27 +3140,32 @@ function openShaderPanel(target) {
   $('shErr').textContent = '';
   shRenderGutter();
   shDot.className = '';
+  const cur = $('shCode').value.trim();
+  $('shEditWrap').style.display = cur ? 'flex' : 'none';
+  $('shEditMode').checked = !!cur && !SHADER_TEMPLATES.some(([, c]) => c === cur);
   const gap = llmGap();
   $('shKeyHintText').textContent = '🤖 ' + (gap || '');
   $('shKeyHint').style.display = gap ? 'flex' : 'none';
   $('shOverlay').classList.add('open');
 }
+let shStreaming = false;               // AI出力の流し込み中はエラー表示を暴れさせない
+const shSetErr = t => { if (!shStreaming) $('shErr').textContent = t; };
 function applyShader(quiet = false) {   // quiet = live typing path: no toast/undo spam
   const code = $('shCode').value;
   if (shTarget === 'out') {
     const err = buildPost(code);
-    if (err) { $('shErr').textContent = err; return err; }
+    if (err) { shSetErr(err); return err; }
     postCode = code;
     postState.on = true;
     postState.c.classList.add('on');
-    $('shErr').textContent = '';
+    shSetErr('');
     if (!quiet) say('仕上げシェーダを適用中 (出力ノードから編集できます)');
     return null;
   }
   const n = nodeById(shTarget);
   if (!n) return 'ノードが見つかりません';
   const err = compileNodeShader(code);
-  if (err) { $('shErr').textContent = err; return err; }
+  if (err) { shSetErr(err); return err; }
   n.code = code;
   const nm = $('shName').value.trim().slice(0, 40);
   if (nm && nm !== n.name) { n.name = nm; renderGraph(); }  // 適用でも名前は反映 — 保存専用にしない
@@ -3032,7 +3173,7 @@ function applyShader(quiet = false) {   // quiet = live typing path: no toast/un
   if (!n.on) { n.on = true; applyGraph(true); }  // off→on はブランチ再コンパイル必須
   else if (quiet) saveHash();          // on のままのコード差替は次フレームで効く
   else applyGraph(true);
-  $('shErr').textContent = '';
+  shSetErr('');
   if (!quiet) say('「' + (n.name || 'シェーダ') + '」をノードに適用しました — 後段のフィルタとも合成されます');
   return null;
 }
@@ -3090,22 +3231,47 @@ async function genShader() {
   $('shGen').disabled = true;
   const llm = (aiCfg.prov === 'claude' && aiCfg.claudeKey) ? askClaude
             : (aiCfg.prov === 'openai' && aiCfg.oaiBase && aiCfg.oaiModel) ? askOpenAI : null;
+  // 既存コードがあり「改変」チェック時は、作り直しでなく最小差分の編集を頼む
+  const shaderPrompt = () => {
+    const cur = $('shCode').value.trim();
+    if ($('shEditMode').checked && cur) {
+      return '現在のシェーダ:\n```glsl\n' + cur + '\n```\n指示: ' + (text || 'より良く洗練して') +
+             '\n指示が現在のシェーダへの調整・追加なら最小差分で改変し、全く別物の要求なら新規に書く。コードのみ出力。';
+    }
+    return text || '面白い映像エフェクト';
+  };
+  // ストリーミング: 書かれていく端からエディタへ流し、250ms毎にコンパイル試行 —
+  // 成功した瞬間から絵が動く。エラー文の明滅は shStreaming で抑制
+  const opts = { pre: SHADER_SHOTS, maxTokens: 1800,
+    onDelta: full => {
+      $('shCode').value = stripFences(full);
+      shRenderGutter();
+      clearTimeout(shLiveTimer);
+      shLiveTimer = setTimeout(() => {
+        shDot.className = applyShader(true) ? 'bad' : 'ok';
+      }, 250);
+    } };
+  const askStream = async prompt => {
+    shStreaming = true;
+    try { return stripFences(await llm(prompt, SYS_SHADER, opts)); }
+    finally { shStreaming = false; clearTimeout(shLiveTimer); }
+  };
   try {
     if (llm) {
       $('shGen').textContent = '生成中…';
-      $('shCode').value = stripFences(await llm(text || '面白い映像エフェクト', SYS_SHADER));
+      $('shCode').value = await askStream(shaderPrompt());
       let err = applyShader();
+      shReflect(err);
       if (err) {
         // one self-repair round: hand the compiler output back to the LLM
         $('shErr').textContent = 'コンパイル失敗 — AIが修正中…\n' + err;
-        shReflect(err);
-        $('shCode').value = stripFences(await llm(
+        $('shCode').value = await askStream(
             '以下のGLSLがコンパイルエラーになりました。修正した完全なコードのみを出力してください。\n\nエラー:\n' +
-            err + '\n\nコード:\n' + $('shCode').value, SYS_SHADER));
+            err + '\n\nコード:\n' + $('shCode').value);
         err = applyShader();
+        shReflect(err);
         if (err) $('shErr').textContent = '自動修復も失敗:\n' + err;
       }
-      shReflect(err);
     } else {
       const hit = SHADER_TEMPLATES.find(([re]) => re.test(text));
       if (hit) {
@@ -3562,6 +3728,8 @@ window.__studio = {
   get shaderLib() { return shaderLib; },
   saveShader: libSave,
   buildPalette,
+  shaderShots: SHADER_SHOTS,
+  compileShader: compileNodeShader,
 };
 
 // ---- render loop -----------------------------------------------------------
