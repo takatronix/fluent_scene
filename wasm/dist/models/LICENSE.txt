@@ -1,8 +1,17 @@
-AnimeGANv3_Hayao_36.onnx / AnimeGANv3_Shinkai_37.onnx
+AnimeGANv3 pretrained generators by TachibanaYoshino
+(https://github.com/TachibanaYoshino/AnimeGANv3):
 
-Official pretrained AnimeGANv3 generators by TachibanaYoshino, taken
-unmodified from https://github.com/TachibanaYoshino/AnimeGANv3
-(release v1.1.0).
+  AnimeGANv3_Hayao_36.onnx      — official release v1.1.0 (scenery)
+  AnimeGANv3_Shinkai_37.onnx    — official release v1.1.0 (scenery)
+  AnimeGANv3_JP_face.onnx       — via huggingface.co/vumichien/AnimeGANv3_JP_face
+                                  (mirror of the author's face model)
+  AnimeGANv3_PortraitSketch.onnx — via huggingface.co/public-data/
+                                  AnimeGANv3-portrait-sketch (PortraitSketch_25)
+
+The network weights are unmodified. The graphs were mechanically converted
+for browser execution (opset 9 → 17, deprecated Upsample → Resize with
+asymmetric coordinates, onnxslim constant folding) and verified bit-exact
+against the originals on the CPU execution provider (max|Δ| = 0.0).
 
 These weights are NOT covered by this repository's MIT license. They are
 made freely available for NON-COMMERCIAL purposes only (academic research,

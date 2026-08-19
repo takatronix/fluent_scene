@@ -8,7 +8,7 @@ fluent_scene 本体は **MIT** (© 2026 takatronix)。ただし以下の例外�
 | 対象 | 由来 | ライセンス | 備考 |
 |---|---|---|---|
 | `notebook` フィルタ (`FS_NOTEBOOK`) | flockaroo "notebook drawings" ([shadertoy XtVGD1](https://www.shadertoy.com/view/XtVGD1)) の移植 | **CC BY-NC-SA 3.0 — 非商用限定** | 商用ビルドに含めないこと。他の全フィルタは MIT |
-| AnimeGANv3 学習済み重み (`wasm/dist/models/*.onnx`) | [TachibanaYoshino/AnimeGANv3](https://github.com/TachibanaYoshino/AnimeGANv3) 公式リリース v1.1.0、無改変 | **非商用限定** (商用は作者の許諾レター要) | anime.html デモ専用アセット。エンジンにはリンクしない。詳細 `wasm/dist/models/LICENSE.txt` |
+| AnimeGANv3 学習済み重み (`wasm/dist/models/*.onnx` ×4) | [TachibanaYoshino/AnimeGANv3](https://github.com/TachibanaYoshino/AnimeGANv3) (Hayao/Shinkai=公式リリース v1.1.0、JP_face/PortraitSketch=HFミラー経由)。重み無改変・グラフのみ機械変換 (opset9→17、ビット一致検証済) | **非商用限定** (商用は作者の許諾レター要) | anime.html デモ専用アセット。エンジンにはリンクしない。詳細 `wasm/dist/models/LICENSE.txt` |
 
 ## 独自実装だが系譜を明記するもの (すべて MIT)
 

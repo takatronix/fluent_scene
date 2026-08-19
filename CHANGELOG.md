@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.14.3 — 2026-08-19 (anime.html: WebGPU完全経路化 + 顔用モデル)
+
+初回実機評「めちゃくちゃ遅いし絵になってない」(M3 Ultra で webgpu 表示
+なのに 692ms/512px) への根治:
+
+- **遅さの真犯人 = opset 9 の化石グラフ**: 廃止 op `Upsample` は ort-web
+  の WebGPU 実装が無く、3箇所で毎フレーム GPU→CPU→GPU の全テンソル往復。
+  opset 17 へ機械変換 (Upsample→Resize) + onnxslim 定数畳み込み。
+  **罠**: 変換器の Resize 既定は half_pixel で Upsample-9 の asymmetric と
+  意味がズレ、9% の画素が狂う — coordinate_transformation_mode を
+  asymmetric に固定して**全モデル CPU EP でビット一致 (max|Δ|=0.0)** を確認
+- **絵にならない真犯人 = 風景用モデル**: Hayao/Shinkai は風景写真用で、
+  顔に使うと皺がインク線になる。顔用 **JP_face** (完全なアニメ顔化) と
+  **PortraitSketch** (筆致スケッチ) を追加し JP_face を既定に。
+  出典は HF ミラー (公式は顔系の onnx を release していない)、重み無改変
+
 ## 0.14.2 — 2026-08-19 (anime.html: AnimeGANv3ブラウザデモ)
 
 - **anime.html**: AnimeGANv3 (公式ONNX, Hayao/Shinkai) をonnxruntime-web

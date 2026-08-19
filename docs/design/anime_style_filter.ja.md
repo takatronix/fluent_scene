@@ -15,14 +15,28 @@ filters_shared.h の「単一パス・GLSL∩C++」の枠に入らないため�
 
 ## 2. モデル
 
-AnimeGANv3 (TachibanaYoshino) の公式 ONNX を採用。
+AnimeGANv3 (TachibanaYoshino) の ONNX を採用。**用途でモデルが分かれる**
+のが最重要 (Hayao/Shinkai は風景用 — 顔に使うと皺がインク線化して劇画に
+なる。実機評「絵になってない」の真因):
 
-| 項目 | 値 |
-|---|---|
-| モデル | AnimeGANv3_Hayao_36 / AnimeGANv3_Shinkai_37 (公式リリース v1.1.0) |
-| サイズ | 各 4.2 MB |
-| 入出力 | NHWC float32 RGB、x/127.5−1、H/W は8の倍数 (min 256)、動的形状。出力 [−1,1] |
-| 実測 | Thor CPU 512²で ~900 ms (onnxruntime 1.29 CPU EP)。ブラウザ WebGPU / TensorRT で大幅短縮見込み |
+| モデル | 用途 | サイズ | 出典 |
+|---|---|---|---|
+| JP_face (**既定**) | 顔・自撮り (完全アニメ顔化) | 6.1 MB | HF ミラー (vumichien) |
+| PortraitSketch | 人物→筆スケッチ | 4.3 MB | HF ミラー (public-data) |
+| Hayao_36 / Shinkai_37 | 風景 | 各 4.3 MB | 公式リリース v1.1.0 |
+
+入出力は共通: NHWC float32 RGB、x/127.5−1、H/W は8の倍数 (min 256)、
+動的形状、出力 [−1,1]。
+
+### 2.0.1 ブラウザ用グラフ変換 (必須の教訓)
+
+公式 onnx は **opset 9** で、廃止 op `Upsample` を含む。ort-web の WebGPU
+EP に Upsample 実装は無く、3箇所で毎フレーム GPU↔CPU の全テンソル往復が
+起きる (M3 Ultra で 692ms/512px の真犯人。「webgpu 表示なのに遅い」時は
+まず op×EP 対応表を疑う)。出荷グラフは opset 17 へ機械変換 + onnxslim。
+**変換器の罠**: Resize の coordinate_transformation_mode 既定 (half_pixel)
+は Upsample-9 (asymmetric) と別物で 9% の画素が狂う — asymmetric を明示
+して CPU EP でビット一致 (max|Δ|=0.0) を確認してから出す。重みは無改変。
 
 ### 2.1 ライセンス (要注意)
 
