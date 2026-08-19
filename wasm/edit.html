@@ -3034,10 +3034,11 @@ async function* sseEvents(body) {
   let buf = '';
   try {
     while (true) {
+      // 思考型モデルは最初のトークンまで数分黙る — 停滞判定は3分に取る
       const { done, value } = await Promise.race([
         rd.read(),
         new Promise((_, rej) => setTimeout(() =>
-            rej(new Error('ストリーミングが止まりました(45秒) — ⚙で接続先を確認してください')), 45000)),
+            rej(new Error('ストリーミング停滞(3分) — モデルの応答が途絶えました。⚙で接続先/モデル名を確認してください')), 180000)),
       ]);
       if (done) return;
       buf += dec.decode(value, { stream: true });
@@ -3763,8 +3764,20 @@ function runNodeShader(node, grab) {
 }
 const stripFences = x => {
   const m = x.match(/```[a-z]*\s*([\s\S]*?)```/);
-  return (m ? m[1] : x).trim();
+  if (m) return m[1].trim();
+  // ストリーミング途中は閉じフェンスが未着 — 開きフェンスだけでも剥がす
+  return x.replace(/^\s*```[a-z]*\s*/, '').replace(/```\s*$/, '').trim();
 };
+// generation telemetry: 直近10回の生成試行を残す — 「エラーばっか」の実測用
+const GENLOG_KEY = 'fs_shader_gen_log';
+function genLog(entry) {
+  try {
+    const l = JSON.parse(localStorage.getItem(GENLOG_KEY) || '[]');
+    l.push(Object.assign({ t: new Date().toISOString() }, entry));
+    while (l.length > 10) l.shift();
+    localStorage.setItem(GENLOG_KEY, JSON.stringify(l));
+  } catch {}
+}
 // ---- shader library: named user shaders, endpoint = this browser only ------
 const SHLIB_KEY = 'fs_shader_lib';
 let shaderLib = [];
@@ -3958,18 +3971,32 @@ async function genShader() {
   try {
     if (llm) {
       $('shGen').textContent = '生成中…';
+      const model = aiCfg.prov === 'claude' ? (aiCfg.claudeModel || 'claude-opus-5') : aiCfg.oaiModel;
+      const t0 = performance.now();
       $('shCode').value = await askStream(shaderPrompt());
       let err = applyShader();
       shReflect(err);
-      if (err) {
-        // one self-repair round: hand the compiler output back to the LLM
-        $('shErr').textContent = 'コンパイル失敗 — AIが修正中…\n' + err;
+      // self-repair: hand the compiler output back to the LLM, up to 2 rounds
+      for (let round = 1; err && round <= 2; round++) {
+        genLog({ ev: 'compile_error', model, round, prompt: text.slice(0, 200),
+                 err: String(err).slice(0, 500), code: $('shCode').value.slice(0, 4000) });
+        $('shErr').textContent = 'コンパイル失敗 — AIが修正中… (' + round + '/2)\n' + err;
         $('shCode').value = await askStream(
-            '以下のGLSLがコンパイルエラーになりました。修正した完全なコードのみを出力してください。\n\nエラー:\n' +
+            '以下のGLSLがコンパイルエラーになりました。修正した完全なコードのみを出力してください。\n' +
+            '環境: WebGL2のGLSL ES 3.00。texture()を使う(texture2Dは不可)、出力はoutColor' +
+            '(gl_FragColorは不可)、#version・precision・uniform・out宣言は書かない(環境側で付与済み)。' +
+            'エラーの行番号はあなたのコードの行番号と一致しています。\n\nエラー:\n' +
             err + '\n\nコード:\n' + $('shCode').value);
         err = applyShader();
         shReflect(err);
-        if (err) $('shErr').textContent = '自動修復も失敗:\n' + err;
+      }
+      if (err) {
+        $('shErr').textContent = '自動修復も失敗:\n' + err;
+        genLog({ ev: 'gave_up', model, prompt: text.slice(0, 200),
+                 err: String(err).slice(0, 500), code: $('shCode').value.slice(0, 4000) });
+      } else {
+        genLog({ ev: 'ok', model, prompt: text.slice(0, 200),
+                 secs: +((performance.now() - t0) / 1000).toFixed(1) });
       }
     } else {
       const hit = SHADER_TEMPLATES.find(([re]) => re.test(text));
@@ -3987,7 +4014,11 @@ async function genShader() {
     }
     // a fresh AI shader deserves a name — suggest the prompt, save is one tap
     if (!$('shName').value && text && !$('shErr').textContent) $('shName').value = text.slice(0, 24);
-  } catch (e) { $('shErr').textContent = String(e.message || e); }
+  } catch (e) {
+    $('shErr').textContent = String(e.message || e);
+    genLog({ ev: 'api_error', err: String(e.message || e).slice(0, 300),
+             prompt: text.slice(0, 200) });
+  }
   finally { $('shGen').disabled = false; $('shGen').textContent = '生成'; }
 }
 $('tbShader').addEventListener('click', () => {
@@ -4443,6 +4474,7 @@ window.__studio = {
   shaderPresets: () => SHADER_PRESETS.map(p => [p[0], presetBody(p)]),
   compileShader: compileNodeShader,
   lutPresets: LUT_PRESETS,
+  genLog: () => { try { return JSON.parse(localStorage.getItem(GENLOG_KEY) || '[]'); } catch { return []; } },
 };
 
 // ---- render loop -----------------------------------------------------------
