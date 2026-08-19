@@ -1522,6 +1522,9 @@ faceDetCanvas.height = 216;
 const faceDetCtx = faceDetCanvas.getContext('2d', { willReadFrequently: true });
 let faceLive = null, facePresence = 0, faceSeenMs = -1e9, facePrevMs = 0;
 const faceSrcCache = new Map();        // resource name -> prepared mesh / null(仕込み中) / 'bad'
+const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/' +
+                   'face_landmarker/float16/latest/face_landmarker.task';
+let faceVision = null, FaceFL = null, faceLanderImg = null, faceImgLoading = false;
 async function loadFaceLander() {
   if (faceLander || faceLoading) return;
   faceLoading = true;
@@ -1529,14 +1532,11 @@ async function loadFaceLander() {
   try {
     const { FilesetResolver, FaceLandmarker } = await import(
         'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs');
-    const vision = await FilesetResolver.forVisionTasks(
+    faceVision = await FilesetResolver.forVisionTasks(
         'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm');
-    faceLander = await FaceLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/' +
-                        'face_landmarker/float16/latest/face_landmarker.task',
-        delegate: 'GPU',
-      },
+    FaceFL = FaceLandmarker;
+    faceLander = await FaceLandmarker.createFromOptions(faceVision, {
+      baseOptions: { modelAssetPath: FACE_MODEL, delegate: 'GPU' },
       runningMode: 'VIDEO',
       numFaces: 1,
     });
@@ -1551,8 +1551,29 @@ async function loadFaceLander() {
     say('顔の検出モデルを読み込めません (' + (e.message || e) + ') — ネット接続が必要です', true);
   } finally { faceLoading = false; }
 }
+// 静止画(ソース顔)用のIMAGEモード判定器 — VIDEOモードは連続フレーム前提の
+// トラッカーで、静止画1枚には弱く、ライブ追跡の状態も汚してしまう
+async function faceImgLander() {
+  if (faceLanderImg) return faceLanderImg;
+  if (faceImgLoading || !faceVision || !FaceFL) return null;
+  faceImgLoading = true;
+  try {
+    faceLanderImg = await FaceFL.createFromOptions(faceVision, {
+      baseOptions: { modelAssetPath: FACE_MODEL, delegate: 'GPU' },
+      runningMode: 'IMAGE',
+      numFaces: 1,
+      minFaceDetectionConfidence: 0.3,
+      minFacePresenceConfidence: 0.3,
+    });
+  } catch (e) { console.error('image face landmarker failed:', e); }
+  finally { faceImgLoading = false; }
+  return faceLanderImg;
+}
 function updateFace(nowMs) {
-  if (!nodes.some(n => n.type === 'face' && n.on)) return;
+  const fnode = nodes.find(n => n.type === 'face' && n.on);
+  if (!fnode) return;
+  // ソース顔は選ばれた時点で先行prep — 顔が映った瞬間に待ちゼロで差し替わる
+  if (fnode.res && faceLander) prepFaceSource(fnode.res);
   const dt = Math.min((nowMs - facePrevMs) / 1000, 0.1);
   facePrevMs = nowMs;
   if (window.__faceTestLive) {          // ヘッドレス検証: 合成ランドマーク注入
@@ -1594,17 +1615,22 @@ function prepFaceSource(name) {
     let lm = window.__faceTestSrc || null;
     if (!lm) {
       if (!faceLander) { faceSrcCache.delete(name); return; }   // モデル待ち→次フレーム再試行
-      const c = document.createElement('canvas');
-      const sc = Math.min(1, 512 / Math.max(bmp.width, bmp.height));
-      c.width = Math.round(bmp.width * sc);
-      c.height = Math.round(bmp.height * sc);
-      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-      const r = faceLander.detectForVideo(c, performance.now());
-      lm = (r.faceLandmarks && r.faceLandmarks[0]) || null;
+      const il = await faceImgLander();
+      if (!il) { faceSrcCache.delete(name); return; }
+      for (const cap of [640, 1024]) {          // 小さめ→大きめの2段で試す
+        const c = document.createElement('canvas');
+        const sc = Math.min(1, cap / Math.max(bmp.width, bmp.height));
+        c.width = Math.round(bmp.width * sc);
+        c.height = Math.round(bmp.height * sc);
+        c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+        const r = il.detect(c);
+        lm = (r.faceLandmarks && r.faceLandmarks[0]) || null;
+        if (lm || sc >= 1) break;
+      }
     }
     if (!lm) {
       faceSrcCache.set(name, 'bad');
-      say('「' + name + '」から顔を検出できません — 正面向きの顔写真を選んでください', true);
+      say('「' + name + '」から顔を検出できません — 実写・正面向き・顔が大きめの写真だと成功しやすいです(イラスト顔は検出できません)', true);
       return;
     }
     const pts = lm.map(p => ({ x: p.x, y: p.y }));
