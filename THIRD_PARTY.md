@@ -36,6 +36,17 @@ fluent_scene 本体は **MIT** (© 2026 takatronix)。ただし以下の例外�
 | `wasm/dist/models/id_lineart*.onnx` (線画NN) | [Informative Drawings](https://github.com/carolineec/informative-drawings) (Chan+ 2022) の生成器、ONNX化はHF rocca経由・重み無改変 | **MIT — 商用可**。NNノードのライセンスクリア第1号 |
 | wasm 埋め込みフォント DejaVuSans | DejaVu fonts | Bitstream Vera / DejaVu ライセンス (再配布可) |
 
+## 同梱 LUT アトラス (`wasm/dist/luts/grade_*.png`)
+
+512×512 GPUImage 配置の 3D LUT。**再配布物**と**自家製**を区別して記載:
+
+| ファイル | 由来 | ライセンス |
+|---|---|---|
+| `grade_cine_teal` (Amatorka) / `grade_pastel_pop` (MissEtikate) / `grade_soft_sepia` (SoftElegance1) / `grade_soft_glow` (SoftElegance2) | [BradLarson/GPUImage](https://github.com/BradLarson/GPUImage) `framework/Resources/lookup_*.png` 無改変 (改名のみ) | **BSD-3-Clause** © 2012 Brad Larson |
+| `grade_natural_cine` (custom) / `grade_pink_light` (light) | [pixpark/gpupixel](https://github.com/pixpark/gpupixel) `src/res/lookup_*.png` 無改変 (改名のみ) | **Apache-2.0** |
+| `grade_teal_orange` / `grade_kodak_warm` / `grade_cool_blue` / `grade_bleach_bypass` / `grade_faded_film` / `grade_mono_noir` | 自家製 (数式生成、2026-08-20) | MIT (本体と同じ) |
+| `whiten_base_64` / `whiten_full_64` | gpupixel 美白チェーンの焼き込み (既存) | Apache-2.0 |
+
 ## ライブラリ依存
 
 | 依存 | 用途 | ライセンス |
