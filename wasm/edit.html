@@ -399,6 +399,7 @@
     <button id="tbFilter">+ フィルタ</button>
     <button id="tbSrc">+ 入力</button>
     <button id="tbPerson">+ 人物抽出</button>
+    <button id="tbHands">+ 手フレーム</button>
     <button id="tbXform">+ 変形/合成</button>
     <button id="tbShader" title="AIにシェーダを書かせる最終パス">🧪 シェーダ</button>
     <button id="tbUndo" title="もとに戻す (Ctrl+Z)">↩</button>
@@ -516,7 +517,9 @@
 <script type="module">
 // Filter studio — a free node graph now, in the spirit of the FV pipeline
 // editor: sources, a person-extract node (MediaPipe Selfie Segmenter →
-// the engine's M1 layer mask), filter nodes, transform/blend nodes, and an
+// the engine's M1 layer mask), a hand-frame node (MediaPipe HandLandmarker —
+// both hands' thumb+index tips make a director's finger-frame quad → the
+// same M1 mask path), filter nodes, transform/blend nodes, and an
 // output that stacks every incoming branch. The graph compiles to what the
 // engine truly is — a layer tree: each source→output path becomes a layer
 // (its filters as the chain, its person-port as a mask, its transform as
@@ -625,8 +628,8 @@ const CATS = [
 const CAT_OF = {};
 for (const [label, names] of CATS) for (const n of names) CAT_OF[n] = label;
 const accentOf = n => CAT_COLOR[CAT_OF[n]] || 'var(--violet)';
-const NODE_ACCENT = { src: 'var(--green)', person: 'var(--amber)', xform: 'var(--blue)',
-                      out: 'var(--cyan)' };
+const NODE_ACCENT = { src: 'var(--green)', person: 'var(--amber)', hands: 'var(--magenta)',
+                      xform: 'var(--blue)', out: 'var(--cyan)' };
 
 function rangeFor(p) {
   const byName = {
@@ -648,10 +651,11 @@ const clampToRange = (p, v) => {
 };
 
 // ---- graph model -----------------------------------------------------------
-// nodes: {id, type, x, y, ...}   type: src | person | filter | xform | out
+// nodes: {id, type, x, y, ...}   type: src | person | hands | filter | xform | out
 //   src:    {kind, video, img, dirty, grab, gctx}
 //   filter: {name, on, vals}
 //   person: {feather}
+//   hands:  {feather}       両手の指フレーム → 枠内/枠外マスク
 //   xform:  {pos, rot, scale, op, blend}
 // edges: {from, fp, to} — every in-port is single (except out, which stacks).
 let nodes = [], edges = [], nextId = 1, selId = null;
@@ -675,6 +679,8 @@ function addNode(type, x, y, extra = {}) {
             ? clampToRange(p, extra.params[p.name]) : p.def) });
   } else if (type === 'person') {
     n.feather = extra.feather ?? 5;
+  } else if (type === 'hands') {
+    n.feather = extra.feather ?? 6;
   } else if (type === 'xform') {
     Object.assign(n, { pos: extra.pos || [STAGE_W * 0.72, STAGE_H * 0.7],
                        rot: extra.rot ?? -6, scale: extra.scale ?? 0.45,
@@ -725,7 +731,7 @@ function removeNode(id) {
   const inn = edges.find(e => e.to === id);
   const outs = edges.filter(e => e.from === id);
   edges = edges.filter(e => e.from !== id && e.to !== id);
-  if (inn && n.type !== 'person') {
+  if (inn && n.type !== 'person' && n.type !== 'hands') {
     for (const o of outs) connect(inn.from, inn.fp, o.to);
   }
   nodes = nodes.filter(x => x.id !== id);
@@ -741,8 +747,8 @@ function compile() {
   for (const first of edges.filter(x => x.to === out.id)) {
     // walk upstream edge by edge; the edge we exit a person node through
     // (its fp) says whether this branch is the 人物 (0) or 背景 (1) side
-    const br = { filters: [], person: null, personPort: 0, xform: null, src: null,
-                 tail: first.from };
+    const br = { filters: [], person: null, personPort: 0, hands: null, handsPort: 0,
+                 xform: null, src: null, tail: first.from };
     let e = first, guard = 0;
     while (guard++ < 40) {
       const n = nodeById(e.from);
@@ -752,6 +758,8 @@ function compile() {
       else if (n.type === 'xform') { if (!br.xform) br.xform = n; }
       else if (n.type === 'person') {
         if (!br.person) { br.person = n; br.personPort = e.fp; }
+      } else if (n.type === 'hands') {
+        if (!br.hands) { br.hands = n; br.handsPort = e.fp; }
       }
       const inn = edges.find(x => x.to === n.id);
       if (!inn) break;
@@ -763,13 +771,14 @@ function compile() {
     }
   }
   // stacking order: higher on the graph = further back (stable for ties);
-  // a masked 人物 branch always composites in front of its full-frame 背景
-  const key = br => nodeById(br.tail).y + (br.person && br.personPort === 0 ? 10000 : 0);
+  // a masked 人物/枠内 branch always composites in front of its full-frame side
+  const key = br => nodeById(br.tail).y + (br.person && br.personPort === 0 ? 10000 : 0)
+                                        + (br.hands && br.handsPort === 0 ? 10000 : 0);
   branches.sort((a, b) => key(a) - key(b));
 }
 
 const wipeMode = () => branches.length === 1 && !branches[0].xform && !branches[0].person &&
-                       nodes.filter(n => n.type === 'src').length === 1;
+                       !branches[0].hands && nodes.filter(n => n.type === 'src').length === 1;
 
 function sceneYaml() {
   const srcs = nodes.filter(n => n.type === 'src');
@@ -778,6 +787,7 @@ stage: { size: [${STAGE_W}, ${STAGE_H}] }
 inputs:
   paper: { type: image.rgba8 }
   maskP: { type: image.rgba8 }
+  maskH: { type: image.rgba8 }
 `;
   srcs.forEach((s, i) => { y += `  in${i}: { type: image.rgba8, update: per_frame }\n`; });
   let params = '';
@@ -876,7 +886,9 @@ function rebuildScene() {
   if (inst) fs.destroy(inst);
   inst = next;
   paperUploaded = false;
-  maskReady = false;                    // mask buffer lives per instance
+  maskReady = false;                    // mask buffers live per instance
+  maskHReady = false;
+  handMaskZeroed = false;
   for (const n of nodes) if (n.type === 'src') n.dirty = true;
   pushChains(simT);
   return true;
@@ -906,11 +918,17 @@ function pushChains(t) {
   });
 }
 function pushMasks() {
-  if (!inst || !maskReady) return;
+  if (!inst) return;
+  // one mask per layer (the engine holds a single M1 mask) — a branch that
+  // passes through both person and hands keeps the person mask
   branches.forEach((br, i) => {
-    if (!br.person) return;
-    fs.setMask(inst, `B${i}`, 'maskP', SEG_W, SEG_H,
-               br.personPort === 0 ? 0 : 1, br.person.feather);
+    if (br.person && maskReady) {
+      fs.setMask(inst, `B${i}`, 'maskP', SEG_W, SEG_H,
+                 br.personPort === 0 ? 0 : 1, br.person.feather);
+    } else if (br.hands && maskHReady) {
+      fs.setMask(inst, `B${i}`, 'maskH', SEG_W, SEG_H,
+                 br.handsPort === 0 ? 0 : 1, br.hands.feather);
+    }
   });
 }
 
@@ -964,6 +982,105 @@ function updateMask(nowMs) {
   res.close();
 }
 
+// ---- hand frame (MediaPipe HandLandmarker, loaded on demand) ---------------
+// 監督の「指フレーム」: 両手の親指先(4)+人差し指先(8)の4点をクアッドにして
+// maskH へラスタライズ。person と同じ fs_layer_set_mask 経路なので、枠内の
+// 枝にどのフィルタを挿しても(将来の AnimeGAN ノードでも)そのまま効く。
+let hander = null, handLoading = false, maskHReady = false;
+const handCanvas = document.createElement('canvas');    // 検出入力 (縮小フィード)
+handCanvas.width = 320; handCanvas.height = 180;
+const handCtx = handCanvas.getContext('2d', { willReadFrequently: true });
+const handMaskCanvas = document.createElement('canvas');  // クアッド描画 → alpha
+handMaskCanvas.width = SEG_W; handMaskCanvas.height = SEG_H;
+const handMaskCtx = handMaskCanvas.getContext('2d', { willReadFrequently: true });
+const handPts = {};              // h0i/h0t/h1i/h1t → EMA追従点 (正規化座標)
+let handPresence = 0, handSeenMs = -1e9, handPrevMs = 0, handMaskZeroed = false;
+
+async function loadHands() {
+  if (hander || handLoading) return;
+  handLoading = true;
+  say('手の検出モデルを読み込み中… (MediaPipe / CDN)');
+  try {
+    const { FilesetResolver, HandLandmarker } = await import(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs');
+    const vision = await FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm');
+    hander = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/' +
+                        'hand_landmarker/float16/latest/hand_landmarker.task',
+        delegate: 'GPU',
+      },
+      runningMode: 'VIDEO',
+      numHands: 2,
+    });
+    say('手の検出OK — 両手の親指と人差し指で四角を作ってみてください');
+  } catch (e) {
+    console.error('hand landmarker init failed:', e);
+    say('手の検出モデルを読み込めません (' + e.message + ') — ネット接続が必要です', true);
+  } finally { handLoading = false; }
+}
+
+function updateHands(nowMs) {
+  const hn = nodes.find(n => n.type === 'hands');
+  if (!hn || !hander || !branches.some(b => b.hands)) return;
+  const br = branches.find(b => b.hands);
+  const src = br && br.src;
+  if (!src || !src.grab.width) return;
+  const dt = Math.min((nowMs - handPrevMs) / 1000, 0.1);
+  handPrevMs = nowMs;
+  handCtx.drawImage(src.grab, 0, 0, 320, 180);
+  const res = hander.detectForVideo(handCanvas, nowMs);
+  const lm = res.landmarks || [];
+  if (lm.length >= 2) {
+    // 手首xで左右を安定づけ、指先4点をEMA追従 (指先は素で拾うと震える)
+    const snap = nowMs - handSeenMs > 400;      // 消えて戻ったら吸着し直す
+    handSeenMs = nowMs;
+    const [a, b] = lm[0][0].x <= lm[1][0].x ? [lm[0], lm[1]] : [lm[1], lm[0]];
+    for (const [key, p] of [['h0i', a[8]], ['h0t', a[4]], ['h1i', b[8]], ['h1t', b[4]]]) {
+      const s = handPts[key] || (handPts[key] = { x: p.x, y: p.y });
+      const k = snap ? 1 : Math.min(1, dt * 14);
+      s.x += (p.x - s.x) * k;
+      s.y += (p.y - s.y) * k;
+    }
+  }
+  // 出現/消滅はフェード — 「構えた/やめた」がパッと切れずに馴染む
+  const target = nowMs - handSeenMs < 150 ? 1 : 0;
+  handPresence += (target - handPresence) * Math.min(1, dt * (target ? 10 : 6));
+  if (handPresence < 0.01) {
+    // 手が無い間は空マスク (初回含む) — 検出が生きた時点で「手なし=効果なし」
+    if (!handMaskZeroed) { writeHandMask(0); handMaskZeroed = true; }
+    return;
+  }
+  handMaskZeroed = false;
+  writeHandMask(handPresence);
+}
+
+function writeHandMask(alpha) {
+  if (!inst) return;
+  const pts = ['h0i', 'h0t', 'h1i', 'h1t'].map(k => handPts[k]).filter(Boolean);
+  handMaskCtx.clearRect(0, 0, SEG_W, SEG_H);
+  if (pts.length === 4 && alpha > 0) {
+    // 4点を重心まわりの角度順に並べ、自己交差しないクアッドにして塗る
+    const cx = pts.reduce((s, p) => s + p.x, 0) / 4;
+    const cy = pts.reduce((s, p) => s + p.y, 0) / 4;
+    const quad = [...pts].sort((p, q) =>
+        Math.atan2(p.y - cy, p.x - cx) - Math.atan2(q.y - cy, q.x - cx));
+    handMaskCtx.fillStyle = `rgba(255,255,255,${alpha})`;
+    handMaskCtx.beginPath();
+    quad.forEach((p, i) => i ? handMaskCtx.lineTo(p.x * SEG_W, p.y * SEG_H)
+                             : handMaskCtx.moveTo(p.x * SEG_W, p.y * SEG_H));
+    handMaskCtx.closePath();
+    handMaskCtx.fill();
+  }
+  const px = handMaskCtx.getImageData(0, 0, SEG_W, SEG_H).data;
+  const ptr = fs.imageBuffer(inst, 'maskH', SEG_W, SEG_H);
+  const heap = mod.HEAPU8;
+  for (let i = 0; i < SEG_W * SEG_H; ++i) heap[ptr + i * 4 + 3] = px[i * 4 + 3];
+  maskHReady = true;
+  pushMasks();
+}
+
 // ---- graph rendering -------------------------------------------------------
 const gInner = $('gInner'), edgeG = $('edgeG'), tempEdge = $('tempEdge');
 const SRC_EMOJI = { camera: '📷', image: '🖼', video: '🎬', sample: '✨', feedback: '🔁' };
@@ -975,6 +1092,8 @@ function nodeMeta(n) {
                                  ac: NODE_ACCENT.src, outs: [''], hasIn: false };
   if (n.type === 'person') return { emoji: '🧍', j: '人物抽出', e: 'segment',
                                  ac: NODE_ACCENT.person, outs: ['人物', '背景'], hasIn: true };
+  if (n.type === 'hands') return { emoji: '🖐', j: '手フレーム', e: 'hands',
+                                 ac: NODE_ACCENT.hands, outs: ['枠内', '枠外'], hasIn: true };
   if (n.type === 'xform') return { emoji: '🎚', j: '変形/合成', e: n.blend,
                                  ac: NODE_ACCENT.xform, outs: [''], hasIn: true };
   if (n.type === 'out') return { emoji: '🖼', j: '出力', e: 'stack',
@@ -982,7 +1101,7 @@ function nodeMeta(n) {
   return { emoji: jaEmoji(n.name), j: jaLabel(n.name), e: n.name,
            ac: accentOf(n.name), outs: [''], hasIn: true };
 }
-const nodeH = n => n.type === 'person' ? 66 : NODE_H;
+const nodeH = n => n.type === 'person' || n.type === 'hands' ? 66 : NODE_H;
 function portXY(n, isOut, portIdx) {
   const h = nodeH(n);
   if (!isOut) return [n.x, n.y + h / 2];
@@ -1271,6 +1390,25 @@ $('tbPerson').addEventListener('click', () => {
   loadSegmenter();
   say('人物と背景に分けました — 背景側の線にフィルタを足すと人物だけ残ります');
 });
+$('tbHands').addEventListener('click', () => {
+  if (nodes.some(n => n.type === 'hands')) { say('手フレームは1個までです', true); return; }
+  // 既存チェーンは枠内側へ移す: 両手で四角を構えるとその中だけ効果が出て、
+  // 枠外は素通し — 追加した瞬間から「指フレームの中だけフィルタ」になる
+  const src = selectedSrc() || nodes.find(n => n.type === 'src');
+  const out = outNode();
+  const [x, y] = freeSpot(src.x + 190, src.y + 90);
+  const hn = addNode('hands', x, y);
+  const oldOuts = edges.filter(e => e.from === src.id);
+  edges = edges.filter(e => e.from !== src.id);
+  connect(src.id, 0, hn.id);
+  if (oldOuts.length) for (const o of oldOuts) connect(hn.id, 0, o.to);   // 枠内→旧チェーン
+  else connect(hn.id, 0, out.id);
+  connect(hn.id, 1, out.id);                                             // 枠外 (素通し)
+  selId = justAddedId = hn.id;
+  applyGraph(true);
+  loadHands();
+  say('両手の親指と人差し指で四角を作ると、その枠内だけにフィルタがかかります');
+});
 $('tbXform').addEventListener('click', () => {
   const [x, y] = freeSpot(600, 340);
   const n = addNode('xform', x, y);
@@ -1369,6 +1507,7 @@ function renderInspector() {
       n.type === 'filter' ? SPEC[n.name].summary
       : n.type === 'src' ? 'プレビュー左上のボタンでソース切替'
       : n.type === 'person' ? 'MediaPipeで人物マスク。人物/背景ポートで枝分かれ'
+      : n.type === 'hands' ? '両手の親指+人差し指の指フレーム。枠内/枠外ポートで枝分かれ'
       : n.type === 'xform' ? '小窓(ドラッグ移動/ホイール拡縮)か全面ミキサーでブレンド合成'
       : '入ってきた枝を下から順に重ねます (グラフの縦位置=重なり順)';
   if (n.type === 'filter') {
@@ -1381,7 +1520,7 @@ function renderInspector() {
         saveHash();
       }));
     });
-  } else if (n.type === 'person') {
+  } else if (n.type === 'person' || n.type === 'hands') {
     paramsBox.append(sliderRow('ぼかし(feather)', 0, 24, 0.5, n.feather, v => {
       n.feather = v;
       pushMasks();
@@ -1504,7 +1643,7 @@ function packGraph() {
         });
         if (Object.keys(v).length) o.v = v;
       }
-      if (n.type === 'person') o.fe = +n.feather.toFixed(1);
+      if (n.type === 'person' || n.type === 'hands') o.fe = +n.feather.toFixed(1);
       if (n.type === 'xform') o.xf = [+n.pos[0].toFixed(1), +n.pos[1].toFixed(1),
           +n.rot.toFixed(1), +n.scale.toFixed(3), +n.op.toFixed(2), n.blend,
           n.flipH ? 1 : 0, n.flipV ? 1 : 0];
@@ -1574,6 +1713,8 @@ function unpackGraph(packed) {
           if (o.off) n.on = false;
         } else if (o.t === 'person' && !nodes.some(x => x.type === 'person')) {
           n = addNode('person', o.x, o.y, { feather: Number(o.fe) || 5 });
+        } else if (o.t === 'hands' && !nodes.some(x => x.type === 'hands')) {
+          n = addNode('hands', o.x, o.y, { feather: Number(o.fe) || 6 });
         } else if (o.t === 'xform' && Array.isArray(o.xf)) {
           n = addNode('xform', o.x, o.y, { pos: [Number(o.xf[0]) || 0, Number(o.xf[1]) || 0],
               rot: Number(o.xf[2]) || 0, scale: Math.min(1.6, Math.max(0.1, Number(o.xf[3]) || 0.45)),
@@ -1705,7 +1846,7 @@ function targetBranch() {
   const sel = nodeById(selId);
   if (sel) {
     const hit = branches.find(b => b.filters.includes(sel) || b.src === sel ||
-                                   b.xform === sel || (b.person === sel));
+                                   b.xform === sel || b.person === sel || b.hands === sel);
     if (hit) return hit;
   }
   return branches[0];
@@ -1719,8 +1860,8 @@ async function setBranchChain(spec, comment, pick = null) {
   compile();
   const br = (pick && branches.find(pick)) || targetBranch();
   if (!br) { say('出力につながる枝がありません — ●を線でつないでください', true); return; }
-  const headId = br.person ? br.person.id : br.src.id;
-  const headFp = br.person ? br.personPort : 0;
+  const headId = br.person ? br.person.id : br.hands ? br.hands.id : br.src.id;
+  const headFp = br.person ? br.personPort : br.hands ? br.handsPort : 0;
   const tailId = br.xform ? br.xform.id : outNode().id;
   for (const f of br.filters.slice()) removeNode(f.id);
   if (!edges.some(e => e.from === headId && e.fp === headFp && e.to === tailId)) {
@@ -1738,7 +1879,7 @@ async function setBranchChain(spec, comment, pick = null) {
     const f = addNode('filter', 0, 0, { name, params: over || {} });
     const a = nodeById(cur.id);
     f.x = Math.min(1900, a.x + 190);
-    f.y = a.type === 'person' ? a.y + (cur.fp === 0 ? -14 : 52) : a.y;
+    f.y = a.type === 'person' || a.type === 'hands' ? a.y + (cur.fp === 0 ? -14 : 52) : a.y;
     edges = edges.filter(x => x !== e);
     connect(cur.id, cur.fp, f.id);
     connect(f.id, 0, tailId);
@@ -1758,8 +1899,9 @@ function applyTransformAsk(xf, pick = null) {
   let xn = br.xform;
   if (!xn) {
     const headId = br.filters.length ? br.filters[br.filters.length - 1].id
-                 : br.person ? br.person.id : br.src.id;
-    const headFp = (!br.filters.length && br.person) ? br.personPort : 0;
+                 : br.person ? br.person.id : br.hands ? br.hands.id : br.src.id;
+    const headFp = !br.filters.length ?
+        (br.person ? br.personPort : br.hands ? br.handsPort : 0) : 0;
     const outId = outNode().id;
     const e = edges.find(x => x.from === headId && x.fp === headFp && x.to === outId);
     const a = nodeById(headId);
@@ -2639,6 +2781,7 @@ if (!loadHash()) {
   selId = f1.id;
 }
 if (nodes.some(n => n.type === 'person')) loadSegmenter();
+if (nodes.some(n => n.type === 'hands')) loadHands();
 if (!selId) {
   const first = nodes.find(n => n.type === 'filter') || nodes.find(n => n.type !== 'out');
   if (first) selId = first.id;
@@ -2663,6 +2806,8 @@ window.__studio = {
   get branches() { return branches; },
   select(id) { selId = id; renderGraph(); renderInspector(); },
   yaml: sceneYaml,
+  // synthetic hand-frame quad (normalized coords) — headless CI has no hands
+  handMask(pts, alpha = 1) { Object.assign(handPts, pts); writeHandMask(alpha); },
 };
 
 // ---- render loop -----------------------------------------------------------
@@ -2687,7 +2832,8 @@ function updateBar() {
   }
   const parts = branches.map((br, i) => {
     const names = br.filters.filter(n => n.on).map(n => n.name).join('→');
-    const tag = br.person ? (br.personPort === 0 ? '人物' : '背景') : '枝' + (i + 1);
+    const tag = br.person ? (br.personPort === 0 ? '人物' : '背景')
+              : br.hands ? (br.handsPort === 0 ? '枠内' : '枠外') : '枝' + (i + 1);
     return `${tag}:${names || 'そのまま'}`;
   });
   bar.textContent = parts.join(' | ') + ' — 映像はタブの外に出ません';
@@ -2701,6 +2847,7 @@ function tick() {
 
   feedSources(t);
   updateMask(now);
+  updateHands(now);
   if (anim.checked && animatedGraph()) pushChains(t);
 
   if (gpu) {
