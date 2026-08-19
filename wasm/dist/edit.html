@@ -467,7 +467,7 @@
 <div id="shOverlay" class="overlay">
   <div class="panel">
     <button class="close" data-close="shOverlay">✕</button>
-    <h3>AIシェーダ (β) — 出力への最終パス</h3>
+    <h3 id="shTitle">AIシェーダ (β)</h3>
     <div style="display:flex;gap:8px;margin-bottom:10px">
       <input id="shPrompt" placeholder="例:「万華鏡みたいに」「画面をうねらせて」「古いブラウン管の滲み」"
         style="flex:1;background:rgba(255,255,255,0.04);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;outline:none">
@@ -677,6 +677,8 @@ function addNode(type, x, y, extra = {}) {
     Object.assign(n, { name: extra.name, on: true,
         vals: s.params.map(p => extra.params?.[p.name] !== undefined
             ? clampToRange(p, extra.params[p.name]) : p.def) });
+  } else if (type === 'glsl') {
+    Object.assign(n, { code: extra.code || SHADER_TEMPLATES[1][1], on: true });
   } else if (type === 'person') {
     n.feather = extra.feather ?? 5;
   } else if (type === 'hands') {
@@ -748,7 +750,7 @@ function compile() {
     // walk upstream edge by edge; the edge we exit a person node through
     // (its fp) says whether this branch is the 人物 (0) or 背景 (1) side
     const br = { filters: [], person: null, personPort: 0, hands: null, handsPort: 0,
-                 xform: null, src: null, tail: first.from };
+                 xform: null, glsl: null, src: null, tail: first.from };
     let e = first, guard = 0;
     while (guard++ < 40) {
       const n = nodeById(e.from);
@@ -760,6 +762,8 @@ function compile() {
         if (!br.person) { br.person = n; br.personPort = e.fp; }
       } else if (n.type === 'hands') {
         if (!br.hands) { br.hands = n; br.handsPort = e.fp; }
+      } else if (n.type === 'glsl') {
+        if (!br.glsl && n.on) br.glsl = n;
       }
       const inn = edges.find(x => x.to === n.id);
       if (!inn) break;
@@ -1092,6 +1096,8 @@ function nodeMeta(n) {
                                  ac: NODE_ACCENT.src, outs: [''], hasIn: false };
   if (n.type === 'person') return { emoji: '🧍', j: '人物抽出', e: 'segment',
                                  ac: NODE_ACCENT.person, outs: ['人物', '背景'], hasIn: true };
+  if (n.type === 'glsl') return { emoji: '🧪', j: 'GLSLシェーダ', e: n.on ? 'glsl' : 'off',
+                                 ac: '#b7f07e', outs: [''], hasIn: true };
   if (n.type === 'hands') return { emoji: '🖐', j: '手フレーム', e: 'hands',
                                  ac: NODE_ACCENT.hands, outs: ['枠内', '枠外'], hasIn: true };
   if (n.type === 'xform') return { emoji: '🎚', j: '変形/合成', e: n.blend,
@@ -1134,7 +1140,7 @@ function renderGraph() {
     e.className = 'ename';
     e.textContent = m.e;
     card.append(em, j, e);
-    if (n.type === 'filter') {
+    if (n.type === 'filter' || n.type === 'glsl') {
       const pw = document.createElement('button');
       pw.className = 'pw';
       pw.title = n.on ? 'オフにする' : 'オンにする';
@@ -1507,6 +1513,7 @@ function renderInspector() {
       n.type === 'filter' ? SPEC[n.name].summary
       : n.type === 'src' ? 'プレビュー左上のボタンでソース切替'
       : n.type === 'person' ? 'MediaPipeで人物マスク。人物/背景ポートで枝分かれ'
+      : n.type === 'glsl' ? 'この枝の入力にWebGL2でかかる自作シェーダ (β) — AI生成可'
       : n.type === 'hands' ? '両手の親指+人差し指の指フレーム。枠内/枠外ポートで枝分かれ'
       : n.type === 'xform' ? '小窓(ドラッグ移動/ホイール拡縮)か全面ミキサーでブレンド合成'
       : '入ってきた枝を下から順に重ねます (グラフの縦位置=重なり順)';
@@ -1526,6 +1533,20 @@ function renderInspector() {
       pushMasks();
       saveHash();
     }));
+  } else if (n.type === 'glsl') {
+    const edit = document.createElement('button');
+    edit.textContent = '🧪 コードを編集 / AI生成';
+    edit.style.cssText = 'background:none;border:1px solid var(--line);color:var(--dim);' +
+        'border-radius:999px;font-size:12px;padding:6px 14px;cursor:pointer;align-self:flex-end';
+    edit.addEventListener('click', () => openShaderPanel(n.id));
+    paramsBox.append(edit);
+  } else if (n.type === 'out') {
+    const fin = document.createElement('button');
+    fin.textContent = '🧪 仕上げシェーダ (出力全体への最終パス)' + (postState.on ? ' · ON' : '');
+    fin.style.cssText = 'background:none;border:1px solid var(--line);color:var(--dim);' +
+        'border-radius:999px;font-size:12px;padding:6px 14px;cursor:pointer;align-self:flex-end';
+    fin.addEventListener('click', () => openShaderPanel('out'));
+    paramsBox.append(fin);
   } else if (n.type === 'xform') {
     const bi = () => branches.findIndex(b => b.xform === n);
     const sel = document.createElement('label');
@@ -1644,6 +1665,10 @@ function packGraph() {
         if (Object.keys(v).length) o.v = v;
       }
       if (n.type === 'person' || n.type === 'hands') o.fe = +n.feather.toFixed(1);
+      if (n.type === 'glsl') {
+        o.c = n.code.slice(0, 20000);
+        if (!n.on) o.off = 1;
+      }
       if (n.type === 'xform') o.xf = [+n.pos[0].toFixed(1), +n.pos[1].toFixed(1),
           +n.rot.toFixed(1), +n.scale.toFixed(3), +n.op.toFixed(2), n.blend,
           n.flipH ? 1 : 0, n.flipV ? 1 : 0];
@@ -1715,6 +1740,9 @@ function unpackGraph(packed) {
           n = addNode('person', o.x, o.y, { feather: Number(o.fe) || 5 });
         } else if (o.t === 'hands' && !nodes.some(x => x.type === 'hands')) {
           n = addNode('hands', o.x, o.y, { feather: Number(o.fe) || 6 });
+        } else if (o.t === 'glsl') {
+          n = addNode('glsl', o.x, o.y, { code: typeof o.c === 'string' ? o.c : undefined });
+          if (o.off) n.on = false;
         } else if (o.t === 'xform' && Array.isArray(o.xf)) {
           n = addNode('xform', o.x, o.y, { pos: [Number(o.xf[0]) || 0, Number(o.xf[1]) || 0],
               rot: Number(o.xf[2]) || 0, scale: Math.min(1.6, Math.max(0.1, Number(o.xf[3]) || 0.45)),
@@ -1766,6 +1794,31 @@ function openPalette() {
   palSearch.focus();
 }
 palSearch.addEventListener('input', () => buildPalette(palSearch.value.trim().toLowerCase()));
+// splice any 1-in/1-out node into the selected node's outgoing line,
+// or drop it free for hand-wiring
+function spliceNodeAfterSelected(n2) {
+  const sel = nodeById(selId);
+  if (sel && sel.type !== 'out' && sel !== n2) {
+    const e = edges.find(x => x.from === sel.id);
+    n2.x = Math.min(1900, sel.x + 190);
+    n2.y = sel.y;
+    if (e) {
+      const toId = e.to, fp = e.fp;
+      edges = edges.filter(x => x !== e);
+      connect(sel.id, fp, n2.id);
+      connect(n2.id, 0, toId);
+      const to = nodeById(toId);
+      if (to && to.x < n2.x + 190) to.x = n2.x + 190;
+    } else {
+      connect(sel.id, sel.type === 'person' || sel.type === 'hands' ? 1 : 0, n2.id);
+    }
+  } else {
+    const [fx, fy] = freeSpot(400, 80);
+    n2.x = fx;
+    n2.y = fy;
+  }
+  selId = justAddedId = n2.id;
+}
 // Adding a filter splices it into the selected node's outgoing line, or
 // drops it free for hand-wiring.
 function addFilterNode(name, params = {}) {
@@ -2352,48 +2405,175 @@ function drawPost(t) {
   if (postState.uR) gl.uniform2f(postState.uR, c.width, c.height);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
+function compileGL(gl, fsSrc) {
+  const mk = (type, src) => {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+    return sh;
+  };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, mk(gl.VERTEX_SHADER, POST_VS));
+  gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, fsSrc));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  return { prog, uT: gl.getUniformLocation(prog, 'u_time'),
+           uR: gl.getUniformLocation(prog, 'u_res') };
+}
+// offscreen processor: a glsl NODE runs on its branch's input feed, before
+// the engine — so it composes with the whole graph instead of covering it
+const procCache = {};                 // nodeId -> {code, prog, uT, uR, bad}
+let procGL = null, procTex = null, procCanvas = null, procBuf = null, procRow = null;
+function ensureProc() {
+  if (procGL) return true;
+  procCanvas = document.createElement('canvas');
+  procCanvas.width = FEED_W;
+  procCanvas.height = FEED_H;
+  procGL = procCanvas.getContext('webgl2', { premultipliedAlpha: false,
+                                             preserveDrawingBuffer: true });
+  if (!procGL) return false;
+  const gl = procGL;
+  procTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, procTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  return true;
+}
+function compileNodeShader(code) {    // test compile; error string or null
+  if (!ensureProc()) return 'WebGL2が使えない環境です';
+  try { compileGL(procGL, code); return null; } catch (e) { return String(e.message || e); }
+}
+function glslFor(src) {
+  const br = branches.find(b => b.src === src && b.glsl);
+  return br ? br.glsl : null;
+}
+function runNodeShader(node, grab) {
+  if (!node.on || !ensureProc()) return null;
+  const gl = procGL;
+  let c = procCache[node.id];
+  if (!c || c.code !== node.code) {
+    try { c = { code: node.code, ...compileGL(gl, node.code) }; }
+    catch (e) { c = { code: node.code, bad: true }; }
+    procCache[node.id] = c;
+  }
+  if (c.bad) return null;
+  const w = grab.width, h = grab.height;
+  if (procCanvas.width !== w || procCanvas.height !== h) {
+    procCanvas.width = w;
+    procCanvas.height = h;
+  }
+  gl.viewport(0, 0, w, h);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, procTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, grab);
+  gl.useProgram(c.prog);
+  gl.uniform1i(gl.getUniformLocation(c.prog, 'u_src'), 0);
+  if (c.uT) gl.uniform1f(c.uT, simT);
+  if (c.uR) gl.uniform2f(c.uR, w, h);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  const len = w * h * 4, rowBytes = w * 4;
+  if (!procBuf || procBuf.length < len) {
+    procBuf = new Uint8Array(len);
+    procRow = new Uint8Array(len);
+  }
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, procBuf);
+  for (let yy = 0; yy < h; ++yy) {    // GL reads bottom-up; the engine wants top-down
+    procRow.set(procBuf.subarray((h - 1 - yy) * rowBytes, (h - yy) * rowBytes), yy * rowBytes);
+  }
+  return procRow.subarray(0, len);
+}
 const stripFences = x => {
   const m = x.match(/```[a-z]*\s*([\s\S]*?)```/);
   return (m ? m[1] : x).trim();
 };
-function applyShader() {
-  const err = buildPost($('shCode').value);
-  if (err) { $('shErr').textContent = err; return; }
+let shTarget = 'out';                 // 'out' = final pass / node id = branch input
+let postCode = '';
+function openShaderPanel(target) {
+  shTarget = target;
+  const n = target === 'out' ? null : nodeById(target);
+  $('shCode').value = n ? n.code : (postCode || SHADER_TEMPLATES[1][1]);
+  $('shTitle').textContent = n ? '🧪 GLSLシェーダノード — この枝の入力にかかります'
+                               : '🧪 仕上げシェーダ — 出力全体への最終パス';
   $('shErr').textContent = '';
-  postState.on = true;
-  postState.c.classList.add('on');
-  say('AIシェーダを最終パスに適用中 (🧪パネルからオフにできます)');
+  $('shOverlay').classList.add('open');
+}
+function applyShader() {
+  const code = $('shCode').value;
+  if (shTarget === 'out') {
+    const err = buildPost(code);
+    if (err) { $('shErr').textContent = err; return err; }
+    postCode = code;
+    postState.on = true;
+    postState.c.classList.add('on');
+    $('shErr').textContent = '';
+    say('仕上げシェーダを適用中 (出力ノードから編集できます)');
+    return null;
+  }
+  const n = nodeById(shTarget);
+  if (!n) return 'ノードが見つかりません';
+  const err = compileNodeShader(code);
+  if (err) { $('shErr').textContent = err; return err; }
+  n.code = code;
+  n.on = true;
+  delete procCache[n.id];
+  applyGraph(true);
+  $('shErr').textContent = '';
+  say('シェーダをノードに適用しました — 後段のフィルタとも合成されます');
+  return null;
 }
 async function genShader() {
   const text = $('shPrompt').value.trim();
   $('shErr').textContent = '';
   $('shGen').disabled = true;
+  const llm = (aiCfg.prov === 'claude' && aiCfg.claudeKey) ? askClaude
+            : (aiCfg.prov === 'openai' && aiCfg.oaiBase && aiCfg.oaiModel) ? askOpenAI : null;
   try {
-    if (aiCfg.prov === 'claude' && aiCfg.claudeKey) {
-      $('shCode').value = stripFences(await askClaude(text || '面白い映像エフェクト', SYS_SHADER));
-    } else if (aiCfg.prov === 'openai' && aiCfg.oaiBase && aiCfg.oaiModel) {
-      $('shCode').value = stripFences(await askOpenAI(text || '面白い映像エフェクト', SYS_SHADER));
+    if (llm) {
+      $('shCode').value = stripFences(await llm(text || '面白い映像エフェクト', SYS_SHADER));
+      let err = applyShader();
+      if (err) {
+        // one self-repair round: hand the compiler output back to the LLM
+        $('shErr').textContent = 'コンパイル失敗 — AIが修正中…\n' + err;
+        $('shCode').value = stripFences(await llm(
+            '以下のGLSLがコンパイルエラーになりました。修正した完全なコードのみを出力してください。\n\nエラー:\n' +
+            err + '\n\nコード:\n' + $('shCode').value, SYS_SHADER));
+        err = applyShader();
+        if (err) $('shErr').textContent = '自動修復も失敗:\n' + err;
+      }
     } else {
       const hit = SHADER_TEMPLATES.find(([re]) => re.test(text));
       $('shCode').value = (hit || SHADER_TEMPLATES[0])[1];
+      applyShader();
       if (!hit) $('shErr').textContent = '内蔵はテンプレのみ — ⚙でLLMを繋ぐと指示どおりに書きます';
     }
-    applyShader();
   } catch (e) { $('shErr').textContent = String(e.message || e); }
   finally { $('shGen').disabled = false; }
 }
 $('tbShader').addEventListener('click', () => {
-  if (!$('shCode').value) $('shCode').value = SHADER_TEMPLATES[1][1];
-  $('shOverlay').classList.add('open');
+  // a shader is a NODE now: splice into the selected line and open the editor
+  const n = addNode('glsl', 0, 0, {});
+  spliceNodeAfterSelected(n);
+  applyGraph(true);
+  openShaderPanel(n.id);
+  say('GLSLシェーダノードを追加 — この枝の入力にかかり、後段フィルタと合成できます');
 });
 $('shGen').addEventListener('click', genShader);
 $('shPrompt').addEventListener('keydown', e => { if (e.key === 'Enter') genShader(); });
 $('shApply').addEventListener('click', applyShader);
 $('shOff').addEventListener('click', () => {
-  postState.on = false;
-  if (postState.c) postState.c.classList.remove('on');
+  if (shTarget === 'out') {
+    postState.on = false;
+    if (postState.c) postState.c.classList.remove('on');
+  } else {
+    const n = nodeById(shTarget);
+    if (n) { n.on = false; applyGraph(true); }
+  }
   $('shErr').textContent = '';
-  say('AIシェーダをオフにしました');
+  say('シェーダをオフにしました');
 });
 
 // ---- share / export --------------------------------------------------------
@@ -2734,15 +2914,17 @@ function feedSources(t) {
       if (grab.width !== tw || grab.height !== th) { grab.width = tw; grab.height = th; }
       g.drawImage(v, 0, 0, tw, th);
     } else if (s.kind === 'image') {
-      if (!s.dirty) return;
-      if (grab.width !== FEED_W) { grab.width = FEED_W; grab.height = FEED_H; }
-      const img = s.img;
-      const sc = Math.max(FEED_W / img.width, FEED_H / img.height);
-      g.fillStyle = '#000';
-      g.fillRect(0, 0, FEED_W, FEED_H);
-      g.drawImage(img, (FEED_W - img.width * sc) / 2, (FEED_H - img.height * sc) / 2,
-                  img.width * sc, img.height * sc);
-      s.dirty = false;
+      if (!s.dirty && !glslFor(s)) return;      // static commits once — unless a
+      if (s.dirty) {                            // shader is animating on top of it
+        if (grab.width !== FEED_W) { grab.width = FEED_W; grab.height = FEED_H; }
+        const img = s.img;
+        const sc = Math.max(FEED_W / img.width, FEED_H / img.height);
+        g.fillStyle = '#000';
+        g.fillRect(0, 0, FEED_W, FEED_H);
+        g.drawImage(img, (FEED_W - img.width * sc) / 2, (FEED_H - img.height * sc) / 2,
+                    img.width * sc, img.height * sc);
+        s.dirty = false;
+      }
     } else if (s.kind === 'sample') {
       if (grab.width !== FEED_W) { grab.width = FEED_W; grab.height = FEED_H; }
       drawSample(g, FEED_W, FEED_H, t + i * 13.7);
@@ -2762,7 +2944,10 @@ function feedSources(t) {
       fs.commitImage(inst, 'in' + i, w, h);
       return;
     } else return;
-    const data = g.getImageData(0, 0, grab.width, grab.height).data;
+    let data = null;
+    const gn = glslFor(s);
+    if (gn) data = runNodeShader(gn, grab);     // branch's shader eats the feed
+    if (!data) data = g.getImageData(0, 0, grab.width, grab.height).data;
     const ptr = fs.imageBuffer(inst, 'in' + i, grab.width, grab.height);
     mod.HEAPU8.set(data, ptr);
     fs.commitImage(inst, 'in' + i, grab.width, grab.height);
