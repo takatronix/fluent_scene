@@ -417,7 +417,7 @@
   </div>
   <div id="pill">loading…</div>
   <button id="btnFull" title="全画面モード">⛶</button>
-  <div id="hint">ドラッグで境界移動 · 左=原画</div>
+  <div id="hint">原画と比べる: 左端からドラッグ</div>
 </div>
 <div id="aibar">
   <span class="spark">✨</span>
@@ -901,11 +901,13 @@ inputs:
   srcs.forEach((s2, i) => { y += `  in${i}: { type: image.rgba8, update: per_frame }\n`; });
   let params = '';
   if (wipeMode()) {
-    params += `  wipe_win: { type: vec2, default: [0, 360], runtime_mutable: true,
+    // defaults come from wipeX so a recompile (ノード追加等) never snaps the
+    // divider back — and the default IS "全面フィルタ" (wipeX = 0)
+    params += `  wipe_win: { type: vec2, default: [${(wipeX - 640).toFixed(1)}, 360], runtime_mutable: true,
               animate: { duration: 0.1, ease: ease_out } }
-  wipe_inv: { type: vec2, default: [1280, 360], runtime_mutable: true,
+  wipe_inv: { type: vec2, default: [${(1920 - wipeX).toFixed(1)}, 360], runtime_mutable: true,
               animate: { duration: 0.1, ease: ease_out } }
-  divider: { type: vec2, default: [640, 360], runtime_mutable: true,
+  divider: { type: vec2, default: [${(wipeX < 2 ? -10 : wipeX).toFixed(1)}, 360], runtime_mutable: true,
              animate: { duration: 0.1, ease: ease_out } }
 `;
   }
@@ -3010,11 +3012,13 @@ function fallbackToCpu(why) {
 }
 
 // ---- canvas interaction: wipe / move selected branch's xform ----------------
+let wipeX = 0;                        // 0 = 全面フィルタ (比較は左端からドラッグ)
 function setWipe(s) {
   s = Math.max(0, Math.min(STAGE_W, s));
+  wipeX = s;
   fs.setParamVec2(inst, 'wipe_win', s - 640, 360);
   fs.setParamVec2(inst, 'wipe_inv', 1920 - s, 360);
-  fs.setParamVec2(inst, 'divider', s, 360);
+  fs.setParamVec2(inst, 'divider', s < 2 ? -10 : s, 360);
 }
 function stagePoint(el, e) {
   const r = el.getBoundingClientRect();
@@ -3034,7 +3038,7 @@ function activeXform() {
 function updateHint() {
   const xf = activeXform();
   if (wipeMode()) {
-    hint.textContent = 'ドラッグで境界移動 · 左=原画';
+    hint.textContent = wipeX > 2 ? 'ドラッグで境界移動 · 左=原画' : '原画と比べる: 左端からドラッグ';
     canvas.style.cursor = 'ew-resize';
   } else if (xf) {
     hint.textContent = '小窓をドラッグで移動 · ホイールで拡縮';
@@ -3068,7 +3072,7 @@ function hookCanvas(el) {
       if (u) fs.setParamVec2(inst, 'p_' + u.id, dragXf.pos[0], dragXf.pos[1]);
     }
   });
-  el.addEventListener('pointerup', () => { dragging = false; dragXf = null; saveHash(); });
+  el.addEventListener('pointerup', () => { dragging = false; dragXf = null; saveHash(); updateHint(); });
   el.addEventListener('wheel', e => {
     const xf = activeXform();
     if (wipeMode() || !xf) return;
