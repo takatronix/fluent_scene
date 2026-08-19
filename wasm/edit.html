@@ -58,10 +58,16 @@
        background: #000; border-radius: 20px;
        box-shadow: 0 34px 110px rgba(0, 0, 0, 0.7), 0 0 90px rgba(120, 100, 220, 0.18);
        touch-action: none; user-select: none; cursor: ew-resize; }
-  #pill { position: absolute; top: 14px; right: 14px; z-index: 3;
+  #pill { position: absolute; top: 14px; right: 54px; z-index: 3;
           font: 11px ui-monospace, monospace; color: var(--dim);
           background: rgba(0, 0, 0, 0.55); border: 1px solid var(--line);
           padding: 4px 11px; border-radius: 999px; backdrop-filter: blur(8px); }
+  #btnFull { position: absolute; top: 14px; right: 14px; z-index: 3;
+          font-size: 14px; color: var(--dim); background: rgba(0, 0, 0, 0.55);
+          border: 1px solid var(--line); width: 30px; height: 27px;
+          border-radius: 999px; cursor: pointer; backdrop-filter: blur(8px);
+          transition: 0.15s; }
+  #btnFull:hover { color: var(--ink); transform: scale(1.1); }
   #srcBtns { position: absolute; top: 14px; left: 14px; z-index: 3; display: flex; gap: 6px;
           align-items: center; }
   #srcTag { font: 700 11px ui-monospace, monospace; color: #0c0a14;
@@ -272,6 +278,44 @@
            box-shadow: 0 0 20px rgba(160, 140, 250, 0.4); }
   .cfgset[hidden] { display: none; }
 
+  /* ---- theater mode: video fullscreen, dock = floating window ---- */
+  #dockBar { display: none; }
+  body.theater { padding: 0; height: 100vh; overflow: hidden; }
+  body.theater header, body.theater #bar { display: none; }
+  body.theater #frame { position: fixed; inset: 0; width: 100vw; z-index: 10;
+          background: #000; }
+  body.theater #frame::before { display: none; }
+  body.theater #v { position: absolute; top: 50%; left: 50%;
+          transform: translate(-50%, -50%);
+          width: min(100vw, calc(100vh * 16 / 9)); border-radius: 0; box-shadow: none; }
+  body.theater #aibar { position: fixed; left: 50%; bottom: 16px;
+          transform: translateX(-50%); margin: 0; z-index: 30; width: min(92vw, 680px); }
+  body.theater #aiSay { position: fixed; left: 0; right: 0; bottom: 72px; z-index: 30;
+          margin: 0; text-shadow: 0 1px 6px #000; pointer-events: none; }
+  body.theater #dock { position: fixed; right: 16px; top: 16px; z-index: 25;
+          width: min(700px, 94vw); height: min(560px, 80vh); min-width: 250px;
+          min-height: 42px; overflow: auto; resize: both;
+          background: rgba(13, 11, 24, 0.94); backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+          box-shadow: 0 30px 90px rgba(0, 0, 0, 0.8); }
+  body.theater #dockBar { display: flex; align-items: center; gap: 8px;
+          cursor: grab; user-select: none; touch-action: none;
+          font: 700 12px ui-monospace, monospace; color: var(--dim);
+          padding: 0 2px 4px; }
+  #dockBar .sp { flex: 1; }
+  #dockBar button { background: none; border: 1px solid var(--line); color: var(--dim);
+          border-radius: 7px; width: 26px; height: 23px; cursor: pointer; font-size: 12px; }
+  #dockBar button:hover { color: var(--ink); border-color: rgba(255,255,255,0.3); }
+  body.theater #dock.min { height: auto !important; width: 250px !important;
+          resize: none; overflow: hidden; }
+  body.theater #dock.min > :not(#dockBar) { display: none !important; }
+  #dock[hidden] { display: none !important; }
+  #dockRestore { display: none; position: fixed; right: 16px; top: 16px; z-index: 25;
+          font-size: 16px; background: rgba(13, 11, 24, 0.94); color: var(--ink);
+          border: 1px solid var(--line); border-radius: 999px; width: 42px; height: 42px;
+          cursor: pointer; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7); }
+  body.theater #dockRestore.show { display: block; }
+
   /* ---- Safari + mobile ---- */
   #aibar, #dock, #pill, #hint, #srcBtns button { -webkit-backdrop-filter: blur(14px); }
   header { flex-wrap: wrap; row-gap: 6px; }
@@ -316,6 +360,7 @@
     <input id="filePick" type="file" accept="image/*,video/*" hidden>
   </div>
   <div id="pill">loading…</div>
+  <button id="btnFull" title="全画面モード">⛶</button>
   <div id="hint">ドラッグで境界移動 · 左=原画</div>
 </div>
 <div id="aibar">
@@ -327,12 +372,17 @@
 </div>
 <div id="aiSay"></div>
 <div id="dock">
+  <div id="dockBar"><span>🎛 フィルタ</span><span class="sp"></span>
+    <button id="dockMin" title="最小化">–</button>
+    <button id="dockClose" title="しまう">✕</button>
+  </div>
   <div id="toolbar">
     <button id="tbFilter">+ フィルタ</button>
     <button id="tbSrc">+ 入力</button>
     <button id="tbPerson">+ 人物抽出</button>
     <button id="tbXform">+ 変形/合成</button>
-    <span class="tip">●出力ポート→●入力ポートへドラッグで接続 · 線クリックで切断 · 縦位置が重なり順(下=手前)</span>
+    <button id="tbReset" title="グラフを最初から">🧹 リセット</button>
+    <span class="tip">●出力→●入力へドラッグで接続 · 線タップで切断 · 入力●からドラッグで繋ぎ替え · 縦位置=重なり順(下=手前)</span>
   </div>
   <div id="graph"><div id="gInner">
     <svg id="edgeSvg">
@@ -370,6 +420,7 @@
   </div>
 </div>
 <div id="bar">loading wasm…</div>
+<button id="dockRestore" title="フィルタウィンドウを開く">🎛</button>
 
 <div id="palOverlay" class="overlay">
   <div class="panel">
@@ -394,9 +445,17 @@
       <label>モデル <input type="text" id="cfgClaudeModel" value="claude-opus-5"></label>
     </div>
     <div class="cfgset" data-prov="openai">
-      <label>Base URL <input type="text" id="cfgOaiBase" placeholder="http://localhost:11434/v1"></label>
-      <label>モデル <input type="text" id="cfgOaiModel" placeholder="qwen3:8b など"></label>
-      <label>APIキー 🔒 (不要なら空欄) <input type="password" id="cfgOaiKey"></label>
+      <div class="radios" style="gap:8px">
+        <button type="button" class="oaiPreset" data-base="https://api.openai.com/v1" data-hint="gpt-4o など"
+          style="background:none;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer">OpenAI (ChatGPTのキー)</button>
+        <button type="button" class="oaiPreset" data-base="http://localhost:11434/v1" data-hint="qwen3:8b など"
+          style="background:none;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer">Ollama (ローカル)</button>
+        <button type="button" class="oaiPreset" data-base="http://localhost:1234/v1" data-hint="読込中のモデル名"
+          style="background:none;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer">LM Studio (ローカル)</button>
+      </div>
+      <label>Base URL <input type="text" id="cfgOaiBase" placeholder="https://api.openai.com/v1"></label>
+      <label>モデル <input type="text" id="cfgOaiModel" placeholder="gpt-4o など"></label>
+      <label>APIキー 🔒 (ローカルなら空欄可) <input type="password" id="cfgOaiKey"></label>
     </div>
     <div class="keynote"><span>🔒</span><span><b>APIキーはこの端末のブラウザ (localStorage) にだけ保存されます。</b>サーバーには送られず、選んだAPIの呼び出し以外には使われません。キーを入れればその場でLLM生成が使えます。<br>内蔵コンポーザはネット接続なし・設定なしでキーワードからチェーンを組みます — まずはそのままどうぞ。</span></div>
     <button class="save" id="cfgSave">保存</button>
@@ -685,16 +744,18 @@ inputs:
   branches.forEach((br, i) => {
     if (br.xform) {
       const l = br.xform;
+      // parked at identity = full-frame mixer: no window chrome
+      const win = l.scale < 0.98 || Math.abs(l.rot) > 0.01;
       y += `  - id: B${i}
     bounds: [0, 0, ${STAGE_W}, ${STAGE_H}]
     position: $params.p${i}
     rotation: $params.r${i}
     scale: [${l.scale.toFixed(3)}, ${l.scale.toFixed(3)}]
     opacity: $params.o${i}
-${l.blend !== 'normal' ? `    blend: ${l.blend}\n` : ''}    corner_radius: 22
+${l.blend !== 'normal' ? `    blend: ${l.blend}\n` : ''}${win ? `    corner_radius: 22
     masks_to_bounds: true
     shadow: {}
-    content: { image: { source: $inputs.in${br.srcIdx}, fit: cover } }
+` : ''}    content: { image: { source: $inputs.in${br.srcIdx}, fit: cover } }
 `;
     } else {
       y += `  - id: B${i}
@@ -915,6 +976,7 @@ function renderGraph() {
       p.style.setProperty('--ac', m.ac);
       p.style.top = (nodeH(n) / 2 - 7) + 'px';
       p.dataset.id = n.id;
+      hookInPort(p, n);
       card.append(p);
     }
     m.outs.forEach((label, k) => {
@@ -1001,31 +1063,48 @@ function hookNodeDrag(card, n) {
     window.addEventListener('pointerup', onUp);
   });
 }
-// connect drag from an out port
+// wire dragging, shared by out-ports (new wire) and in-ports (re-wire)
+function startWireDrag(fromId, fp) {
+  const from = nodeById(fromId);
+  if (!from) return;
+  const gRect = () => gInner.getBoundingClientRect();
+  const onMove = ev => {
+    const r = gRect();
+    const [x1, y1] = portXY(from, true, fp);
+    tempEdge.setAttribute('d', edgePath(x1, y1, ev.clientX - r.left, ev.clientY - r.top));
+  };
+  const onUp = ev => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    tempEdge.setAttribute('d', '');
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    const inPort = el && el.closest ? el.closest('.port.in') : null;
+    const toCard = el && el.closest ? el.closest('.gnode') : null;
+    const toId = inPort ? inPort.dataset.id : (toCard ? toCard.dataset.id : null);
+    if (toId && connect(fromId, fp, toId)) applyGraph(true);
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
 function hookOutPort(p) {
   p.addEventListener('pointerdown', e => {
     e.preventDefault();
     e.stopPropagation();
-    const fromId = p.dataset.id, fp = Number(p.dataset.port);
-    const from = nodeById(fromId);
-    const gRect = () => gInner.getBoundingClientRect();
-    const onMove = ev => {
-      const r = gRect();
-      const [x1, y1] = portXY(from, true, fp);
-      tempEdge.setAttribute('d', edgePath(x1, y1, ev.clientX - r.left, ev.clientY - r.top));
-    };
-    const onUp = ev => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      tempEdge.setAttribute('d', '');
-      const el = document.elementFromPoint(ev.clientX, ev.clientY);
-      const inPort = el && el.closest ? el.closest('.port.in') : null;
-      const toCard = el && el.closest ? el.closest('.gnode') : null;
-      const toId = inPort ? inPort.dataset.id : (toCard ? toCard.dataset.id : null);
-      if (toId && connect(fromId, fp, toId)) applyGraph(true);
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+    startWireDrag(p.dataset.id, Number(p.dataset.port));
+  });
+}
+// grabbing a connected in-port unplugs the wire and lets you re-drop it
+// (drop on nothing = cut) — the other way to disconnect is tapping the line
+function hookInPort(p, n) {
+  p.addEventListener('pointerdown', e => {
+    if (n.type === 'out') return;               // out stacks many — tap lines instead
+    const inn = edges.find(x => x.to === n.id);
+    if (!inn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    edges = edges.filter(x => x !== inn);
+    applyGraph(true);
+    startWireDrag(inn.from, inn.fp);
   });
 }
 $('graph').addEventListener('pointerdown', e => {
@@ -1040,6 +1119,10 @@ window.addEventListener('keydown', e => {
   if (e.key === 'Delete' && selId && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
     removeNode(selId);
     applyGraph(true);
+  }
+  if (e.key === 'Escape' && !document.fullscreenElement &&
+      document.body.classList.contains('theater')) {
+    setTheater(false);
   }
 });
 
@@ -1092,7 +1175,75 @@ $('tbXform').addEventListener('click', () => {
   const n = addNode('xform', x, y);
   selId = justAddedId = n.id;
   applyGraph(true);
-  say('変形/合成ノード — 線の途中に挟むとその枝が小窓になります (ドラッグ移動/ホイール拡縮)');
+  say('変形/合成ノード — 線に挟むと小窓、「全面ミキサー」で画面全体をブレンド合成');
+});
+$('tbReset').addEventListener('click', () => {
+  if (!confirm('グラフを最初の状態に戻しますか?')) return;
+  const keep = nodes.find(n => n.type === 'src');
+  for (const n of nodes) if (n.type === 'src' && n !== keep) releaseSource(n);
+  const out = outNode();
+  nodes = [keep, out];
+  edges = [];
+  keep.x = 40; keep.y = 140;
+  out.x = 420; out.y = 140;
+  connect(keep.id, 0, out.id);
+  selId = null;
+  applyGraph(true);
+  say('まっさらにしました — 原画が出ています');
+});
+
+// ---- theater mode: video goes fullscreen, the dock becomes a window --------
+const dock = $('dock');
+let fsWasOn = false;
+function setTheater(on) {
+  document.body.classList.toggle('theater', on);
+  $('btnFull').textContent = on ? '🗗' : '⛶';
+  $('btnFull').title = on ? '全画面をやめる' : '全画面モード';
+  if (on) {
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen()
+          .then(() => { fsWasOn = true; }).catch(() => {});
+    }
+  } else {
+    dock.classList.remove('min');
+    dock.hidden = false;
+    $('dockRestore').classList.remove('show');
+    for (const p of ['width', 'height', 'left', 'top', 'right']) dock.style[p] = '';
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }
+}
+$('btnFull').addEventListener('click',
+    () => setTheater(!document.body.classList.contains('theater')));
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && fsWasOn) { fsWasOn = false; setTheater(false); }
+});
+$('dockMin').addEventListener('click', () => dock.classList.toggle('min'));
+$('dockClose').addEventListener('click', () => {
+  dock.hidden = true;
+  $('dockRestore').classList.add('show');
+});
+$('dockRestore').addEventListener('click', () => {
+  dock.hidden = false;
+  $('dockRestore').classList.remove('show');
+});
+$('dockBar').addEventListener('pointerdown', e => {
+  if (e.target.closest('button')) return;
+  e.preventDefault();
+  const r = dock.getBoundingClientRect();
+  dock.style.left = r.left + 'px';
+  dock.style.top = r.top + 'px';
+  dock.style.right = 'auto';
+  const ox = e.clientX - r.left, oy = e.clientY - r.top;
+  const onMove = ev => {
+    dock.style.left = Math.max(0, Math.min(innerWidth - 80, ev.clientX - ox)) + 'px';
+    dock.style.top = Math.max(0, Math.min(innerHeight - 40, ev.clientY - oy)) + 'px';
+  };
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
 });
 
 // ---- inspector -------------------------------------------------------------
@@ -1109,7 +1260,7 @@ function renderInspector() {
       n.type === 'filter' ? SPEC[n.name].summary
       : n.type === 'src' ? 'プレビュー左上のボタンでソース切替'
       : n.type === 'person' ? 'MediaPipeで人物マスク。人物/背景ポートで枝分かれ'
-      : n.type === 'xform' ? 'この枝を小窓化: 位置はプレビューをドラッグ、拡縮はホイール'
+      : n.type === 'xform' ? '小窓(ドラッグ移動/ホイール拡縮)か全面ミキサーでブレンド合成'
       : '入ってきた枝を下から順に重ねます (グラフの縦位置=重なり順)';
   if (n.type === 'filter') {
     SPEC[n.name].params.forEach((p, i) => {
@@ -1155,6 +1306,22 @@ function renderInspector() {
       if (bi() >= 0) fs.setParamF32(inst, 'o' + bi(), v);
       saveHash();
     }));
+    // one tap to a full-frame double exposure — the engine's mixer is the
+    // layer blend, this just parks the transform at identity
+    const full = document.createElement('button');
+    full.textContent = '⬜ 全面ミキサー';
+    full.style.cssText = 'background:none;border:1px solid var(--line);color:var(--dim);' +
+        'border-radius:999px;font-size:11px;padding:5px 13px;cursor:pointer;align-self:flex-end';
+    full.addEventListener('click', () => {
+      n.pos = [STAGE_W / 2, STAGE_H / 2];
+      n.rot = 0;
+      n.scale = 1;
+      rebuildScene();
+      renderInspector();
+      saveHash();
+      say('全面合成にしました — ブレンド(加算/スクリーン/乗算)と不透明度で混ぜ具合を');
+    });
+    paramsBox.append(full);
   }
 }
 function sliderRow(name, lo, hi, step, val, onInput) {
@@ -1683,6 +1850,12 @@ $('aiGear').addEventListener('click', () => {
 for (const r of document.querySelectorAll('input[name=prov]')) {
   r.addEventListener('change', syncCfgVis);
 }
+for (const b of document.querySelectorAll('.oaiPreset')) {
+  b.addEventListener('click', () => {
+    $('cfgOaiBase').value = b.dataset.base;
+    $('cfgOaiModel').placeholder = b.dataset.hint;
+  });
+}
 function syncCfgVis() {
   const v = document.querySelector('input[name=prov]:checked').value;
   for (const s of document.querySelectorAll('.cfgset')) s.hidden = s.dataset.prov !== v;
@@ -1696,11 +1869,19 @@ $('cfgSave').addEventListener('click', () => {
     oaiModel: $('cfgOaiModel').value.trim(),
     oaiKey: $('cfgOaiKey').value.trim(),
   };
+  // an sk- key against a localhost base is almost surely a ChatGPT key
+  // typed over the Ollama default — point it at OpenAI
+  let fixed = '';
+  if (aiCfg.prov === 'openai' && /^sk-/.test(aiCfg.oaiKey) &&
+      /localhost|127\.0\.0\.1/.test(aiCfg.oaiBase)) {
+    aiCfg.oaiBase = 'https://api.openai.com/v1';
+    fixed = ' · Base URLを https://api.openai.com/v1 に直しました';
+  }
   localStorage.setItem(CFG_KEY, JSON.stringify(aiCfg));
   cfgOverlay.classList.remove('open');
   say(aiCfg.prov === 'builtin' ? '内蔵コンポーザを使います (オフライン)'
       : aiCfg.prov === 'claude' ? 'Claude APIを使います (キーはこの端末にのみ保存)'
-      : 'OpenAI互換APIを使います (キーはこの端末にのみ保存)');
+      : 'OpenAI互換APIを使います (キーはこの端末にのみ保存)' + fixed);
 });
 
 // ---- share / export --------------------------------------------------------
