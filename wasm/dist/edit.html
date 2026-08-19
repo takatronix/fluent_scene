@@ -1520,13 +1520,12 @@ function delaunay(pts) {               // pts [{x,y}] → [i,j,k]の三角形リ
   }
   return tris.filter(t => t.every(ix => ix < n));
 }
-let faceLander = null, faceLoading = false, faceOvalSet = null, faceProtectSet = null;
+let faceLander = null, faceLoading = false, faceOvalSet = null;
 const faceDetCanvas = document.createElement('canvas');
 faceDetCanvas.width = 384;
 faceDetCanvas.height = 216;
 const faceDetCtx = faceDetCanvas.getContext('2d', { willReadFrequently: true });
 let faceLive = null, facePresence = 0, faceSeenMs = -1e9, facePrevMs = 0;
-let faceLiveMean = null;               // ライブ顔内側の平均色 (色合わせ用)
 const faceSrcCache = new Map();        // resource name -> prepared mesh / null(仕込み中) / 'bad'
 const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/' +
                    'face_landmarker/float16/latest/face_landmarker.task';
@@ -1550,17 +1549,6 @@ async function loadFaceLander() {
     for (const c of FaceLandmarker.FACE_LANDMARKS_FACE_OVAL) {
       faceOvalSet.add(c.start);
       faceOvalSet.add(c.end);
-    }
-    // 眉・目・唇は「暗いから髪」と誤判定されると顔が壊れる — 保護指定
-    faceProtectSet = new Set();
-    for (const key of ['FACE_LANDMARKS_LIPS', 'FACE_LANDMARKS_LEFT_EYE',
-                       'FACE_LANDMARKS_RIGHT_EYE', 'FACE_LANDMARKS_LEFT_EYEBROW',
-                       'FACE_LANDMARKS_RIGHT_EYEBROW', 'FACE_LANDMARKS_LEFT_IRIS',
-                       'FACE_LANDMARKS_RIGHT_IRIS']) {
-      for (const c of FaceLandmarker[key] || []) {
-        faceProtectSet.add(c.start);
-        faceProtectSet.add(c.end);
-      }
     }
     say('顔の検出OK — 🎭ノードで顔画像を選ぶと差し替わります');
   } catch (e) {
@@ -1615,22 +1603,6 @@ function updateFace(nowMs) {
       faceLive[i * 2] += (lm[i].x - faceLive[i * 2]) * k;
       faceLive[i * 2 + 1] += (lm[i].y - faceLive[i * 2 + 1]) * k;
     }
-    // 色合わせ用: 顔bbox内側50%の平均色 (検出キャンバスから安く取る)
-    let sx = 1, sy = 1, ex = 0, ey = 0;
-    for (const p of lm) {
-      sx = Math.min(sx, p.x); sy = Math.min(sy, p.y);
-      ex = Math.max(ex, p.x); ey = Math.max(ey, p.y);
-    }
-    try {
-      const bx = Math.max(0, (sx + (ex - sx) * 0.25) * 384);
-      const by = Math.max(0, (sy + (ey - sy) * 0.25) * 216);
-      const bw = Math.max(2, Math.min((ex - sx) * 0.5 * 384, 384 - bx));
-      const bh = Math.max(2, Math.min((ey - sy) * 0.5 * 216, 216 - by));
-      const d = faceDetCtx.getImageData(bx, by, bw, bh).data;
-      let r = 0, g2 = 0, b2 = 0;
-      for (let i = 0; i < d.length; i += 4) { r += d[i]; g2 += d[i + 1]; b2 += d[i + 2]; }
-      faceLiveMean = [r, g2, b2].map(v => v / (d.length / 4) / 255);
-    } catch {}
   }
   const target = nowMs - faceSeenMs < 200 ? 1 : 0;
   facePresence += (target - facePresence) * Math.min(1, dt * (target ? 12 : 6));
@@ -1670,70 +1642,16 @@ function prepFaceSource(name) {
     const idx = new Uint16Array(delaunay(pts).flat());
     const uv = new Float32Array(pts.length * 2);
     const al = new Float32Array(pts.length);
-    const tArr = new Float32Array(pts.length);   // 中心=0→輪郭=1の放射位置
-    const ss = (a, b, x) => {
-      x = Math.min(1, Math.max(0, (x - a) / (b - a)));
-      return x * x * (3 - 2 * x);
-    };
-    const cx0 = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-    const cy0 = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-    const oval = faceOvalSet ? [...faceOvalSet].filter(i => i < pts.length).map(i => ({
-      a: Math.atan2(pts[i].y - cy0, pts[i].x - cx0),
-      r: Math.hypot(pts[i].x - cx0, pts[i].y - cy0) })) : [];
-    const rDir = ang => {                        // その方角の輪郭までの距離
-      let best = 0.3, bd = 1e9;
-      for (const o of oval) {
-        const d = Math.abs(Math.atan2(Math.sin(ang - o.a), Math.cos(ang - o.a)));
-        if (d < bd) { bd = d; best = o.r; }
-      }
-      return best;
-    };
-    // 顔の大きさ (写真内での占有率に依らない距離基準にする)
-    const rAvg = oval.length ? oval.reduce((s, o) => s + o.r, 0) / oval.length : 0.25;
-    // フェザー/髪ゲートは実顔トポロジ(478点)のときだけ — 合成ランドマーク(CI)は素通し
-    const feather = pts.length >= 400 && oval.length >= 8;
-    const pr = new Float32Array(pts.length);
     for (let i = 0; i < pts.length; i++) {
-      const dx = pts[i].x - cx0, dy = pts[i].y - cy0;
-      tArr[i] = feather
-          ? Math.min(1, Math.hypot(dx, dy) / Math.max(1e-6, rDir(Math.atan2(dy, dx)))) : 0;
       uv[i * 2] = pts[i].x;
       uv[i * 2 + 1] = 1 - pts[i].y;    // FLIP_Yアップロードに合わせる
-      // 髪はみ出し対策①: 輪郭1リングでなく放射方向の広いフェザーで消える
-      al[i] = !feather ? 1
-            : faceOvalSet && faceOvalSet.has(i) ? 0 : 1 - ss(0.55, 0.98, tArr[i]);
+      al[i] = faceOvalSet && faceOvalSet.has(i) ? 0 : 1;   // 輪郭で0→縁がなじむ
     }
-    // 保護マスク: 眉・目・唇の近傍は「暗い=髪」判定を効かせない(距離で滑らかに)
-    if (!feather || !faceProtectSet) {
-      pr.fill(1);
-    } else {
-      const prot = [...faceProtectSet].filter(i => i < pts.length).map(i => pts[i]);
-      for (let i = 0; i < pts.length; i++) {
-        let dmin = 1e9;
-        for (const q of prot) {
-          const d = (pts[i].x - q.x) ** 2 + (pts[i].y - q.y) ** 2;
-          if (d < dmin) dmin = d;
-        }
-        // しきい値は顔半径基準 — 寄りの写真でも引きの写真でも同じ効き方になる
-        pr[i] = 1 - ss(0.10 * rAvg, 0.25 * rAvg, Math.sqrt(dmin));   // 近い=1(保護)
-      }
-    }
-    // 対策③の材料: ソース顔内側の平均色 (ライブ側と比を取って色合わせ)
-    const mc = document.createElement('canvas');
-    mc.width = mc.height = 48;
-    mc.getContext('2d').drawImage(bmp,
-        (cx0 - rAvg * 0.5) * bmp.width, (cy0 - rAvg * 0.5) * bmp.height,
-        rAvg * bmp.width, rAvg * bmp.height, 0, 0, 48, 48);
-    const md = mc.getContext('2d').getImageData(0, 0, 48, 48).data;
-    let mr = 0, mg = 0, mb2 = 0;
-    for (let i = 0; i < md.length; i += 4) { mr += md[i]; mg += md[i + 1]; mb2 += md[i + 2]; }
-    const srcMean = [mr, mg, mb2].map(v => v / (md.length / 4) / 255);
     const tc = document.createElement('canvas');
     tc.width = bmp.width;
     tc.height = bmp.height;
     tc.getContext('2d').drawImage(bmp, 0, 0);
-    faceSrcCache.set(name, { idx, uv, al, tArr, pr, srcMean, tc,
-                             count: idx.length, nLm: pts.length });
+    faceSrcCache.set(name, { idx, uv, al, tc, count: idx.length, nLm: pts.length });
     say('顔画像「' + name + '」準備OK — 顔が映ると差し替わります');
   })();
   return null;
@@ -1772,49 +1690,23 @@ void main() { o = vec4(texture(u_s, gl_FragCoord.xy / u_r).rgb, 1.0); }`);
 layout(location=0) in vec2 aP;
 layout(location=1) in vec2 aU;
 layout(location=2) in float aA;
-layout(location=3) in float aT;
-layout(location=4) in float aPr;
 out vec2 vU;
 out float vA;
-out float vT;
-out float vP;
-void main() { vU = aU; vA = aA; vT = aT; vP = aPr; gl_Position = vec4(aP.x * 2.0 - 1.0, (1.0 - aP.y) * 2.0 - 1.0, 0.0, 1.0); }`,
+void main() { vU = aU; vA = aA; gl_Position = vec4(aP.x * 2.0 - 1.0, (1.0 - aP.y) * 2.0 - 1.0, 0.0, 1.0); }`,
   `#version 300 es
 precision mediump float;
 in vec2 vU;
 in float vA;
-in float vT;
-in float vP;
 uniform sampler2D u_f;
 uniform float u_a;
-uniform vec3 u_cs;                     // ライブ/ソース平均色の比 (色合わせ)
-uniform vec3 u_sm;                     // ソース顔の肌平均色 (髪判定の基準)
 out vec4 o;
-float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
-void main() {
-  vec3 raw = texture(u_f, vU).rgb;
-  vec3 c = clamp(raw * u_cs, 0.0, 1.0);
-  // 髪はみ出し対策②: 肌平均より明らかに暗い=髪/影 → 抜く。
-  // ただし眉・目・唇の近傍(vP)は保護し、顔が壊れないようにする
-  float rel = lum(raw) / max(0.05, lum(u_sm));
-  float hair = smoothstep(0.66, 0.40, rel) * (1.0 - vP);
-  // 対策③: 外帯はさらに肌色でゲート(輪郭沿いの髪・背景の混入を落とす)
-  float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
-  float skinLike = smoothstep(-0.02, 0.07, c.r - c.g) * smoothstep(-0.06, 0.02, c.g - c.b)
-                 * smoothstep(0.10, 0.24, c.r) * (1.0 - smoothstep(0.55, 0.8, mx - mn));
-  float band = smoothstep(0.45, 0.8, vT);
-  float gate = mix(1.0, clamp(skinLike * 1.6, 0.0, 1.0), band) * (1.0 - 0.92 * hair);
-  o = vec4(c, vA * u_a * gate);
-}`);
+void main() { o = vec4(texture(u_f, vU).rgb, vA * u_a); }`);
   faceState = { bgProg, meshProg,
     bgTex: gl.createTexture(), faceTex: gl.createTexture(), faceTexFor: null,
     posBuf: gl.createBuffer(), uvBuf: gl.createBuffer(), aBuf: gl.createBuffer(),
-    tBuf: gl.createBuffer(), prBuf: gl.createBuffer(),
     idxBuf: gl.createBuffer(), idxFor: null,
     uR: gl.getUniformLocation(bgProg, 'u_r'), uS: gl.getUniformLocation(bgProg, 'u_s'),
-    uF: gl.getUniformLocation(meshProg, 'u_f'), uA: gl.getUniformLocation(meshProg, 'u_a'),
-    uCS: gl.getUniformLocation(meshProg, 'u_cs'),
-    uSM: gl.getUniformLocation(meshProg, 'u_sm') };
+    uF: gl.getUniformLocation(meshProg, 'u_f'), uA: gl.getUniformLocation(meshProg, 'u_a') };
   for (const t of [faceState.bgTex, faceState.faceTex]) {
     gl.bindTexture(gl.TEXTURE_2D, t);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -1860,14 +1752,6 @@ function runFaceWarp(node, grab) {     // returns faceCanvas or null (素通し)
   gl.bufferData(gl.ARRAY_BUFFER, src.al, gl.STATIC_DRAW);
   gl.enableVertexAttribArray(2);
   gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, faceState.tBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, src.tArr, gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(3);
-  gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, faceState.prBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, src.pr, gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(4);
-  gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 0, 0);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, faceState.idxBuf);
   if (faceState.idxFor !== src) {
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, src.idx, gl.STATIC_DRAW);
@@ -1878,13 +1762,6 @@ function runFaceWarp(node, grab) {     // returns faceCanvas or null (素通し)
   gl.bindTexture(gl.TEXTURE_2D, faceState.faceTex);
   gl.uniform1i(faceState.uF, 1);
   gl.uniform1f(faceState.uA, facePresence * (node.op == null ? 1 : node.op));
-  let cs = [1, 1, 1];                   // 色合わせ: ライブ/ソースの平均色比
-  if (faceLiveMean && src.srcMean) {
-    cs = faceLiveMean.map((v, i) => Math.min(1.8, Math.max(0.55, v / Math.max(0.03, src.srcMean[i]))));
-  }
-  gl.uniform3f(faceState.uCS, cs[0], cs[1], cs[2]);
-  const sm = src.srcMean || [0.6, 0.5, 0.45];
-  gl.uniform3f(faceState.uSM, sm[0], sm[1], sm[2]);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   gl.drawElements(gl.TRIANGLES, src.count, gl.UNSIGNED_SHORT, 0);
@@ -4689,10 +4566,6 @@ async function resPut(rec) {
   await resReq((await resDB()).transaction('images', 'readwrite').objectStore('images').put(rec));
   resBitmaps.delete(rec.n);
   procTexCache.delete(rec.n);
-  if (typeof faceSrcCache !== 'undefined') {   // 同名上書きで顔prepの'bad'を残さない
-    faceSrcCache.delete(rec.n);
-    if (faceState && faceState.faceTexFor === rec.n) faceState.faceTexFor = null;
-  }
 }
 async function resAll() {
   return await resReq((await resDB()).transaction('images').objectStore('images').getAll());
@@ -5668,24 +5541,7 @@ window.__studio = {
   faceTest(srcLm, liveLm) {
     window.__faceTestSrc = srcLm;
     window.__faceTestLive = liveLm;
-    faceLiveMean = null;
     faceSrcCache.clear();
-  },
-  // 準備済みメッシュの統計 (フェザー профиль/保護マスクの機械検証用)
-  faceMesh(name) {
-    const s = faceSrcCache.get(name);
-    if (s === 'bad') return 'bad';
-    if (!s) return null;
-    const mean = (arr, pick) => {
-      let sum = 0, n = 0;
-      for (let i = 0; i < arr.length; i++) if (!pick || pick(i)) { sum += arr[i]; n++; }
-      return n ? +(sum / n).toFixed(3) : null;
-    };
-    return { nLm: s.nLm, tris: s.count / 3, srcMean: s.srcMean.map(v => +v.toFixed(3)),
-             alphaCore: mean(s.al, i => s.tArr[i] < 0.3),
-             alphaMid: mean(s.al, i => s.tArr[i] >= 0.5 && s.tArr[i] < 0.8),
-             alphaEdge: mean(s.al, i => s.tArr[i] >= 0.95),
-             protectFrac: mean(s.pr) };
   },
 };
 
