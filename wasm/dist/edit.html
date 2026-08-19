@@ -530,6 +530,7 @@
         <div id="moreMenu" hidden>
           <button id="btnShare" title="共有リンクをコピー">🔗 共有リンク</button>
           <button id="btnSnap" title="PNGスナップ">📸 スナップ</button>
+          <button id="btnRes" title="アップした画像の管理">📚 リソース</button>
         </div>
       </span>
       <button id="dockClose" title="しまう (✏️編集で再表示)">✕</button>
@@ -629,8 +630,29 @@
         style="border:1px solid var(--line);color:var(--dim);border-radius:999px;padding:8px 12px;cursor:pointer;font-size:13px">📥<input
         type="file" id="shImportFile" accept=".json,application/json" style="display:none"></label>
     </div>
+    <div id="shTexRow" style="display:none;gap:8px;align-items:center;margin-top:8px;font-size:12.5px;color:var(--dim)">
+      <span>🖼 テクスチャ (u_tex / texAt):</span>
+      <select id="shTexSel" style="background:rgba(255,255,255,0.04);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12px;outline:none">
+        <option value="">なし</option>
+      </select>
+      <label style="border:1px solid var(--line);color:var(--dim);border-radius:999px;padding:5px 12px;cursor:pointer;font-size:12px">＋アップロード<input
+        type="file" id="shTexUp" accept="image/*" style="display:none"></label>
+    </div>
     <div id="shLib" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
     <div style="font-size:11px;color:var(--faint);margin-top:4px">✨は内蔵プリセット(読み込んでAIに「もっと◯◯」と頼める)。保存したシェーダはこの端末に残り、どちらもパレット(+ フィルタ)の「🧪 シェーダ」からノードとして何個でも配線できます</div>
+  </div>
+</div>
+<div id="resOverlay" class="overlay">
+  <div class="panel">
+    <button class="close" data-close="resOverlay">✕</button>
+    <h3>📚 リソース (画像)</h3>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+      <label class="save" style="padding:8px 16px;cursor:pointer">＋ 画像をアップロード<input
+        type="file" id="resFile" accept="image/*" multiple style="display:none"></label>
+      <span style="font-size:11px;color:var(--faint)">この端末のブラウザに保存。シェーダのテクスチャ(🖼)や顔差し替えの素材として名前で参照します</span>
+    </div>
+    <div id="resGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;max-height:52vh;overflow:auto"></div>
+    <div id="resEmpty" style="color:var(--faint);font-size:12px;padding:14px 4px">まだ画像がありません — アップロードするとここに並びます</div>
   </div>
 </div>
 <div id="cfgOverlay" class="overlay">
@@ -2318,6 +2340,7 @@ function packGraph() {
         o.c = n.code.slice(0, 20000);
         if (n.code.length > 20000) warnLongOnce('n' + n.id, n.name || 'シェーダ');
         if (n.name) o.nm = n.name;
+        if (n.tex) o.tx = n.tex;
         if (!n.on) o.off = 1;
       }
       if (n.type === 'mix') o.mx = [n.blend, +n.op.toFixed(2)];
@@ -2416,6 +2439,7 @@ function unpackGraph(packed) {
         } else if (o.t === 'glsl') {
           n = addNode('glsl', o.x, o.y, { code: typeof o.c === 'string' ? o.c : undefined,
               name: typeof o.nm === 'string' ? o.nm : undefined });
+          if (typeof o.tx === 'string') n.tex = o.tx.slice(0, 40);
           if (o.off) n.on = false;
         } else if (o.t === 'mix') {
           n = addNode('mix', o.x, o.y, Array.isArray(o.mx)
@@ -3552,7 +3576,7 @@ $('cfgSave').addEventListener('click', async () => {
 // The engine's filters are compile-time GLSL∩C++; this is the play area on
 // top — the LLM writes a fragment shader, we compile it in-page and draw it
 // on an overlay canvas fed from the output canvas every frame.
-const GLSL_HEAD = '#version 300 es\nprecision highp float;\nuniform sampler2D u_src;\nuniform float u_time;\nuniform vec2 u_res;\nout vec4 outColor;\n';
+const GLSL_HEAD = '#version 300 es\nprecision highp float;\nuniform sampler2D u_src;\nuniform sampler2D u_tex;\nuniform float u_time;\nuniform vec2 u_res;\nout vec4 outColor;\n';
 // fs_std — always prepended to user shader bodies. The LLM is told these
 // exist so it never wastes tokens (or quality) rewriting noise functions.
 const FS_STD = `float hash12(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
@@ -3569,6 +3593,7 @@ float edgeAt(vec2 uv){ vec2 t=1.0/u_res;
   return length(vec2(luma(srcAt(uv+vec2(t.x,0.)))-luma(srcAt(uv-vec2(t.x,0.))),
                      luma(srcAt(uv+vec2(0.,t.y)))-luma(srcAt(uv-vec2(0.,t.y))))); }
 vec2 rot(vec2 p, float a){ float c=cos(a),s=sin(a); return vec2(c*p.x-s*p.y, s*p.x+c*p.y); }
+vec3 texAt(vec2 uv){ return texture(u_tex, clamp(uv, 0.0, 1.0)).rgb; }
 `;
 // editor holds BODIES (helpers + void main). #line 1 keeps compiler error
 // numbers aligned with the editor gutter. Full sources with their own
@@ -3607,6 +3632,8 @@ const SYS_SHADER = `あなたは一流のリアルタイム映像シェーダ作
 - 入力: u_src(映像) / u_time(秒) / u_res(出力px)。出力は outColor
 - 標準ライブラリも定義済み(再定義禁止・積極的に使う):
   hash12(p) vnoise(p) fbm(p) hsv2rgb(c) pal(t,a,b,c,d) luma(c) srcAt(uv) edgeAt(uv) rot(p,a)
+- u_tex / texAt(uv): ユーザー添付テクスチャ(未添付は黒)。画像やテクスチャの
+  合成を指示された時だけ使う
 
 作法(品質の要):
 - 原則「映像を素材に加工」する。映像を捨てて無関係な絵にするのは指示された時だけ
@@ -3949,6 +3976,13 @@ function runNodeShader(node, grab) {
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, grab);
   gl.useProgram(c.prog);
   gl.uniform1i(gl.getUniformLocation(c.prog, 'u_src'), 0);
+  const uTex = gl.getUniformLocation(c.prog, 'u_tex');
+  if (uTex !== null) {                  // 添付テクスチャ (未添付/読込中は1px黒)
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, nodeTexFor(gl, node));
+    gl.uniform1i(uTex, 1);
+    gl.activeTexture(gl.TEXTURE0);
+  }
   if (c.uT) gl.uniform1f(c.uT, simT);
   if (c.uR) gl.uniform2f(c.uR, w, h);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -3979,6 +4013,115 @@ function genLog(entry) {
     localStorage.setItem(GENLOG_KEY, JSON.stringify(l));
   } catch {}
 }
+// ---- 📚 image resources: named user images in IndexedDB --------------------
+// schema (shared contract with other nodes/features):
+//   db 'fs_studio_res' v1 / store 'images' keyPath 'n'
+//   record { n: name(≤40, overwrite-by-name), b: Blob(png, long side ≤2048), w, h }
+let resDBP = null;
+function resDB() {
+  if (!resDBP) resDBP = new Promise((res, rej) => {
+    const rq = indexedDB.open('fs_studio_res', 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore('images', { keyPath: 'n' });
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error);
+  });
+  return resDBP;
+}
+const resReq = r => new Promise((res, rej) => {
+  r.onsuccess = () => res(r.result);
+  r.onerror = () => rej(r.error);
+});
+async function resPut(rec) {
+  await resReq((await resDB()).transaction('images', 'readwrite').objectStore('images').put(rec));
+  resBitmaps.delete(rec.n);
+  procTexCache.delete(rec.n);
+}
+async function resAll() {
+  return await resReq((await resDB()).transaction('images').objectStore('images').getAll());
+}
+async function resGet(n) {
+  return await resReq((await resDB()).transaction('images').objectStore('images').get(n));
+}
+async function resDel(n) {
+  await resReq((await resDB()).transaction('images', 'readwrite').objectStore('images').delete(n));
+  resBitmaps.delete(n);
+  procTexCache.delete(n);
+}
+const resBitmaps = new Map();          // name -> ImageBitmap (decode cache)
+async function resBitmap(n) {
+  if (resBitmaps.has(n)) return resBitmaps.get(n);
+  const rec = await resGet(n);
+  const bmp = rec ? await createImageBitmap(rec.b) : null;
+  resBitmaps.set(n, bmp);
+  return bmp;
+}
+async function resAdd(file) {          // upload one image file; returns name or null
+  if (!file || !file.type.startsWith('image/')) {
+    say('画像ファイルを選んでください: ' + (file && file.name || ''), true);
+    return null;
+  }
+  let bmp;
+  try { bmp = await createImageBitmap(file); }
+  catch { say('読み込めない画像です: ' + file.name, true); return null; }
+  const sc = Math.min(1, 2048 / Math.max(bmp.width, bmp.height));
+  const w = Math.round(bmp.width * sc), h = Math.round(bmp.height * sc);
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+  const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+  const name = (file.name.replace(/\.[^.]+$/, '') || '画像').slice(0, 40);
+  await resPut({ n: name, b: blob, w, h });
+  return name;
+}
+// GL texture cache for shader u_tex (proc context). null = load in flight.
+const procTexCache = new Map();
+let procBlackTex = null;
+function blackTex(gl) {
+  if (!procBlackTex) {
+    procBlackTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, procBlackTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+                  new Uint8Array([0, 0, 0, 255]));
+  }
+  return procBlackTex;
+}
+const warnedRes = new Set();
+function nodeTexFor(gl, node) {
+  if (!node.tex) return blackTex(gl);
+  const t = procTexCache.get(node.tex);
+  if (t) return t;
+  if (!procTexCache.has(node.tex)) {
+    procTexCache.set(node.tex, null);
+    resBitmap(node.tex).then(bmp => {
+      if (!bmp) {
+        if (!warnedRes.has(node.tex)) {
+          warnedRes.add(node.tex);
+          say('テクスチャ「' + node.tex + '」が見つかりません — ⋯の📚リソースに追加してください', true);
+        }
+        return;
+      }
+      // canvas を経由して upload — ImageBitmap 直は UNPACK_FLIP_Y を無視するため
+      // u_src と上下が食い違う
+      const cc = document.createElement('canvas');
+      cc.width = bmp.width;
+      cc.height = bmp.height;
+      cc.getContext('2d').drawImage(bmp, 0, 0);
+      const tx = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tx);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cc);
+      procTexCache.set(node.tex, tx);
+    });
+  }
+  return blackTex(gl);
+}
+
 // ---- shader library: named user shaders, endpoint = this browser only ------
 const SHLIB_KEY = 'fs_shader_lib';
 let shaderLib = [];
@@ -4049,6 +4192,8 @@ function openShaderPanel(target) {
   $('shTitle').textContent = n ? '🧪 ' + (n.name || 'GLSLシェーダノード') + ' — この枝の入力にかかります'
                                : '🧪 仕上げシェーダ — 出力全体への最終パス';
   $('shName').value = (n && n.name) || '';
+  $('shTexRow').style.display = n ? 'flex' : 'none';
+  if (n) populateTexSel(n.tex || '');
   renderShLib();
   $('shErr').textContent = '';
   shRenderGutter();
@@ -4274,6 +4419,86 @@ $('shImportFile').addEventListener('change', async e => {
     }
     say('シェーダを' + n + '件読み込みました (同名は上書き)');
   } catch (err) { say('読み込めません: ' + (err.message || err), true); }
+});
+// ---- 📚 resource overlay + shader texture picker ---------------------------
+let resUrls = [];
+async function renderResGrid() {
+  const grid = $('resGrid');
+  for (const u of resUrls) URL.revokeObjectURL(u);
+  resUrls = [];
+  const all = await resAll();
+  $('resEmpty').style.display = all.length ? 'none' : '';
+  grid.replaceChildren(...all.map(rec => {
+    const card = document.createElement('div');
+    card.style.cssText = 'border:1px solid var(--line);border-radius:10px;overflow:hidden;' +
+        'position:relative;background:rgba(255,255,255,0.03)';
+    const img = document.createElement('img');
+    const u = URL.createObjectURL(rec.b);
+    resUrls.push(u);
+    img.src = u;
+    img.style.cssText = 'width:100%;height:82px;object-fit:cover;display:block';
+    const cap = document.createElement('div');
+    cap.textContent = rec.n;
+    cap.title = rec.n + ' — ' + rec.w + '×' + rec.h;
+    cap.style.cssText = 'font-size:11px;color:var(--ink);padding:5px 7px;white-space:nowrap;' +
+        'overflow:hidden;text-overflow:ellipsis';
+    const del = document.createElement('button');
+    del.textContent = '✕';
+    del.title = '削除';
+    del.style.cssText = 'position:absolute;top:4px;right:4px;background:rgba(10,8,18,0.75);' +
+        'border:1px solid var(--line);color:var(--dim);border-radius:50%;width:22px;height:22px;' +
+        'cursor:pointer;font-size:11px';
+    del.addEventListener('click', async () => {
+      const used = nodes.some(nd => nd.tex === rec.n || nd.res === rec.n);
+      if (!confirm('「' + rec.n + '」を削除しますか?' +
+          (used ? '\nこのグラフで使用中 — 該当ノードは黒になります' : ''))) return;
+      await resDel(rec.n);
+      renderResGrid();
+      say('「' + rec.n + '」を削除しました');
+    });
+    card.append(img, cap, del);
+    return card;
+  }));
+}
+$('btnRes').addEventListener('click', () => {
+  renderResGrid();
+  $('resOverlay').classList.add('open');
+});
+$('resFile').addEventListener('change', async e => {
+  const files = [...(e.target.files || [])];
+  e.target.value = '';
+  let added = 0;
+  for (const f of files) if (await resAdd(f)) added++;
+  if (added) {
+    say('画像を' + added + '件追加しました — シェーダの🖼テクスチャ等から名前で使えます');
+    renderResGrid();
+    populateTexSel();
+  }
+});
+async function populateTexSel(want) {
+  const el = $('shTexSel');
+  const cur = want !== undefined ? want : el.value;
+  const all = await resAll();
+  el.replaceChildren(new Option('なし', ''));
+  for (const r of all) el.append(new Option('🖼 ' + r.n, r.n));
+  el.value = cur && all.some(r => r.n === cur) ? cur : '';
+}
+$('shTexSel').addEventListener('change', () => {
+  const n = shTarget !== 'out' ? nodeById(shTarget) : null;
+  if (!n) return;
+  n.tex = $('shTexSel').value || undefined;
+  saveHash();
+  say(n.tex ? 'テクスチャ「' + n.tex + '」を接続 — シェーダから texAt(uv) / u_tex で読めます'
+            : 'テクスチャを外しました');
+});
+$('shTexUp').addEventListener('change', async e => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  const name = await resAdd(f);
+  if (!name) return;
+  await populateTexSel(name);
+  $('shTexSel').dispatchEvent(new Event('change'));
 });
 $('shOff').addEventListener('click', () => {
   if (shTarget === 'out') {
@@ -4714,6 +4939,7 @@ window.__studio = {
   compileShader: compileNodeShader,
   lutPresets: LUT_PRESETS,
   genLog: () => { try { return JSON.parse(localStorage.getItem(GENLOG_KEY) || '[]'); } catch { return []; } },
+  res: { add: resAdd, all: resAll, get: resGet, del: resDel, bitmap: resBitmap },
 };
 
 // ---- render loop -----------------------------------------------------------
