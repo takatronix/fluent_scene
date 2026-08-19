@@ -240,6 +240,16 @@ void emitLayer(const LayerDecl& layer, std::string& out, int indent) {
     if (!layer.filters.empty()) {
         line("filters: " + flowFilters(layer.filters));
     }
+    if (layer.mask) {
+        std::string m = "mask: { source: $inputs." + layer.mask->input;
+        if (layer.mask->invert) {
+            m += ", invert: true";
+        }
+        if (layer.mask->feather != 0) {
+            m += ", feather: " + formatNumber(layer.mask->feather);
+        }
+        line(m + " }");
+    }
     if (!layer.sublayers.empty()) {
         line("sublayers:");
         for (const LayerDecl& sub : layer.sublayers) {

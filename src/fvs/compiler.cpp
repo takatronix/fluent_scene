@@ -31,6 +31,7 @@ struct CompileAccess {
     static auto& paramBindings(CompiledScene& s) { return s.param_bindings_; }
     static auto& inputBindings(CompiledScene& s) { return s.input_bindings_; }
     static auto& filterImageBindings(CompiledScene& s) { return s.filter_image_bindings_; }
+    static auto& maskBindings(CompiledScene& s) { return s.mask_bindings_; }
     static auto& controlBindings(CompiledScene& s) { return s.control_bindings_; }
     static auto& layerTransitions(CompiledScene& s) { return s.layer_transitions_; }
     static auto& buttons(CompiledScene& s) { return s.buttons_; }
@@ -257,6 +258,20 @@ private:
                 }
                 CompileAccess::filterImageBindings(scene_)[f.image_input].push_back(
                     {layer, i});
+            }
+        }
+        if (decl.mask) {
+            const InputDecl* input = doc_.findInput(decl.mask->input);
+            if (input == nullptr || input->type != InputType::ImageRgba8) {
+                error("compile.reference",
+                      std::string("mask.source: ") +
+                          (input == nullptr
+                               ? "undeclared input '" + decl.mask->input + "'"
+                               : "input '" + decl.mask->input + "' is not image.rgba8"));
+            } else {
+                layer->maskInvert(decl.mask->invert);
+                layer->maskFeather(decl.mask->feather);
+                CompileAccess::maskBindings(scene_)[decl.mask->input].push_back({layer});
             }
         }
         if (decl.transition) {
@@ -578,6 +593,9 @@ bool CompiledScene::setImage(const std::string& input, const ImageView& view) {
     }
     for (const FilterImageBinding& b : filter_image_bindings_[input]) {
         b.layer->setFilterImage(b.filter_index, view);
+    }
+    for (const MaskBinding& b : mask_bindings_[input]) {
+        b.layer->mask(view);
     }
     return true;
 }

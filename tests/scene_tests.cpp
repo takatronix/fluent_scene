@@ -591,6 +591,91 @@ layers:
     CHECK(hasCode(fs::compile(bad.doc).diagnostics, "compile.reference"));
 }
 
+// The layer mask through the document (Layer::mask's declarative face):
+// an image input whose alpha multiplies the layer after its filters.
+void testLayerMask() {
+    const char* text = R"(schema: fluent.scene/v1alpha2
+stage: { size: [8, 8] }
+inputs:
+  cut: { type: image.rgba8 }
+layers:
+  - content: { rect: { rect: [0, 0, 8, 8], color: [0.8, 0.2, 0.4] } }
+    mask: { source: $inputs.cut }
+)";
+    const fs::ParseResult parsed = fs::parseScene(text);
+    CHECK(parsed.ok());
+    CHECK(parsed.doc.layers[0].mask.has_value());
+    CHECK(parsed.doc.layers[0].mask->input == "cut");
+    CHECK(!parsed.doc.layers[0].mask->invert);
+    // Round-trips canonically; the defaults stay off the page.
+    const std::string once = fs::format(parsed.doc);
+    CHECK(once.find("mask: { source: $inputs.cut }") != std::string::npos);
+    const fs::ParseResult re = fs::parseScene(once);
+    CHECK(re.ok());
+    CHECK(fs::digest(re.doc) == fs::digest(parsed.doc));
+
+    fs::CompileResult compiled = fs::compile(parsed.doc);
+    CHECK(compiled.ok());
+    fs::CompiledScene& scene = *compiled.scene;
+
+    // Unfed mask: the layer draws whole, like an unfed lut passes through.
+    CpuRenderer r;
+    const Surface& plain = r.render(scene.stage(), 8, 8, 0.0f);
+    CHECK(plain.row(4)[6 * 4 + 3] > 250);
+
+    // Left half opaque, right half transparent — the alpha channel is the
+    // mask, so the rect survives on the left and vanishes on the right.
+    std::vector<uint8_t> cut(8 * 8 * 4, 0);
+    for (uint32_t y = 0; y < 8; ++y) {
+        for (uint32_t x = 0; x < 8; ++x) {
+            cut[(y * 8 + x) * 4 + 3] = x < 4 ? 255 : 0;
+        }
+    }
+    CHECK(scene.setImage("cut", ImageView{8, 8, cut.data(), 0}));
+    const Surface& masked = r.render(scene.stage(), 8, 8, 0.0f);
+    CHECK(masked.row(4)[1 * 4 + 3] > 250);   // kept
+    CHECK(masked.row(4)[6 * 4 + 3] < 5);     // cut away
+
+    // invert flips which side survives; feather round-trips as written.
+    const fs::ParseResult inv = fs::parseScene(
+        "schema: fluent.scene/v1alpha2\nstage: { size: [8, 8] }\ninputs:\n"
+        "  cut: { type: image.rgba8 }\nlayers:\n"
+        "  - content: { rect: { rect: [0, 0, 8, 8], color: [0.8, 0.2, 0.4] } }\n"
+        "    mask: { source: $inputs.cut, invert: true, feather: 2 }\n");
+    CHECK(inv.ok());
+    CHECK(inv.doc.layers[0].mask->invert);
+    CHECK(fs::format(inv.doc).find("invert: true, feather: 2") != std::string::npos);
+    fs::CompileResult ic = fs::compile(inv.doc);
+    CHECK(ic.ok());
+    CHECK(ic.scene->setImage("cut", ImageView{8, 8, cut.data(), 0}));
+    const Surface& flipped = r.render(ic.scene->stage(), 8, 8, 0.0f);
+    CHECK(flipped.row(4)[1 * 4 + 3] < 5);    // now cut away
+    CHECK(flipped.row(4)[6 * 4 + 3] > 250);  // now kept
+
+    // Rejections: missing source, unknown key, non-reference, undeclared.
+    CHECK(hasCode(fs::parseScene("schema: fluent.scene/v1alpha2\nlayers:\n"
+                                 "  - content: { rect: {} }\n"
+                                 "    mask: { feather: 2 }\n")
+                      .diagnostics,
+                  "validate.required"));
+    CHECK(hasCode(fs::parseScene("schema: fluent.scene/v1alpha2\nlayers:\n"
+                                 "  - content: { rect: {} }\n"
+                                 "    mask: { source: $inputs.cut, soft: 2 }\n")
+                      .diagnostics,
+                  "validate.unknown_key"));
+    CHECK(hasCode(fs::parseScene("schema: fluent.scene/v1alpha2\nlayers:\n"
+                                 "  - content: { rect: {} }\n"
+                                 "    mask: { source: mask.png }\n")
+                      .diagnostics,
+                  "validate.reference"));
+    const fs::ParseResult bad =
+        fs::parseScene("schema: fluent.scene/v1alpha2\nlayers:\n"
+                       "  - content: { rect: {} }\n"
+                       "    mask: { source: $inputs.nope }\n");
+    CHECK(bad.ok());
+    CHECK(hasCode(fs::compile(bad.doc).diagnostics, "compile.reference"));
+}
+
 void testDescribe() {
     const std::string json = fs::describeJson();
     CHECK(json.find("\"contents\"") != std::string::npos);
@@ -618,6 +703,7 @@ int main() {
     testSceneUiControls();
     testBindingDoc();
     testLutFilter();
+    testLayerMask();
     testDescribe();
     if (g_failures == 0) {
         std::printf("scene_tests: all passed\n");

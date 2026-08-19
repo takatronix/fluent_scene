@@ -163,6 +163,11 @@ std::string describeJson() {
     }
     out += "  ],\n";
 
+    out += "  \"layer_mask\": {\"source\": \"$inputs.<image.rgba8>\", "
+           "\"invert\": \"bool\", \"feather\": \"f32, logical units\", "
+           "\"note\": \"the image's alpha channel, stretched over the layer's "
+           "bounds and multiplied over it after its filters\"},\n";
+
     out += "  \"input_types\": [\"image.rgba8\", \"text.utf8\", \"sequence<vec2, N>\", "
            "\"sequence<detection2d, N>\"],\n";
     out += "  \"input_fallbacks\": [\"placeholder\", \"hide\", \"hold\"],\n";

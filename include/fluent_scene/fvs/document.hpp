@@ -84,6 +84,16 @@ struct FilterDecl {
     Span span;
 };
 
+/// A layer mask: the alpha channel of an image input, multiplied over the
+/// layer after its filters run (Layer::mask). The image is stretched over
+/// the layer's bounds, so a segmentation mask needs no geometry of its own.
+struct MaskDecl {
+    std::string input;      ///< `$inputs` name feeding the mask image.
+    bool invert = false;    ///< Keep what the mask marks as background.
+    float feather = 0.0f;   ///< Edge softening, logical units.
+    Span span;
+};
+
 /// A §9 transition declaration: attribute changes on this layer interpolate.
 struct TransitionDecl {
     float duration = 0.3f;
@@ -99,6 +109,7 @@ struct LayerDecl {
     std::optional<ContentDecl> content;
     std::vector<AttrDecl> attrs;  ///< Table order.
     std::vector<FilterDecl> filters;  ///< Declaration order (chain order).
+    std::optional<MaskDecl> mask;
     std::optional<TransitionDecl> transition;
     std::vector<LayerDecl> sublayers;
     Span span;

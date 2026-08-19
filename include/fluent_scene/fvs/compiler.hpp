@@ -134,6 +134,12 @@ public:
         Layer* layer;
         size_t filter_index;  ///< Position in the layer's filter chain.
     };
+    /// One `$inputs` image binding to a layer's mask. Like the filter image
+    /// there is no fallback presentation: an unfed mask leaves the layer
+    /// unmasked (compiler bookkeeping).
+    struct MaskBinding {
+        Layer* layer;
+    };
     /// One `$params` binding to a UI control's state (compiler bookkeeping).
     struct ControlBinding {
         enum class Kind { SwitchOn, SliderValue, GaugeValue };
@@ -156,6 +162,7 @@ private:
     std::map<std::string, std::vector<ParamBinding>> param_bindings_;
     std::map<std::string, std::vector<InputBinding>> input_bindings_;
     std::map<std::string, std::vector<FilterImageBinding>> filter_image_bindings_;
+    std::map<std::string, std::vector<MaskBinding>> mask_bindings_;
     std::map<std::string, std::vector<ControlBinding>> control_bindings_;
     std::map<const Layer*, TransitionDecl> layer_transitions_;
     std::vector<std::string> diagnostics_;

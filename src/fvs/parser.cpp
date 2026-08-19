@@ -650,6 +650,8 @@ private:
                 }
             } else if (e.key == "filters") {
                 parseFilters(e.value, layer);
+            } else if (e.key == "mask") {
+                parseMask(e.value, layer);
             } else if (e.key == "transition") {
                 parseTransition(e.value, doc, layer);
             } else if (e.key == "states") {
@@ -904,6 +906,46 @@ private:
             }
             layer.filters.push_back(std::move(decl));
         }
+    }
+
+    // mask: { source: $inputs.<name>, invert: bool, feather: <units> }
+    // The alpha channel of an image input, multiplied over the layer after
+    // its filters — the declarative face of Layer::mask.
+    void parseMask(const YamlNode& n, LayerDecl& layer) {
+        if (!n.isMapping()) {
+            error("validate.type", n.span,
+                  "mask must be a mapping { source, invert, feather }");
+            return;
+        }
+        MaskDecl m;
+        m.span = n.span;
+        for (const YamlMapEntry& e : n.entries) {
+            if (e.key == "source") {
+                if (!e.value.isPlainScalar() || e.value.scalar.rfind("$inputs.", 0) != 0) {
+                    error("validate.reference", e.value.span,
+                          "mask.source expects an input reference '$inputs.<name>'");
+                    continue;
+                }
+                m.input = e.value.scalar.substr(8);
+            } else if (e.key == "invert") {
+                if (!readBool(e.value, m.invert)) {
+                    error("validate.type", e.value.span, "mask.invert must be true or false");
+                }
+            } else if (e.key == "feather") {
+                if (!readNumber(e.value, m.feather) || m.feather < 0) {
+                    error("validate.type", e.value.span,
+                          "mask.feather must be a non-negative number of logical units");
+                }
+            } else {
+                error("validate.unknown_key", e.key_span,
+                      "unknown mask key '" + e.key + "' (expected source, invert, feather)");
+            }
+        }
+        if (m.input.empty()) {
+            error("validate.required", n.span, "mask is missing required key 'source'");
+            return;
+        }
+        layer.mask = m;
     }
 
     void parseTransition(const YamlNode& n, const SceneDoc& doc, LayerDecl& layer) {

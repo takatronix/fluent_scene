@@ -4,9 +4,22 @@ status: **M1 実装済** (2026-08-19、オーナー GO「OKですすめて」に
 論点§6は提案どおりで確定: post-filter固定 / RGBA の A / 名前 mask /
 feather は M1 に同梱)。C++ API (`layer.mask(v).maskInvert().maskFeather()`)
 + C ABI (`fs_layer_set_mask`) + 3バックエンド (golden `layer_mask`、
-Vulkan max|Δ|=2)。**Scene YAML 露出は未実装** (次: `mask: {source:
-$inputs.x, invert, feather}` を compiler/binding へ)。
-date: 2026-08-19
+Vulkan max|Δ|=2)。**Scene YAML 露出も完了** (2026-08-20):
+
+```yaml
+inputs:
+  cut: { type: image.rgba8 }
+layers:
+  - content: { image: { source: $inputs.camera } }
+    filters: [ { sumie: {} } ]
+    mask: { source: $inputs.cut, invert: false, feather: 4 }
+```
+
+`lut` の画像パラメータと同じ束縛機構 (未給餌ならマスク無しで描画=
+文書化済みパススルー、`setImage` で全束縛レイヤーへ配布)。writer 往復・
+digest 安定・`describe --json` の `layer_mask` で自己記述。拒否は
+source 欠落/未知キー/参照でない値/未宣言 input の4経路。
+date: 2026-08-19 (YAML 露出は 2026-08-20)
 
 ## 1. 動機
 

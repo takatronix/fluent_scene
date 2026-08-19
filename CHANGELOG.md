@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.16.1 — 2026-08-20 (Scene YAML にレイヤーマスク)
+
+M1 で C++/C ABI だけだったレイヤーマスクを文書からも書けるように:
+
+```yaml
+mask: { source: $inputs.cut, invert: false, feather: 4 }
+```
+
+- `lut` の画像パラメータと同じ束縛機構: 未給餌ならマスク無しで描画
+  (文書化済みパススルー)、`setImage` が全束縛レイヤーへ配布
+- writer 往復 + digest 安定 (既定値は書き出さない)、`describe --json` に
+  `layer_mask` を追加 (AI が能力を自己記述から知れる)
+- 拒否4経路: source 欠落 / 未知キー / 参照でない値 / 未宣言 input
+- scene_tests に `testLayerMask` (パース・往復・compile束縛・描画・
+  invert 反転・拒否) を追加。ctest 全 pass
+
 ## 0.16.0 — 2026-08-20 (テクスチャ合成フィルタ: texture = 54)
 
 オーナー指摘「足らないのはテクスチャとの合成系」への回答。レイヤー
