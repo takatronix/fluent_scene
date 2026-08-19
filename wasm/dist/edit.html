@@ -1520,7 +1520,7 @@ function delaunay(pts) {               // pts [{x,y}] → [i,j,k]の三角形リ
   }
   return tris.filter(t => t.every(ix => ix < n));
 }
-let faceLander = null, faceLoading = false, faceOvalSet = null;
+let faceLander = null, faceLoading = false, faceOvalSet = null, faceOvalLoop = null;
 const faceDetCanvas = document.createElement('canvas');
 faceDetCanvas.width = 384;
 faceDetCanvas.height = 216;
@@ -1550,6 +1550,16 @@ async function loadFaceLander() {
       faceOvalSet.add(c.start);
       faceOvalSet.add(c.end);
     }
+    // 輪郭を「つながった多角形」として並べ替える (ソース顔ハルのマスク用)
+    const nextOf = new Map();
+    for (const c of FaceLandmarker.FACE_LANDMARKS_FACE_OVAL) nextOf.set(c.start, c.end);
+    const loop = [FaceLandmarker.FACE_LANDMARKS_FACE_OVAL[0].start];
+    for (let i = 0; i < nextOf.size; i++) {
+      const nx = nextOf.get(loop[loop.length - 1]);
+      if (nx === undefined || nx === loop[0]) break;
+      loop.push(nx);
+    }
+    faceOvalLoop = loop;
     say('顔の検出OK — 🎭ノードで顔画像を選ぶと差し替わります');
   } catch (e) {
     console.error('face landmarker init failed:', e);
@@ -1688,12 +1698,43 @@ function prepFaceSource(name) {
       }
       tg.putImageData(im, 0, 0);
     }
-    faceSrcCache.set(name, { idx, uv, al, tc, count: idx.length, nLm: pts.length });
+    // 三角形ごとのソース空間の巻き方向 — ライブ側と符号が反転したら裏面
+    const sign = new Int8Array(idx.length / 3);
+    for (let t = 0; t < sign.length; t++) {
+      const a = pts[idx[t * 3]], b = pts[idx[t * 3 + 1]], c2 = pts[idx[t * 3 + 2]];
+      sign[t] = Math.sign((b.x - a.x) * (c2.y - a.y) - (c2.x - a.x) * (b.y - a.y)) || 1;
+    }
+    // ソース顔ハル(輪郭多角形)のマスク — 顔の外(背景・髪・黒縁)は一切貼らない
+    const hull = document.createElement('canvas');
+    hull.width = hull.height = 256;
+    const hg = hull.getContext('2d');
+    hg.fillStyle = '#000';
+    hg.fillRect(0, 0, 256, 256);
+    const loopPts = (faceOvalLoop || []).filter(i => i < pts.length).map(i => pts[i]);
+    if (loopPts.length >= 8) {
+      hg.filter = 'blur(4px)';                   // 数px相当のフェザー
+      hg.fillStyle = '#fff';
+      hg.beginPath();
+      loopPts.forEach((p, i) => {                // 少しだけ内側に縮めて縁を拾わない
+        const x = (cx0 + (p.x - cx0) * 0.95) * 256, y = (cy0 + (p.y - cy0) * 0.95) * 256;
+        i ? hg.lineTo(x, y) : hg.moveTo(x, y);
+      });
+      hg.closePath();
+      hg.fill();
+      hg.filter = 'none';
+    } else {
+      hg.fillStyle = '#fff';                     // 輪郭が取れない(CI合成)ときは素通し
+      hg.fillRect(0, 0, 256, 256);
+    }
+    faceSrcCache.set(name, { idx, uv, al, sign, tc, hull,
+                             count: idx.length, nLm: pts.length });
     say('顔画像「' + name + '」準備OK — 顔が映ると差し替わります');
   })();
   return null;
 }
 let faceGL = null, faceCanvas = null, faceState = null, faceBuf = null, faceRow = null;
+let faceIdxScratch = null;             // 表向き三角形だけを毎フレーム詰め直す
+let faceVisTris = 0;
 function ensureFaceGL() {
   if (faceGL) return true;
   faceCanvas = document.createElement('canvas');
@@ -1735,6 +1776,7 @@ precision mediump float;
 in vec2 vU;
 in float vA;
 uniform sampler2D u_f;
+uniform sampler2D u_m;                 // ソース顔ハルのマスク
 uniform float u_a;
 out vec4 o;
 void main() {
@@ -1742,15 +1784,19 @@ void main() {
   // 顔が画枠からはみ出した写真はUVが[0,1]外になる — CLAMP_TO_EDGEの
   // 引き伸ばし(尾を引くスミア)を出さないよう範囲外は透明にする
   float inUV = step(0.0, vU.x) * step(vU.x, 1.0) * step(0.0, vU.y) * step(vU.y, 1.0);
-  o = vec4(s.rgb, vA * u_a * s.a * inUV);
+  // ソース顔ハルの外(背景・髪・黒縁)は貼らない — 黒フチの本丸
+  float hull = texture(u_m, vU).r;
+  o = vec4(s.rgb, vA * u_a * s.a * inUV * hull);
 }`);
   faceState = { bgProg, meshProg,
     bgTex: gl.createTexture(), faceTex: gl.createTexture(), faceTexFor: null,
+    maskTex: gl.createTexture(), maskFor: null,
     posBuf: gl.createBuffer(), uvBuf: gl.createBuffer(), aBuf: gl.createBuffer(),
-    idxBuf: gl.createBuffer(), idxFor: null,
+    idxBuf: gl.createBuffer(),
     uR: gl.getUniformLocation(bgProg, 'u_r'), uS: gl.getUniformLocation(bgProg, 'u_s'),
-    uF: gl.getUniformLocation(meshProg, 'u_f'), uA: gl.getUniformLocation(meshProg, 'u_a') };
-  for (const t of [faceState.bgTex, faceState.faceTex]) {
+    uF: gl.getUniformLocation(meshProg, 'u_f'), uA: gl.getUniformLocation(meshProg, 'u_a'),
+    uM: gl.getUniformLocation(meshProg, 'u_m') };
+  for (const t of [faceState.bgTex, faceState.faceTex, faceState.maskTex]) {
     gl.bindTexture(gl.TEXTURE_2D, t);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -1783,6 +1829,11 @@ function runFaceWarp(node, grab) {     // returns faceCanvas or null (素通し)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src.tc);
     faceState.faceTexFor = node.res;
   }
+  if (faceState.maskFor !== src) {
+    gl.bindTexture(gl.TEXTURE_2D, faceState.maskTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src.hull);
+    faceState.maskFor = src;
+  }
   gl.bindBuffer(gl.ARRAY_BUFFER, faceState.posBuf);
   gl.bufferData(gl.ARRAY_BUFFER, faceLive.subarray(0, src.nLm * 2), gl.DYNAMIC_DRAW);
   gl.enableVertexAttribArray(0);
@@ -1795,19 +1846,37 @@ function runFaceWarp(node, grab) {     // returns faceCanvas or null (素通し)
   gl.bufferData(gl.ARRAY_BUFFER, src.al, gl.STATIC_DRAW);
   gl.enableVertexAttribArray(2);
   gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, faceState.idxBuf);
-  if (faceState.idxFor !== src) {
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, src.idx, gl.STATIC_DRAW);
-    faceState.idxFor = src;
+  // 裏面カリング: 横を向くと裏側の三角形が折り返して手前に乗る。ライブ空間の
+  // 巻き方向がソースと反転した三角形(=裏面)と潰れた三角形を毎フレーム外す
+  if (!faceIdxScratch || faceIdxScratch.length < src.idx.length) {
+    faceIdxScratch = new Uint16Array(src.idx.length);
   }
+  let vis = 0;
+  for (let t = 0; t < src.sign.length; t++) {
+    const i0 = src.idx[t * 3], i1 = src.idx[t * 3 + 1], i2 = src.idx[t * 3 + 2];
+    const ax = faceLive[i0 * 2], ay = faceLive[i0 * 2 + 1];
+    const area = (faceLive[i1 * 2] - ax) * (faceLive[i2 * 2 + 1] - ay) -
+                 (faceLive[i2 * 2] - ax) * (faceLive[i1 * 2 + 1] - ay);
+    if (Math.abs(area) < 1e-7 || Math.sign(area) !== src.sign[t]) continue;
+    faceIdxScratch[vis++] = i0;
+    faceIdxScratch[vis++] = i1;
+    faceIdxScratch[vis++] = i2;
+  }
+  faceVisTris = vis / 3;                 // 検証用 (__studio.faceStats)
+  if (!vis) return null;                 // 全部裏 = 真横以上 → 貼らない
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, faceState.idxBuf);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, faceIdxScratch.subarray(0, vis), gl.DYNAMIC_DRAW);
   gl.useProgram(faceState.meshProg);
   gl.activeTexture(gl.TEXTURE1);
   gl.bindTexture(gl.TEXTURE_2D, faceState.faceTex);
   gl.uniform1i(faceState.uF, 1);
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, faceState.maskTex);
+  gl.uniform1i(faceState.uM, 2);
   gl.uniform1f(faceState.uA, facePresence * (node.op == null ? 1 : node.op));
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  gl.drawElements(gl.TRIANGLES, src.count, gl.UNSIGNED_SHORT, 0);
+  gl.drawElements(gl.TRIANGLES, vis, gl.UNSIGNED_SHORT, 0);
   gl.disable(gl.BLEND);
   return faceCanvas;
 }
@@ -4607,8 +4676,16 @@ const resReq = r => new Promise((res, rej) => {
 });
 async function resPut(rec) {
   await resReq((await resDB()).transaction('images', 'readwrite').objectStore('images').put(rec));
-  resBitmaps.delete(rec.n);
-  procTexCache.delete(rec.n);
+  resInvalidate(rec.n);
+}
+// 同名で差し替えたら、その名前を握っている全キャッシュを落とす
+// (これを怠ると「差し替えたのに前の画像のまま」になる)
+function resInvalidate(n) {
+  resBitmaps.delete(n);
+  procTexCache.delete(n);
+  faceSrcCache.delete(n);
+  if (faceState && faceState.faceTexFor === n) faceState.faceTexFor = null;
+  faceState && (faceState.maskFor = null);
 }
 async function resAll() {
   return await resReq((await resDB()).transaction('images').objectStore('images').getAll());
@@ -4618,8 +4695,7 @@ async function resGet(n) {
 }
 async function resDel(n) {
   await resReq((await resDB()).transaction('images', 'readwrite').objectStore('images').delete(n));
-  resBitmaps.delete(n);
-  procTexCache.delete(n);
+  resInvalidate(n);
 }
 const resBitmaps = new Map();          // name -> ImageBitmap (decode cache)
 async function resBitmap(n) {
@@ -5581,6 +5657,12 @@ window.__studio = {
   genLog: () => { try { return JSON.parse(localStorage.getItem(GENLOG_KEY) || '[]'); } catch { return []; } },
   res: { add: resAdd, all: resAll, get: resGet, del: resDel, bitmap: resBitmap },
   // headless CI: 合成ランドマーク注入 (srcは正規化{x,y}配列 / liveはFloat32Array)
+  faceStats() {
+    const fn = nodes.find(n => n.type === 'face');
+    const s = fn && fn.res ? faceSrcCache.get(fn.res) : null;
+    return { tris: s && s !== 'bad' ? s.count / 3 : 0, visible: faceVisTris,
+             presence: +facePresence.toFixed(2) };
+  },
   faceTest(srcLm, liveLm) {
     window.__faceTestSrc = srcLm;
     window.__faceTestLive = liveLm;
