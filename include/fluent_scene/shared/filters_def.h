@@ -251,7 +251,7 @@ FS_FILTER_STATEFUL(Sumie, sumie, FS_SUMIE,
           "ink/water field that DIFFUSES through the paper frame to frame "
           "(Chinese ink painting; the bleed genuinely moves)")
 FS_PARAM(0, ink, 1.0f, Scalar)
-FS_PARAM(1, bleed, 4.0f, Length)
+FS_PARAM(1, bleed, 6.0f, Length)
 FS_PARAM(2, dry, 0.6f, Scalar)
 FS_PARAM(3, outline, 0.8f, Scalar)
 FS_PARAM(4, chroma, 0.0f, Scalar)
