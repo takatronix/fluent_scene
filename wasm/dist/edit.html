@@ -1433,7 +1433,7 @@ $('tbReset').addEventListener('click', () => {
   keep.x = 40; keep.y = 140;
   out.x = 420; out.y = 140;
   connect(keep.id, 0, out.id);
-  selId = null;
+  selId = keep.id;
   applyGraph(true);
   say('まっさらにしました — 原画が出ています');
 });
@@ -1702,7 +1702,8 @@ function undo() {
     s2.kind = 'sample';
     useCameraFor(s2);
   }
-  selId = null;
+  const backSrc = nodes.find(n => n.type === 'src');
+  selId = backSrc ? backSrc.id : null;
   applyGraph(true);
   say('ひとつ戻しました');
 }
@@ -1797,7 +1798,7 @@ palSearch.addEventListener('input', () => buildPalette(palSearch.value.trim().to
 // splice any 1-in/1-out node into the selected node's outgoing line,
 // or drop it free for hand-wiring
 function spliceNodeAfterSelected(n2) {
-  const sel = nodeById(selId);
+  const sel = nodeById(selId) || nodes.find(n => n.type === 'src');
   if (sel && sel.type !== 'out' && sel !== n2) {
     const e = edges.find(x => x.from === sel.id);
     n2.x = Math.min(1900, sel.x + 190);
@@ -1823,7 +1824,7 @@ function spliceNodeAfterSelected(n2) {
 // drops it free for hand-wiring.
 function addFilterNode(name, params = {}) {
   if (filterCount() >= MAX_FILTERS) { say('フィルタは合計' + MAX_FILTERS + '個まで', true); return null; }
-  const sel = nodeById(selId);
+  const sel = nodeById(selId) || nodes.find(n => n.type === 'src');
   let x = 400, y = 60;
   let spliceEdge = null;
   if (sel && sel.type !== 'out') {
@@ -2963,12 +2964,12 @@ if (!loadHash()) {
   connect(src.id, 0, f1.id);
   connect(f1.id, 0, f2.id);
   connect(f2.id, 0, out.id);
-  selId = f1.id;
+  selId = src.id;                     // 入力から始まる — 最初の+フィルタが自然に入る
 }
 if (nodes.some(n => n.type === 'person')) loadSegmenter();
 if (nodes.some(n => n.type === 'hands')) loadHands();
 if (!selId) {
-  const first = nodes.find(n => n.type === 'filter') || nodes.find(n => n.type !== 'out');
+  const first = nodes.find(n => n.type === 'src') || nodes.find(n => n.type !== 'out');
   if (first) selId = first.id;
 }
 rebuildScene();
