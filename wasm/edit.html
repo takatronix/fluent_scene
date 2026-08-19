@@ -514,6 +514,7 @@
     <button id="tbSrc" hidden>+ 入力</button>
     <button id="tbPerson" hidden>+ 人物抽出</button>
     <button id="tbHands" hidden>+ 手フレーム</button>
+    <button id="tbFace" hidden>+ 顔差し替え</button>
     <button id="tbMix" hidden>+ ミキサー</button>
     <button id="tbSplit" hidden>+ 分岐</button>
     <button id="tbXform" hidden>+ 変形</button>
@@ -867,6 +868,9 @@ function addNode(type, x, y, extra = {}) {
   } else if (type === 'glsl') {
     Object.assign(n, { code: extra.code || SHADER_TEMPLATES[1][1], on: true,
         name: typeof extra.name === 'string' ? extra.name.slice(0, 40) : undefined });
+  } else if (type === 'face') {
+    Object.assign(n, { on: true, op: extra.op == null ? 1 : extra.op,
+        res: typeof extra.res === 'string' ? extra.res.slice(0, 40) : undefined });
   } else if (type === 'person') {
     n.feather = extra.feather ?? 5;
   } else if (type === 'hands') {
@@ -939,7 +943,7 @@ function compile() {
   const srcs = nodes.filter(n => n.type === 'src');
   let uid = 0;
   const newDeco = () => ({ filters: [], person: null, personPort: 0,
-                           hands: null, handsPort: 0, xform: null, glsl: null });
+                           hands: null, handsPort: 0, xform: null, glsl: null, face: null });
   const inEdge = (n, tp) => edges.find(x => x.to === n.id && (x.tp || 0) === tp) || null;
   const mk = u => { u.id = 'B' + uid++; units.push(u); return u; };
 
@@ -971,6 +975,9 @@ function compile() {
       u = build(inEdge(n, 0), stack, deco, depth + 1);
     } else if (n.type === 'glsl') {
       if (!deco.glsl && n.on) deco.glsl = n;
+      u = build(inEdge(n, 0), stack, deco, depth + 1);
+    } else if (n.type === 'face') {
+      if (!deco.face && n.on) deco.face = n;
       u = build(inEdge(n, 0), stack, deco, depth + 1);
     } else if (n.type === 'split') {
       u = build(inEdge(n, 0), stack, deco, depth + 1);
@@ -1421,6 +1428,287 @@ function writeHandMask(alpha) {
   pushMasks();
 }
 
+// ---- 🎭 face swap 「お面」: FaceLandmarker + WebGLメッシュワープ -------------
+// アップした顔写真(📚リソース)を、フィード上の検出顔478点に三角形メッシュで
+// 貼り替える。入力段処理なので後段のフィルタ/シェーダと素直に合成される。
+// 三角形分割はソース顔のランドマークにDelaunayを一度かけて作る(定数表不要)。
+function delaunay(pts) {               // pts [{x,y}] → [i,j,k]の三角形リスト
+  const n = pts.length;
+  const P = pts.concat([{ x: -10, y: -10 }, { x: 10, y: -10 }, { x: 0, y: 20 }]);
+  let tris = [[n, n + 1, n + 2]];
+  const cc = new Map();
+  const circum = t => {
+    const k = t.join(',');
+    if (cc.has(k)) return cc.get(k);
+    const [A, B, C] = [P[t[0]], P[t[1]], P[t[2]]];
+    const d = 2 * (A.x * (B.y - C.y) + B.x * (C.y - A.y) + C.x * (A.y - B.y));
+    let r = null;
+    if (Math.abs(d) > 1e-12) {
+      const a2 = A.x * A.x + A.y * A.y, b2 = B.x * B.x + B.y * B.y, c2 = C.x * C.x + C.y * C.y;
+      const ux = (a2 * (B.y - C.y) + b2 * (C.y - A.y) + c2 * (A.y - B.y)) / d;
+      const uy = (a2 * (C.x - B.x) + b2 * (A.x - C.x) + c2 * (B.x - A.x)) / d;
+      r = { x: ux, y: uy, r2: (A.x - ux) ** 2 + (A.y - uy) ** 2 };
+    }
+    cc.set(k, r);
+    return r;
+  };
+  for (let i = 0; i < n; i++) {
+    const p = P[i], bad = [], border = new Map();
+    for (const t of tris) {
+      const c = circum(t);
+      if (c && (p.x - c.x) ** 2 + (p.y - c.y) ** 2 <= c.r2) bad.push(t);
+    }
+    for (const t of bad) {
+      for (const [a, b] of [[t[0], t[1]], [t[1], t[2]], [t[2], t[0]]]) {
+        const k = Math.min(a, b) + '_' + Math.max(a, b);
+        border.set(k, border.has(k) ? null : [a, b]);
+      }
+    }
+    tris = tris.filter(t => !bad.includes(t));
+    for (const e of border.values()) if (e) tris.push([e[0], e[1], i]);
+  }
+  return tris.filter(t => t.every(ix => ix < n));
+}
+let faceLander = null, faceLoading = false, faceOvalSet = null;
+const faceDetCanvas = document.createElement('canvas');
+faceDetCanvas.width = 384;
+faceDetCanvas.height = 216;
+const faceDetCtx = faceDetCanvas.getContext('2d', { willReadFrequently: true });
+let faceLive = null, facePresence = 0, faceSeenMs = -1e9, facePrevMs = 0;
+const faceSrcCache = new Map();        // resource name -> prepared mesh / null(仕込み中) / 'bad'
+async function loadFaceLander() {
+  if (faceLander || faceLoading) return;
+  faceLoading = true;
+  say('顔の検出モデルを読み込み中… (MediaPipe / CDN)');
+  try {
+    const { FilesetResolver, FaceLandmarker } = await import(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs');
+    const vision = await FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm');
+    faceLander = await FaceLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/' +
+                        'face_landmarker/float16/latest/face_landmarker.task',
+        delegate: 'GPU',
+      },
+      runningMode: 'VIDEO',
+      numFaces: 1,
+    });
+    faceOvalSet = new Set();
+    for (const c of FaceLandmarker.FACE_LANDMARKS_FACE_OVAL) {
+      faceOvalSet.add(c.start);
+      faceOvalSet.add(c.end);
+    }
+    say('顔の検出OK — 🎭ノードで顔画像を選ぶと差し替わります');
+  } catch (e) {
+    console.error('face landmarker init failed:', e);
+    say('顔の検出モデルを読み込めません (' + (e.message || e) + ') — ネット接続が必要です', true);
+  } finally { faceLoading = false; }
+}
+function updateFace(nowMs) {
+  if (!nodes.some(n => n.type === 'face' && n.on)) return;
+  const dt = Math.min((nowMs - facePrevMs) / 1000, 0.1);
+  facePrevMs = nowMs;
+  if (window.__faceTestLive) {          // ヘッドレス検証: 合成ランドマーク注入
+    faceLive = window.__faceTestLive;
+    faceSeenMs = nowMs;
+    facePresence = 1;
+    return;
+  }
+  if (!faceLander) { loadFaceLander(); return; }
+  const u = units.find(x => x.deco && x.deco.face);
+  const src = u && unitFirstSrc(u);
+  if (!src || !src.grab.width) return;
+  faceDetCtx.drawImage(src.grab, 0, 0, 384, 216);
+  const res = faceLander.detectForVideo(faceDetCanvas, nowMs);
+  const lm = (res.faceLandmarks && res.faceLandmarks[0]) || null;
+  if (lm) {
+    const snap = nowMs - faceSeenMs > 400 || !faceLive || faceLive.length !== lm.length * 2;
+    faceSeenMs = nowMs;
+    if (snap) faceLive = new Float32Array(lm.length * 2);
+    const k = snap ? 1 : Math.min(1, dt * 22);
+    for (let i = 0; i < lm.length; i++) {
+      faceLive[i * 2] += (lm[i].x - faceLive[i * 2]) * k;
+      faceLive[i * 2 + 1] += (lm[i].y - faceLive[i * 2 + 1]) * k;
+    }
+  }
+  const target = nowMs - faceSeenMs < 200 ? 1 : 0;
+  facePresence += (target - facePresence) * Math.min(1, dt * (target ? 12 : 6));
+}
+function prepFaceSource(name) {
+  if (faceSrcCache.has(name)) return faceSrcCache.get(name);
+  faceSrcCache.set(name, null);
+  (async () => {
+    const bmp = await resBitmap(name);
+    if (!bmp) {
+      faceSrcCache.set(name, 'bad');
+      say('顔画像「' + name + '」が見つかりません — ⋯の📚リソースに追加してください', true);
+      return;
+    }
+    let lm = window.__faceTestSrc || null;
+    if (!lm) {
+      if (!faceLander) { faceSrcCache.delete(name); return; }   // モデル待ち→次フレーム再試行
+      const c = document.createElement('canvas');
+      const sc = Math.min(1, 512 / Math.max(bmp.width, bmp.height));
+      c.width = Math.round(bmp.width * sc);
+      c.height = Math.round(bmp.height * sc);
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      const r = faceLander.detectForVideo(c, performance.now());
+      lm = (r.faceLandmarks && r.faceLandmarks[0]) || null;
+    }
+    if (!lm) {
+      faceSrcCache.set(name, 'bad');
+      say('「' + name + '」から顔を検出できません — 正面向きの顔写真を選んでください', true);
+      return;
+    }
+    const pts = lm.map(p => ({ x: p.x, y: p.y }));
+    const idx = new Uint16Array(delaunay(pts).flat());
+    const uv = new Float32Array(pts.length * 2);
+    const al = new Float32Array(pts.length);
+    for (let i = 0; i < pts.length; i++) {
+      uv[i * 2] = pts[i].x;
+      uv[i * 2 + 1] = 1 - pts[i].y;    // FLIP_Yアップロードに合わせる
+      al[i] = faceOvalSet && faceOvalSet.has(i) ? 0 : 1;   // 輪郭で0→縁がなじむ
+    }
+    const tc = document.createElement('canvas');
+    tc.width = bmp.width;
+    tc.height = bmp.height;
+    tc.getContext('2d').drawImage(bmp, 0, 0);
+    faceSrcCache.set(name, { idx, uv, al, tc, count: idx.length, nLm: pts.length });
+    say('顔画像「' + name + '」準備OK — 顔が映ると差し替わります');
+  })();
+  return null;
+}
+let faceGL = null, faceCanvas = null, faceState = null, faceBuf = null, faceRow = null;
+function ensureFaceGL() {
+  if (faceGL) return true;
+  faceCanvas = document.createElement('canvas');
+  faceGL = faceCanvas.getContext('webgl2', { premultipliedAlpha: false,
+                                             preserveDrawingBuffer: true });
+  if (!faceGL) return false;
+  const gl = faceGL;
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  const mk = (t, s) => {
+    const sh = gl.createShader(t);
+    gl.shaderSource(sh, s);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+    return sh;
+  };
+  const prog = (vs, fs2) => {
+    const p = gl.createProgram();
+    gl.attachShader(p, mk(gl.VERTEX_SHADER, vs));
+    gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs2));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    return p;
+  };
+  const bgProg = prog(POST_VS, `#version 300 es
+precision mediump float;
+uniform sampler2D u_s;
+uniform vec2 u_r;
+out vec4 o;
+void main() { o = vec4(texture(u_s, gl_FragCoord.xy / u_r).rgb, 1.0); }`);
+  const meshProg = prog(`#version 300 es
+layout(location=0) in vec2 aP;
+layout(location=1) in vec2 aU;
+layout(location=2) in float aA;
+out vec2 vU;
+out float vA;
+void main() { vU = aU; vA = aA; gl_Position = vec4(aP.x * 2.0 - 1.0, (1.0 - aP.y) * 2.0 - 1.0, 0.0, 1.0); }`,
+  `#version 300 es
+precision mediump float;
+in vec2 vU;
+in float vA;
+uniform sampler2D u_f;
+uniform float u_a;
+out vec4 o;
+void main() { o = vec4(texture(u_f, vU).rgb, vA * u_a); }`);
+  faceState = { bgProg, meshProg,
+    bgTex: gl.createTexture(), faceTex: gl.createTexture(), faceTexFor: null,
+    posBuf: gl.createBuffer(), uvBuf: gl.createBuffer(), aBuf: gl.createBuffer(),
+    idxBuf: gl.createBuffer(), idxFor: null,
+    uR: gl.getUniformLocation(bgProg, 'u_r'), uS: gl.getUniformLocation(bgProg, 'u_s'),
+    uF: gl.getUniformLocation(meshProg, 'u_f'), uA: gl.getUniformLocation(meshProg, 'u_a') };
+  for (const t of [faceState.bgTex, faceState.faceTex]) {
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
+  return true;
+}
+function runFaceWarp(node, grab) {     // returns faceCanvas or null (素通し)
+  if (!node.res || facePresence < 0.02 || !faceLive) return null;
+  const src = prepFaceSource(node.res);
+  if (!src || src === 'bad' || !ensureFaceGL()) return null;
+  if (faceLive.length < src.nLm * 2) return null;
+  const gl = faceGL, w = grab.width, h = grab.height;
+  if (faceCanvas.width !== w || faceCanvas.height !== h) {
+    faceCanvas.width = w;
+    faceCanvas.height = h;
+  }
+  gl.viewport(0, 0, w, h);
+  gl.disable(gl.BLEND);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, faceState.bgTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, grab);
+  gl.useProgram(faceState.bgProg);
+  gl.uniform1i(faceState.uS, 0);
+  gl.uniform2f(faceState.uR, w, h);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if (faceState.faceTexFor !== node.res) {
+    gl.bindTexture(gl.TEXTURE_2D, faceState.faceTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src.tc);
+    faceState.faceTexFor = node.res;
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, faceState.posBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, faceLive.subarray(0, src.nLm * 2), gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, faceState.uvBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, src.uv, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(1);
+  gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, faceState.aBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, src.al, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(2);
+  gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, faceState.idxBuf);
+  if (faceState.idxFor !== src) {
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, src.idx, gl.STATIC_DRAW);
+    faceState.idxFor = src;
+  }
+  gl.useProgram(faceState.meshProg);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, faceState.faceTex);
+  gl.uniform1i(faceState.uF, 1);
+  gl.uniform1f(faceState.uA, facePresence * (node.op == null ? 1 : node.op));
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.drawElements(gl.TRIANGLES, src.count, gl.UNSIGNED_SHORT, 0);
+  gl.disable(gl.BLEND);
+  return faceCanvas;
+}
+function readFaceData() {
+  const gl = faceGL, w = faceCanvas.width, h = faceCanvas.height;
+  const len = w * h * 4, rowBytes = w * 4;
+  if (!faceBuf || faceBuf.length < len) {
+    faceBuf = new Uint8Array(len);
+    faceRow = new Uint8Array(len);
+  }
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, faceBuf);
+  for (let yy = 0; yy < h; ++yy) {
+    faceRow.set(faceBuf.subarray((h - 1 - yy) * rowBytes, (h - yy) * rowBytes), yy * rowBytes);
+  }
+  return faceRow.subarray(0, len);
+}
+function faceFor(src) {
+  const u = units.find(x => x.srcNode === src && x.deco && x.deco.face && x.deco.face.on);
+  return u ? u.deco.face : null;
+}
+
 // ---- graph rendering -------------------------------------------------------
 const gInner = $('gInner'), edgeG = $('edgeG'), tempEdge = $('tempEdge');
 const SRC_EMOJI = { camera: '📷', image: '🖼', video: '🎬', sample: '✨' };
@@ -1438,6 +1726,8 @@ function nodeMeta(n) {
                                  ac: NODE_ACCENT.person, outs: ['人物', '背景'], ins: [''] };
   if (n.type === 'glsl') return { emoji: '🧪', j: n.name || 'GLSLシェーダ', e: n.on ? 'glsl' : 'off',
                                  ac: '#b7f07e', outs: [''], ins: [''] };
+  if (n.type === 'face') return { emoji: '🎭', j: '顔差し替え', e: n.res || '画像未選択',
+                                 ac: '#f7a8c4', outs: [''], ins: [''] };
   if (n.type === 'hands') return { emoji: '🖐', j: '手フレーム', e: 'hands',
                                  ac: NODE_ACCENT.hands, outs: ['枠内', '枠外'], ins: [''] };
   if (n.type === 'xform') return { emoji: '🎚', j: '変形/合成', e: n.blend,
@@ -1974,6 +2264,21 @@ $('tbXform').addEventListener('click', () => {
   applyGraph(true);
   say('変形/合成ノード — 線に挟むと小窓、「全面ミキサー」で画面全体をブレンド合成');
 });
+$('tbFace').addEventListener('click', () => {
+  const exist = nodes.find(n => n.type === 'face');
+  if (exist) {                          // 顔検出は1系統 — 既存ノードを選択
+    selId = exist.id;
+    renderGraph();
+    renderInspector();
+    say('顔差し替えノードは1個まで — 既存のノードを選択しました');
+    return;
+  }
+  const n = addNode('face', 0, 0, {});
+  spliceNodeAfterSelected(n);
+  applyGraph(true);
+  loadFaceLander();
+  say('🎭 顔差し替え — 右パネルで顔画像を選ぶ(またはアップロード)と、映った顔に貼り替わります');
+});
 $('tbUndo').addEventListener('click', undo);
 $('tbMix').addEventListener('click', () => {
   const [x, y] = freeSpot(560, 300);
@@ -2083,6 +2388,7 @@ function renderInspector() {
       : n.type === 'mix' ? 'A(奥)にB(手前)を重ねて1本に。ループ配線は1フレーム遅延(点線)'
       : n.type === 'split' ? '1入力を2出力へコピー — 分配・フィードバック用'
       : n.type === 'glsl' ? 'この枝の入力にWebGL2でかかる自作シェーダ (β) — AI生成可'
+      : n.type === 'face' ? 'アップした顔写真を、映った顔に貼り替えます (お面) — 📚リソースの画像を選択'
       : n.type === 'hands' ? '両手の親指+人差し指の指フレーム。枠内/枠外ポートで枝分かれ'
       : n.type === 'xform' ? '小窓(ドラッグ移動/ホイール拡縮)か全面ミキサーでブレンド合成'
       : '入ってきた枝を下から順に重ねます (グラフの縦位置=重なり順)';
@@ -2161,6 +2467,52 @@ function renderInspector() {
         'border-radius:999px;font-size:12px;padding:6px 14px;cursor:pointer;align-self:flex-end';
     edit.addEventListener('click', () => openShaderPanel(n.id));
     paramsBox.append(edit);
+  } else if (n.type === 'face') {
+    const sel = document.createElement('select');
+    sel.style.cssText = 'background:rgba(255,255,255,0.04);color:var(--ink);' +
+        'border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.5px;outline:none';
+    (async () => {
+      const all = await resAll();
+      sel.replaceChildren(new Option('顔画像を選択…', ''));
+      for (const r of all) sel.append(new Option('🖼 ' + r.n, r.n));
+      sel.value = n.res || '';
+    })();
+    sel.addEventListener('change', () => {
+      n.res = sel.value || undefined;
+      renderGraph();
+      saveHash();
+      if (n.res) {
+        loadFaceLander();
+        say('顔画像「' + n.res + '」を使います — 顔が映ると差し替わります');
+      }
+    });
+    paramsBox.append(sel);
+    const up = document.createElement('label');
+    up.textContent = '＋ 顔画像をアップロード';
+    up.style.cssText = 'border:1px solid var(--line);color:var(--dim);border-radius:999px;' +
+        'font-size:12px;padding:6px 14px;cursor:pointer;align-self:flex-start';
+    const fi = document.createElement('input');
+    fi.type = 'file';
+    fi.accept = 'image/*';
+    fi.style.display = 'none';
+    fi.addEventListener('change', async e => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!f) return;
+      const name = await resAdd(f);
+      if (!name) return;
+      n.res = name;
+      renderGraph();
+      renderInspector();
+      saveHash();
+      loadFaceLander();
+    });
+    up.append(fi);
+    paramsBox.append(up);
+    paramsBox.append(sliderRow('なじみ(不透明度)', 0, 1, 0.05, n.op == null ? 1 : n.op, v => {
+      n.op = v;
+      saveHash();
+    }));
   } else if (n.type === 'out') {
     const fin = document.createElement('button');
     fin.textContent = '🧪 仕上げシェーダ (出力全体への最終パス)' + (postState.on ? ' · ON' : '');
@@ -2336,6 +2688,11 @@ function packGraph() {
         if (Object.keys(v).length) o.v = v;
       }
       if (n.type === 'person' || n.type === 'hands') o.fe = +n.feather.toFixed(1);
+      if (n.type === 'face') {
+        if (n.res) o.fr = n.res;
+        o.fo = +(n.op == null ? 1 : n.op).toFixed(2);
+        if (!n.on) o.off = 1;
+      }
       if (n.type === 'glsl') {
         o.c = n.code.slice(0, 20000);
         if (n.code.length > 20000) warnLongOnce('n' + n.id, n.name || 'シェーダ');
@@ -2436,6 +2793,10 @@ function unpackGraph(packed) {
           n = addNode('person', o.x, o.y, { feather: Number(o.fe) || 5 });
         } else if (o.t === 'hands' && !nodes.some(x => x.type === 'hands')) {
           n = addNode('hands', o.x, o.y, { feather: Number(o.fe) || 6 });
+        } else if (o.t === 'face' && !nodes.some(x => x.type === 'face')) {
+          n = addNode('face', o.x, o.y, { res: typeof o.fr === 'string' ? o.fr : undefined,
+              op: Number.isFinite(Number(o.fo)) ? Math.min(1, Math.max(0, Number(o.fo))) : 1 });
+          if (o.off) n.on = false;
         } else if (o.t === 'glsl') {
           n = addNode('glsl', o.x, o.y, { code: typeof o.c === 'string' ? o.c : undefined,
               name: typeof o.nm === 'string' ? o.nm : undefined });
@@ -2573,6 +2934,7 @@ const NODE_ADDERS = [
   ['🎛', '変形', '小窓/全面ミキサー・回転/反転', 'tbXform'],
   ['🧍', '人物抽出', '人物と背景に分けて別フィルタ', 'tbPerson'],
   ['🖐', '手フレーム', '両手の指フレーム枠内だけ', 'tbHands'],
+  ['🎭', '顔差し替え', 'アップした顔写真を貼る(お面)', 'tbFace'],
   ['🧪', 'GLSLシェーダ', 'AIに書かせる自作パス', 'tbShader'],
 ];
 function buildPalette(q) {
@@ -4852,7 +5214,7 @@ function feedSources(t) {
       if (grab.width !== tw || grab.height !== th) { grab.width = tw; grab.height = th; }
       g.drawImage(v, 0, 0, tw, th);
     } else if (s.kind === 'image') {
-      if (!s.dirty && !glslFor(s)) return;      // static commits once — unless a
+      if (!s.dirty && !glslFor(s) && !faceFor(s)) return;   // static commits once — unless a
       if (s.dirty) {                            // shader is animating on top of it
         if (grab.width !== FEED_W) { grab.width = FEED_W; grab.height = FEED_H; }
         const img = s.img;
@@ -4868,8 +5230,15 @@ function feedSources(t) {
       drawSample(g, FEED_W, FEED_H, t + i * 13.7);
     } else return;
     let data = null;
+    const fn = faceFor(s);
+    let feed = grab;                            // 🎭お面はフィードの最前段
+    if (fn) {
+      const fc = runFaceWarp(fn, grab);
+      if (fc) feed = fc;
+    }
     const gn = glslFor(s);
-    if (gn) data = runNodeShader(gn, grab);     // branch's shader eats the feed
+    if (gn) data = runNodeShader(gn, feed);     // branch's shader eats the feed
+    if (!data && feed !== grab) data = readFaceData();
     if (!data) data = g.getImageData(0, 0, grab.width, grab.height).data;
     const ptr = fs.imageBuffer(inst, 'in' + i, grab.width, grab.height);
     mod.HEAPU8.set(data, ptr);
@@ -4940,6 +5309,12 @@ window.__studio = {
   lutPresets: LUT_PRESETS,
   genLog: () => { try { return JSON.parse(localStorage.getItem(GENLOG_KEY) || '[]'); } catch { return []; } },
   res: { add: resAdd, all: resAll, get: resGet, del: resDel, bitmap: resBitmap },
+  // headless CI: 合成ランドマーク注入 (srcは正規化{x,y}配列 / liveはFloat32Array)
+  faceTest(srcLm, liveLm) {
+    window.__faceTestSrc = srcLm;
+    window.__faceTestLive = liveLm;
+    faceSrcCache.clear();
+  },
 };
 
 // ---- render loop -----------------------------------------------------------
@@ -4980,6 +5355,7 @@ function tick() {
   feedSources(t);
   updateMask(now);
   updateHands(now);
+  updateFace(now);
   if (anim.checked && animatedGraph()) pushChains(t);
 
   if (gpu) {

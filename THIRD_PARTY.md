@@ -64,6 +64,7 @@ fluent_scene 本体は **MIT** (© 2026 takatronix)。ただし以下の例外�
 | `portrait.html` | [@mediapipe/tasks-vision](https://www.npmjs.com/package/@mediapipe/tasks-vision) (CDN) | Apache-2.0 | |
 | `portrait.html` | Selfie Segmenter モデル (Google 配布) | Apache-2.0 ([model card](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20MediaPipe%20Selfie%20Segmentation.pdf)) | 実行時に CDN からダウンロード |
 | `gaze.html` | MediaPipe Face Landmarker | Apache-2.0 | 同上 |
+| `edit.html` (filter studio) | @mediapipe/tasks-vision (CDN) + Selfie Segmenter / Hand Landmarker / Face Landmarker モデル (Google 配布) | Apache-2.0 | 人物抽出・手フレーム・顔差し替えノード。実行時に CDN からダウンロード |
 | `anime.html` | [onnxruntime-web](https://www.npmjs.com/package/onnxruntime-web) (CDN) | MIT | GAN 推論ランタイム |
 | `anime.html` | MediaPipe Selfie Segmenter | Apache-2.0 | 人物/背景スコープ用。実行時に CDN からダウンロード |
 
