@@ -4686,6 +4686,9 @@ function resInvalidate(n) {
   faceSrcCache.delete(n);
   if (faceState && faceState.faceTexFor === n) faceState.faceTexFor = null;
   faceState && (faceState.maskFor = null);
+  texResData.delete('r:' + n);         // 🧵テクスチャ: 同名差し替えを反映させる
+  texResUploaded.delete('r:' + n);
+  warnedRes.delete(n);                 // 「見つかりません」案内も再アップで復活させる
 }
 async function resAll() {
   return await resReq((await resDB()).transaction('images').objectStore('images').getAll());
