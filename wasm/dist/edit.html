@@ -131,6 +131,25 @@
   #toolbar #tail { margin-left: auto; }
   #zoomCtl button { min-width: 30px; padding: 5px 7px; font-size: 11.5px;
           font-family: ui-monospace, monospace; }
+  #viewTabs { display: flex; gap: 0; border: 1px solid var(--line);
+          border-radius: 999px; overflow: hidden; }
+  #viewTabs button { border: none; background: none; color: var(--dim);
+          padding: 5px 13px; font-size: 12px; cursor: pointer; }
+  #viewTabs button.on { color: #0c0a14; background: var(--grad); font-weight: 700; }
+  #yamlPane { flex: 1; min-width: 0; display: flex; flex-direction: column;
+          border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+          background: rgba(0, 0, 0, 0.25); }
+  #yamlPane[hidden] { display: none !important; }
+  #yamlPaneBar { display: flex; align-items: center; justify-content: space-between;
+          padding: 6px 12px; font-size: 11px; color: var(--faint);
+          border-bottom: 1px solid var(--line); }
+  #yamlPaneBar button { background: none; border: 1px solid var(--line);
+          color: var(--dim); border-radius: 8px; padding: 3px 9px; cursor: pointer; }
+  #yamlPaneBar button:hover { color: var(--ink); }
+  #yamlPaneText { flex: 1; margin: 0; padding: 10px 14px; overflow: auto;
+          font: 11.5px/1.55 ui-monospace, monospace; color: #cfd8ff;
+          white-space: pre; scrollbar-width: thin; }
+  #graph[hidden] { display: none !important; }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 3px; }
@@ -449,6 +468,10 @@
     <button id="dockClose" title="しまう">✕</button>
   </div>
   <div id="toolbar">
+    <span id="viewTabs">
+      <button data-view="graph" class="on">グラフ</button><button
+        data-view="yaml">YAML</button><button data-view="split" title="横並び表示">分割</button>
+    </span>
     <button id="tbAdd" title="ノード/フィルタ/プリセット/マイシェーダを追加">＋ 追加</button>
     <button id="tbFilter" hidden>+ フィルタ</button>
     <button id="tbSrc" hidden>+ 入力</button>
@@ -491,6 +514,15 @@
       <path id="tempEdge" class="temp" d=""/>
     </svg>
   </div></div>
+  <div id="yamlPane" hidden>
+    <div id="yamlPaneBar">
+      <span>Scene YAML — フィルタのもうひとつのビュー (ライブ)</span>
+      <button id="yamlPaneCopy" title="コピー">📋</button>
+    </div>
+    <pre id="yamlPaneText"></pre>
+    <!-- TODO(v2): 双方向 — このYAMLを編集→パース→グラフへ逆反映
+         (fvs parserは実行前full検査なので安全に往復できるはず) -->
+  </div>
   <div id="insp">
     <div id="inspHead" hidden>
       <span class="pname"></span><span class="psum"></span>
@@ -1515,6 +1547,30 @@ function hookInPort(p, n, tp = 0) {
     startWireDrag(inn.from, inn.fp);
   });
 }
+// ---- view tabs: graph | yaml | split (YAMLはフィルタのもうひとつのビュー) --
+let dockView = localStorage.getItem('fs_studio_view') || 'graph';
+function setDockView(v) {
+  dockView = v;
+  localStorage.setItem('fs_studio_view', v);
+  $('graph').hidden = v === 'yaml';
+  $('yamlPane').hidden = v === 'graph';
+  for (const b of document.querySelectorAll('#viewTabs button')) {
+    b.classList.toggle('on', b.dataset.view === v);
+  }
+  refreshYamlPane();
+}
+function refreshYamlPane() {
+  if ($('yamlPane').hidden) return;
+  const y = exportYaml();
+  const el = $('yamlPaneText');
+  if (el.textContent !== y) el.textContent = y;
+}
+for (const b of document.querySelectorAll('#viewTabs button')) {
+  b.addEventListener('click', () => setDockView(b.dataset.view));
+}
+$('yamlPaneCopy').addEventListener('click', e =>
+    copyText($('yamlPaneText').textContent, e.currentTarget, '✅'));
+
 // ---- graph zoom (Ctrl+ホイール / ±) ----------------------------------------
 let graphZoom = 1;
 function setZoom(z, cx, cy) {
@@ -1963,6 +2019,7 @@ let hashTimer = 0;
 function saveHash() {
   clearTimeout(hashTimer);
   hashTimer = setTimeout(saveHashNow, 400);
+  if (typeof refreshYamlPane === 'function') refreshYamlPane();
 }
 function packGraph() {
   const packed = {
@@ -3710,6 +3767,7 @@ updateBar();
 // (「画面スクロール必須なのなんとかならんか」). ⛶で従来レイアウトに戻せる
 setTheater(true);
 if (COARSE) { dock.hidden = true; $('dockRestore').classList.add('show'); }
+if (dockView !== 'graph') setDockView(dockView);
 // camera sources start on the sample so nothing is black while the
 // permission prompt is up; the webcam takes over the moment it lands.
 for (const s of nodes.filter(n => n.type === 'src' && n.kind === 'camera')) {
