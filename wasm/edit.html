@@ -508,12 +508,8 @@
     <span id="tail">
       <span id="share">
         <button id="btnShare" title="共有リンクをコピー">🔗</button>
-        <button id="btnYaml" title="Scene YAMLをコピー">📋</button>
         <button id="btnSnap" title="PNGスナップ">📸</button>
       </span>
-      <label title="アニメ速度">⏱ <input id="speed" type="range" min="0" max="2" step="0.05" value="0.6"
-                     style="width:70px"><output id="speedOut">0.60</output></label>
-      <label><input id="anim" type="checkbox" checked> アニメ</label>
     </span>
   </div>
   <div id="dockMain">
@@ -564,18 +560,6 @@
   </div>
 </div>
 
-<div id="yamlOverlay" class="overlay">
-  <div class="panel">
-    <button class="close" data-close="yamlOverlay">✕</button>
-    <h3>Scene YAML — いまのグラフ</h3>
-    <div style="font-size:11px;color:var(--faint);margin-bottom:8px">
-      このままエンジン(fs_create / scene_node)に食わせられるScene文書です。ライブ更新</div>
-    <pre id="yamlView" style="background:#0a0912;border:1px solid var(--line);border-radius:10px;
-      padding:12px;font:11.5px/1.5 ui-monospace,monospace;color:#cfd8ff;overflow:auto;
-      max-height:56vh;white-space:pre"></pre>
-    <button id="yamlCopy" class="save" style="margin-top:10px">📋 コピー</button>
-  </div>
-</div>
 <div id="shOverlay" class="overlay">
   <div class="panel">
     <button class="close" data-close="shOverlay">✕</button>
@@ -1839,6 +1823,16 @@ function renderInspector() {
       : n.type === 'xform' ? '小窓(ドラッグ移動/ホイール拡縮)か全面ミキサーでブレンド合成'
       : '入ってきた枝を下から順に重ねます (グラフの縦位置=重なり順)';
   if (n.type === 'filter') {
+    if (timeIndex(SPEC[n.name]) >= 0) {
+      const row = sliderRow('アニメ速度', 0, 2, 0.05, animSpeed, v => { animSpeed = v; });
+      const out2 = row.querySelector('output');
+      const fmt = v => v <= 0.001 ? '停止' : '×' + Number(v).toFixed(1);
+      out2.textContent = fmt(animSpeed);
+      row.querySelector('input').addEventListener('input', ev => {
+        out2.textContent = fmt(Number(ev.target.value));
+      });
+      paramsBox.append(row);
+    }
     SPEC[n.name].params.forEach((p, i) => {
       if (p.name === 'time') return;
       const [lo, hi, step] = rangeFor(p);
@@ -1990,8 +1984,11 @@ $('paramReset').addEventListener('click', () => {
 });
 
 // ---- clock -----------------------------------------------------------------
-const speed = $('speed'), speedOut = $('speedOut'), anim = $('anim');
-speed.addEventListener('input', () => { speedOut.textContent = Number(speed.value).toFixed(2); });
+// アニメ速度は時間駆動フィルタ選択時だけインスペクタに出す (0=停止)。
+// グローバル値だけここに持つ — 「1.90」の生数字を常時見せるUIはやめた
+let animSpeed = 0.6;
+const speed = { get value() { return animSpeed; } };   // simNow互換
+const anim = { get checked() { return animSpeed > 0; } };
 let simT = 0, simLast = performance.now();
 function simNow() {
   const now = performance.now();
@@ -3529,18 +3526,6 @@ function exportYaml() {
   compile();
   return sceneYaml(true);
 }
-let yamlTimer = 0;
-$('btnYaml').addEventListener('click', () => {
-  $('yamlView').textContent = exportYaml();
-  $('yamlOverlay').classList.add('open');
-  clearInterval(yamlTimer);
-  yamlTimer = setInterval(() => {
-    if (!$('yamlOverlay').classList.contains('open')) { clearInterval(yamlTimer); return; }
-    const y = exportYaml();
-    if ($('yamlView').textContent !== y) $('yamlView').textContent = y;
-  }, 1000);
-});
-$('yamlCopy').addEventListener('click', e => copyText($('yamlView').textContent, e.currentTarget, '✅ コピー済'));
 $('btnSnap').addEventListener('click', () => {
   const target = (postState.on && postState.c) ? postState.c : canvas;
   target.toBlob(b => {
