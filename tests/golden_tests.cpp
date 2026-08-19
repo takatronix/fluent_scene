@@ -410,7 +410,8 @@ void sceneSumie(Renderer& r) {
     stage.image(view).frame({10, 10, 150, 130}).filter(Sumie());
     stage.image(view).frame({170, 10, 150, 130}).filter(Sumie().ink(1.7f).outline(1.5f));
     stage.image(view).frame({330, 10, 140, 130}).filter(Sumie().bleed(9.0f).dry(1.3f));
-    stage.image(view).frame({10, 160, 150, 130}).filter(Sumie().chroma(0.4f));
+    stage.image(view).frame({10, 160, 150, 130})
+        .filter(Sumie().chroma(0.4f).paper(view));  // real-paper path (+2 flag)
     stage.image(view).frame({170, 160, 150, 130}).filter(Sumie().ink(0.4f).dry(0.0f).outline(0.0f));
     const int saved_limit = g_max_diff_limit;
     g_max_diff_limit = 255;

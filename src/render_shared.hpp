@@ -240,6 +240,12 @@ inline void scaleFilterValues(const Filter& f, float scale, Rect ext, float buf_
     for (int i = 0; i < 5; ++i) {
         out[i] = f.values[i];
     }
+    // Sumie's paper flag: no sixth slot exists, so a bound paper image is
+    // signalled to the body by adding +2 to the chroma slot (values[4]).
+    // One shared spot = all three backends agree for free.
+    if (f.mode == FS_SUMIE && f.image.valid()) {
+        out[4] += 2.0f;
+    }
     if (const FilterSpec* spec = findFilterSpec(f.mode)) {
         for (size_t i = 0; i < spec->params.size() && i < 5; ++i) {
             switch (spec->params[i].unit) {

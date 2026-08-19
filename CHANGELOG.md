@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.12.1 — 2026-08-19 (sumie: 実物和紙 + フィルタ画像パラメータの一般化)
+
+- **sumie `paper` 画像パラメータ**: 実物の和紙スキャンを紙として使える
+  (FS_FILTER_STATEFUL_IMG 新設)。空きslotが無いので、紙の有無は
+  plan::scaleFilterValues が chroma slot に +2 でエンコード (3バックエンド
+  共通の1箇所)。論理空間でタイリング (1枚 ≈ ステージ高2.2枚分)
+- **フィルタ画像バインディングの一般化**: lut/face 専用だった image
+  パラメータ配線を全フィルタに開放 (CPU/Vulkan/WebGPU)
+- **C ABI**: `fs_layer_set_filter_image(inst, layer, filter, input, w, h)`
+- **同梱和紙** `wasm/washi.jpg`: ambientCG Paper006 (CC0) の微細粒を下地に
+  楮繊維・地合いムラを合成したシームレス1024² (183KB)。filters.html が
+  sumie 選択時に自動バインド
+- 手続き和紙は無給紙時のフォールバックに降格し大幅減音 (2連続で
+  「クロスハッチにしか見えない」評をもらった教訓)
+
 ## 0.12.0 — 2026-08-19 (persistent_buffers P1 + 生きた水墨)
 
 - **persistent_buffers P1 実装** (設計書 status 参照): FS_FILTER_STATEFUL

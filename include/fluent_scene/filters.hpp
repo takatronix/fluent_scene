@@ -143,6 +143,8 @@ inline const std::vector<FilterSpec>& filterTable() {
     {#method, MODE, summary, #image_name, false, {
 #define FS_FILTER_STATEFUL(TypeName, method, MODE, summary) \
     {#method, MODE, summary, nullptr, true, {
+#define FS_FILTER_STATEFUL_IMG(TypeName, method, MODE, image_name, summary) \
+    {#method, MODE, summary, #image_name, true, {
 #define FS_PARAM(slot, name, default_value, unit) {#name, default_value, FilterUnit::unit},
 #define FS_END(TypeName) }},
     static const std::vector<FilterSpec> kTable = {
@@ -151,6 +153,7 @@ inline const std::vector<FilterSpec>& filterTable() {
 #undef FS_FILTER
 #undef FS_FILTER_IMG
 #undef FS_FILTER_STATEFUL
+#undef FS_FILTER_STATEFUL_IMG
 #undef FS_PARAM
 #undef FS_END
     return kTable;

@@ -49,6 +49,15 @@
 #define FS_FILTER_STATEFUL_DEFAULTED
 #endif
 
+// Stateful AND carrying an image parameter (sumie's paper). Degrades to
+// FS_FILTER_IMG so includers keep the image setter without knowing about
+// state.
+#ifndef FS_FILTER_STATEFUL_IMG
+#define FS_FILTER_STATEFUL_IMG(TypeName, method, MODE, image_name, summary) \
+    FS_FILTER_IMG(TypeName, method, MODE, image_name, summary)
+#define FS_FILTER_STATEFUL_IMG_DEFAULTED
+#endif
+
 // ---- color and tone --------------------------------------------------------
 
 FS_FILTER(Grayscale, grayscale, FS_GRAYSCALE, "grayscale (luma)")
@@ -246,10 +255,14 @@ FS_PARAM(3, wobble, 1.0f, Scalar)
 FS_PARAM(4, dilute, 0.35f, Scalar)
 FS_END(Watercolor)
 
-FS_FILTER_STATEFUL(Sumie, sumie, FS_SUMIE,
+// The optional `paper` image (a real washi scan) replaces the procedural
+// paper; the renderer signals its presence by adding +2 to the chroma slot
+// (plan::scaleFilterValues) — no sixth parameter slot exists.
+FS_FILTER_STATEFUL_IMG(Sumie, sumie, FS_SUMIE, paper,
           "living sumi-e — bold contour ink deposited into a persistent "
           "ink/water field that DIFFUSES through the paper frame to frame "
-          "(Chinese ink painting; the bleed genuinely moves)")
+          "(Chinese ink painting; the bleed genuinely moves). Feed `paper` "
+          "a washi scan for the real sheet")
 FS_PARAM(0, ink, 1.0f, Scalar)
 FS_PARAM(1, bleed, 6.0f, Length)
 FS_PARAM(2, dry, 0.6f, Scalar)
@@ -379,4 +392,9 @@ FS_END(Wobble)
 #ifdef FS_FILTER_STATEFUL_DEFAULTED
 #undef FS_FILTER_STATEFUL
 #undef FS_FILTER_STATEFUL_DEFAULTED
+#endif
+
+#ifdef FS_FILTER_STATEFUL_IMG_DEFAULTED
+#undef FS_FILTER_STATEFUL_IMG
+#undef FS_FILTER_STATEFUL_IMG_DEFAULTED
 #endif

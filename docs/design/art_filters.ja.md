@@ -290,7 +290,9 @@ Paint Transformer (ICCV 2021 feed-forward)、Im2Oil (MM 2022,
 シェーダ枠に留まるなら anisotropic Kuwahara (Kyprianidis 2009) +
 **法線マップ付き impasto 照明** (Flair の油絵モードの構成)。
 
-**アニメ** — 「なぜアニメに見えるか」を分解したのが White-box
+**アニメ** — オーナー指示 (8/19): **線は別フィルタ (`inkline`: 透明地に
+線だけ) に分離してレイヤー合成で重ねる** — FDoG 化とセットで v2 の柱。
+「なぜアニメに見えるか」を分解したのが White-box
 Cartoonization (Wang & Yu, CVPR 2020): surface (平坦色面) / structure
 (セグメント単位の色) / texture (線・陰) の 3 表現に分けて学習。軽量 GAN
 系は AnimeGANv3

@@ -345,6 +345,50 @@ const char* fs_drain_events(FsInstance* inst) {
 EMSCRIPTEN_KEEPALIVE
 void fs_destroy(FsInstance* inst) { delete inst; }
 
+/// Binds a committed image input as a filter's image parameter (sumie's
+/// `paper`, a `lut` grade atlas, ...). The input's buffer must have been
+/// filled via fs_image_buffer at this exact w×h; an empty input name
+/// clears the binding. The filter must already be in the layer's chain.
+EMSCRIPTEN_KEEPALIVE
+int fs_layer_set_filter_image(FsInstance* inst, const char* layer_id, const char* filter_name,
+                              const char* input, int w, int h) {
+    Layer* target = inst->scene->stage().find(layer_id);
+    if (target == nullptr) {
+        return 0;
+    }
+    ImageView view{};
+    if (input != nullptr && input[0] != '\0') {
+        auto it = inst->images.find(input);
+        if (it == inst->images.end() ||
+            it->second.size() < static_cast<size_t>(w) * h * 4) {
+            return 0;
+        }
+        view = ImageView{static_cast<uint32_t>(w), static_cast<uint32_t>(h),
+                         it->second.data(), 0};
+    }
+    for (const FilterSpec& spec : filterTable()) {
+        if (spec.name == std::string(filter_name)) {
+            std::vector<Filter> chain = target->filters();
+            bool done = false;
+            for (Filter& f : chain) {
+                if (f.mode == spec.mode && !done) {
+                    f.image = view;
+                    done = true;
+                }
+            }
+            if (!done) {
+                return 0;
+            }
+            target->clearFilters();
+            for (const Filter& f : chain) {
+                target->filter(f);
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /// Clears the layer's filter chain (fs_layer_set_filter appends/replaces;
 /// this is the only way back to "no filter").
 EMSCRIPTEN_KEEPALIVE

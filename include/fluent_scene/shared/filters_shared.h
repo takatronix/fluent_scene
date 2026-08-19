@@ -1028,6 +1028,14 @@ vec3 fs_sumie_shade(vec2 uv, float ink, float bleed_px, float dry,
     float u = max(res_y / 400.0, 0.25);
     vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
     vec4 st = FS_SAMPLE_STATE(uv);
+    // chroma slot doubles as the paper flag: the renderer adds +2 when a
+    // paper image is bound (no sixth parameter slot exists)
+    float ch = chroma;
+    float has_paper = 0.0;
+    if (ch >= 1.5) {
+        has_paper = 1.0;
+        ch = ch - 2.0;
+    }
     float dens = clamp(st.z * 1.05 + st.x * 0.6, 0.0, 1.15);
     // the crisp bone over the bleed
     float fe = 3.2 * u;
@@ -1049,35 +1057,42 @@ vec3 fs_sumie_shade(vec2 uv, float ink, float bleed_px, float dry,
     dens = max(dens, clamp(bones, 0.0, 1.0) * 0.92);
     // paper reserve: highlights snap clean
     dens = dens * smoothstep(0.04, 0.12, dens);
-    // washi: what handmade kozo paper actually shows — individual LONG
-    // THIN fiber strands (three families at wandering angles; only the
-    // ridges of a stretched noise read as strands, some lit, some shaded)
-    // over a cloudy sheet-formation mottle. Subtle amplitudes: paper
-    // whispers, it never shouts.
-    float fibers = 0.0;
-    for (int k = 0; k < 3; ++k) {
-        float fa2 = float(k) * 2.094 + 0.35
-                  + (fs_lsd_vnoise(px * (0.004 / u) + vec2(float(k) * 31.0, 7.0))
-                     - 0.5) * 0.8;
-        vec2 fd = vec2(cos(fa2), sin(fa2));
-        float s_l = dot(px, fd);
-        float s_c = dot(px, vec2(fd.y, -fd.x));
-        float n = fs_lsd_vnoise(vec2(s_l * (0.020 / u), s_c * (0.55 / u))
-                                + vec2(float(k) * 91.0, 13.0));
-        fibers += smoothstep(0.62, 0.80, n) * 0.5
-                - smoothstep(0.28, 0.14, n) * 0.35;
+    // paper: a REAL washi scan when the image parameter is fed (tiled in
+    // logical space — one sheet spans ~2.2 stage heights), else a quiet
+    // procedural stand-in (fibers whisper; the two earlier, louder drafts
+    // read as crosshatching, not paper).
+    vec3 paper;
+    if (has_paper > 0.5) {
+        float ts = 1.0 / (2.2 * res_y);
+        vec2 mt = vec2(px.x * ts, px.y * ts);
+        vec2 muv = mt - floor(mt);
+        paper = FS_SAMPLE_LUT(muv);
+    } else {
+        float fibers = 0.0;
+        for (int k = 0; k < 3; ++k) {
+            float fa2 = float(k) * 2.094 + 0.35
+                      + (fs_lsd_vnoise(px * (0.004 / u) + vec2(float(k) * 31.0, 7.0))
+                         - 0.5) * 0.8;
+            vec2 fd = vec2(cos(fa2), sin(fa2));
+            float s_l = dot(px, fd);
+            float s_c = dot(px, vec2(fd.y, -fd.x));
+            float n = fs_lsd_vnoise(vec2(s_l * (0.020 / u), s_c * (0.55 / u))
+                                    + vec2(float(k) * 91.0, 13.0));
+            fibers += smoothstep(0.62, 0.80, n) * 0.5
+                    - smoothstep(0.28, 0.14, n) * 0.35;
+        }
+        float mottle = fs_lsd_vnoise(px * (0.012 / u) + vec2(211.0, 17.0))
+                     + 0.5 * fs_lsd_vnoise(px * (0.03 / u) + vec2(91.0, 43.0));
+        mottle = mottle * 0.6667 - 0.5;
+        paper = vec3(0.955, 0.935, 0.88)
+              * (1.0 + 0.018 * fibers + 0.04 * mottle);
     }
-    float mottle = fs_lsd_vnoise(px * (0.012 / u) + vec2(211.0, 17.0))
-                 + 0.5 * fs_lsd_vnoise(px * (0.03 / u) + vec2(91.0, 43.0));
-    mottle = mottle * 0.6667 - 0.5;
-    vec3 paper = vec3(0.955, 0.935, 0.88)
-               * (1.0 + 0.045 * fibers + 0.07 * mottle);
     // damp paper: the wet front is visible as a moving shadow on the washi
     // before the pigment ever arrives — this IS the look of a bleed
     paper = paper * (1.0 - 0.12 * clamp(st.y * 0.55, 0.0, 1.0));
     vec3 c = mix(paper, vec3(0.085, 0.085, 0.10), clamp(dens, 0.0, 1.0));
     // tansai: a light color wash under the ink
-    float ch = clamp(chroma, 0.0, 1.0);
+    ch = clamp(ch, 0.0, 1.0);
     if (ch > 0.001) {
         vec3 srcc = FS_SAMPLE(uv);
         c = mix(c, srcc * (1.0 - dens * 0.75) * paper, ch);

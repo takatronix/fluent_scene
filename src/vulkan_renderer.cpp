@@ -1021,7 +1021,7 @@ struct VulkanRenderer::Impl {
         // and cache as image content; alpha is opaque, so the premultiply
         // staging is a no-op for them.
         for (const Filter& f : layer.filters()) {
-            if ((f.mode == FS_LUT || f.mode == FS_FACE) && f.image.valid()) {
+            if (f.image.valid()) {
                 uploadContentImage(f.image);
             }
         }
@@ -1534,6 +1534,13 @@ struct VulkanRenderer::Impl {
                 continue;
             }
             VkImageView lut_view = VK_NULL_HANDLE;
+            if (f.image.valid() && f.mode != FS_LUT && f.mode != FS_FACE) {
+                // generic image parameter (sumie's paper): bind, never gate
+                auto it = image_cache.find(f.image.pixels);
+                if (it != image_cache.end()) {
+                    lut_view = it->second.image.view;
+                }
+            }
             if (f.mode == FS_LUT || f.mode == FS_FACE) {
                 // Unfed or malformed image parameter: the documented
                 // pass-through (identical to the CPU reference and the
