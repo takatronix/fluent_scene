@@ -4273,16 +4273,51 @@ const SHADER_PRESETS = [
 }`],
   ['8mmフィルム', () => `void main() {
   vec2 uv = gl_FragCoord.xy / u_res;
-  // ゲートウィーブ(フレームの微妙な揺れ)
-  vec2 q = uv + vec2(hash12(vec2(floor(u_time * 24.0), 1.0)) - 0.5,
-                     hash12(vec2(floor(u_time * 24.0), 2.0)) - 0.5) * 0.003;
+  // コマ: 8mmは16fps — ゆれ・粒・チリはコマ単位でしか動かない
+  float frame = floor(u_time * 16.0);
+  // ゲートウィーブ: ゆっくり漂う + コマ毎の微ジッタ
+  vec2 weave = vec2(0.0030 * sin(u_time * 1.1) + 0.0045 * (hash12(vec2(frame, 3.0)) - 0.5),
+                    0.0040 * sin(u_time * 0.7 + 1.7) + 0.0055 * (hash12(vec2(frame, 7.0)) - 0.5));
+  vec2 q = clamp(uv + weave, 0.0, 1.0);
   vec3 col = srcAt(q);
+  // ハレーション: 明部だけ橙に滲む
+  vec2 o = 3.0 / u_res;
+  vec3 blur = (srcAt(q + vec2(o.x, 0.0)) + srcAt(q - vec2(o.x, 0.0)) +
+               srcAt(q + vec2(0.0, o.y)) + srcAt(q - vec2(0.0, o.y))) * 0.25;
+  col += pow(clamp((luma(blur) - 0.62) / 0.38, 0.0, 1.0), 1.6) * vec3(1.0, 0.55, 0.28) * 0.5;
+  // コダクローム風: 暖ガンマ → 黒は焦げ茶・白はクリームに写像
+  col = pow(clamp(col, 0.0, 1.0), vec3(1.05, 1.0, 0.92));
   float l = luma(col);
-  col = mix(col, vec3(l), 0.35) * vec3(1.08, 1.0, 0.82) + vec3(0.06, 0.03, 0.0);
-  col += (hash12(uv * u_res + u_time * 60.0) - 0.5) * 0.08; // 粒子
-  col *= 1.0 - 0.5 * smoothstep(0.4, 0.75, length(uv - 0.5));
-  float scratch = step(0.985, hash12(vec2(floor(uv.x * 60.0), floor(u_time * 3.0))));
-  col = mix(col, vec3(0.9), scratch * 0.4);                 // たまに縦キズ
+  col = mix(col, vec3(l), 0.12);
+  col = mix(vec3(0.10, 0.06, 0.04), vec3(0.99, 0.96, 0.86), col);
+  // 露出フリッカ: コマ毎にわずかに明滅
+  col *= 0.95 + 0.08 * hash12(vec2(frame, 11.0));
+  // 粒状: 2オクターブ・コマ更新・中間調に強く乗る
+  float gr = vnoise(uv * u_res * 0.5 + frame * 71.3) * 0.65 +
+             hash12(uv * u_res * 0.9 + frame * 13.7) * 0.35;
+  col += (gr - 0.5) * 0.13 * (0.3 + 0.7 * (1.0 - abs(l * 2.0 - 1.0)));
+  // チリ: たまに黒い斑点 (コマ単位で場所が変わる)
+  vec2 cellPt = uv * vec2(22.0, 13.0);
+  vec2 cell = floor(cellPt);
+  if (hash12(cell * 0.37 + frame * 17.1) > 0.982) {
+    vec2 cuv = fract(cellPt) - 0.5 +
+        (vec2(hash12(cell + frame + 5.0), hash12(cell + frame + 9.0)) - 0.5) * 0.6;
+    col = mix(col, vec3(0.06, 0.05, 0.04), smoothstep(0.17, 0.03, length(cuv)) * 0.85);
+  }
+  // 毛髪: たまにゲートに引っかかる、うねる毛
+  float hseed = hash12(vec2(frame, 29.0));
+  if (hseed > 0.80) {
+    float hx = 0.15 + 0.7 * fract(hseed * 13.7);
+    float wig = 0.012 * sin(uv.y * 30.0 + hseed * 60.0) + 0.005 * sin(uv.y * 87.0 + frame);
+    float hair = smoothstep(0.0026, 0.0006, abs(uv.x - hx - wig));
+    hair *= smoothstep(1.0, 0.75, uv.y + fract(hseed * 7.0) * 0.5);
+    col = mix(col, vec3(0.07, 0.06, 0.05), hair * 0.75);
+  }
+  // 映写機: 中心ホットスポット + 丸い周辺減光
+  vec2 p = (uv - 0.5) * vec2(u_res.x / u_res.y, 1.0);
+  float r = length(p);
+  col *= 1.0 + 0.10 * (1.0 - smoothstep(0.0, 0.55, r));
+  col *= 1.0 - 0.55 * smoothstep(0.52, 0.92, r);
   outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }`],
   ['左右対称', () => `void main() {
