@@ -3355,11 +3355,11 @@ const LOOK_PRESETS = [
     chain: [{ name: 'ntsc', params: { noise: 0.18, artifacts: 1.0 } },
             { name: 'crt', params: {} }] },
   { cat: 'レトロ', emoji: '🎞', name: '8ミリフィルム', keys: ['8ミリ', 'フィルム', '昔の映像', 'ホームビデオ', '昭和の映像'],
-    chain: [{ name: 'sepia', params: { intensity: 0.45 } },
-            { name: 'wobble', params: { amount: 2.5, fps: 12 } },
-            { name: 'ntsc', params: { noise: 0.12, artifacts: 0.2, fringing: 0.1 } },
-            { name: 'texture', params: { _tex: 'dust', blend: 1, strength: 0.7 } },
-            { name: 'vignette', params: { start: 0.35, end: 1.0 } }] },
+    chain: [{ name: 'sepia', params: { intensity: 0.55 } },
+            { name: 'wobble', params: { amount: 2.2, fps: 16 } },
+            { name: 'ntsc', params: { noise: 0.18, artifacts: 0.15, fringing: 0.08 } },
+            { name: 'texture', params: { _tex: 'dust', blend: 1, strength: 0.75 } },
+            { name: 'vignette', params: { start: 0.3, end: 1.0 } }] },
   // ---- 質感 (texture 54) ----
   { cat: '質感', emoji: '🎞', name: 'フィルムグレイン',
     keys: ['グレイン', '粒状', 'ざらざら', 'ざらつき', '銀塩'],
@@ -3830,12 +3830,14 @@ async function generate() {
   if (grid) { buildGrid(grid.n, grid.asked); return; }
   aiGo.disabled = true;
   aibar.classList.add('busy');
-  const waitLabel = (aiCfg.prov === 'claude' && aiCfg.claudeKey)
-      ? 'Claudeが考えています…' : 'AIが考えています…';
+  // 経過秒はLLM呼び出し時のみ (内蔵コンポーザは即時 — ルック名の表示を潰さない)
+  const usesLlm = (aiCfg.prov === 'claude' && aiCfg.claudeKey) ||
+                  (aiCfg.prov === 'openai' && aiCfg.oaiBase && aiCfg.oaiModel);
+  const waitLabel = aiCfg.prov === 'claude' ? 'Claudeが考えています…' : 'AIが考えています…';
   let waitSec = 0;
-  const waitTimer = setInterval(() => {
+  const waitTimer = usesLlm ? setInterval(() => {
     if (aiGo.disabled) say(`${waitLabel} ${++waitSec}秒`);
-  }, 1000);
+  }, 1000) : 0;
   try {
     if (aiCfg.prov === 'claude' && aiCfg.claudeKey) {
       say('Claudeが考えています…');
