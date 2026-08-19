@@ -31,15 +31,20 @@
   #v { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000;
        border-radius: 16px; border: 1px solid var(--line);
        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.65), 0 0 60px rgba(111, 95, 174, 0.12);
-       touch-action: none; user-select: none; cursor: ew-resize; }
+       touch-action: none; user-select: none; }
   #pill { position: absolute; top: 12px; right: 12px; z-index: 3;
           font: 11px ui-monospace, monospace; color: var(--dim);
           background: rgba(0, 0, 0, 0.5); border: 1px solid var(--line);
           padding: 4px 10px; border-radius: 999px; backdrop-filter: blur(6px); }
-  #hint { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
-          z-index: 3; font-size: 11px; color: rgba(255, 255, 255, 0.5);
-          background: rgba(0, 0, 0, 0.35); padding: 3px 12px; border-radius: 999px;
-          pointer-events: none; }
+  #origView { position: absolute; inset: 0; width: 100%; height: 100%;
+          object-fit: cover; border-radius: 16px; display: none; z-index: 2; }
+  #peek { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+          z-index: 3; font: 12px -apple-system, system-ui, sans-serif;
+          color: var(--ink); background: rgba(0, 0, 0, 0.5);
+          border: 1px solid var(--line); padding: 5px 14px; border-radius: 999px;
+          cursor: pointer; backdrop-filter: blur(6px); touch-action: none;
+          user-select: none; -webkit-user-select: none; }
+  #peek:active { color: #0c0a14; background: linear-gradient(120deg, var(--cyan), var(--violet)); }
 
   #deck { width: min(96vw, 1280px); display: flex; flex-direction: column; gap: 10px;
           padding: 12px 14px; border-radius: 16px; background: var(--glass);
@@ -100,7 +105,8 @@
 <div id="frame">
   <canvas id="v" width="1280" height="720"></canvas>
   <div id="pill">loading…</div>
-  <div id="hint">ドラッグで境界移動 · 左=原画</div>
+  <video id="origView" muted playsinline></video>
+  <button id="peek">👁 原画 (長押し)</button>
 </div>
 <div id="deck">
   <div id="presets"><span class="lbl">preset</span></div>
@@ -121,37 +127,21 @@
 // Filter lab — every catalog filter on the live webcam, in this tab.
 // The chip strip and every slider come from fs_filters_json(): the same
 // single-source table (filters_def.h) that feeds Scene parsing, so this
-// page can never drift from the engine. Drag the canvas to wipe original
-// vs filtered; time-driven filters (lsd/notebook/ntsc/fractal…) animate
-// through their `time` slot.
+// page can never drift from the engine. Hold the 原画 button (or Space)
+// to peek at the raw feed; time-driven filters (lsd/notebook/ntsc/fractal…)
+// animate through their `time` slot.
 import createFluentScene from './fluent_scene.mjs';
 
+// The scene is exactly the user's composition — the original-peek is a
+// pure viewer affordance (a raw <video> overlay), never part of the document.
 const SCENE = `
 schema: fluent.scene/v1alpha2
 stage: { size: [1280, 720] }
 inputs:
   camera: { type: image.rgba8, update: per_frame }
-params:
-  wipe_win: { type: vec2, default: [0, 360], runtime_mutable: true,
-              animate: { duration: 0.1, ease: ease_out } }
-  wipe_inv: { type: vec2, default: [1280, 360], runtime_mutable: true,
-              animate: { duration: 0.1, ease: ease_out } }
-  divider: { type: vec2, default: [640, 360], runtime_mutable: true,
-             animate: { duration: 0.1, ease: ease_out } }
 layers:
   - id: after
     content: { image: { source: $inputs.camera, fit: cover } }
-  - id: before_win
-    bounds: [0, 0, 1280, 720]
-    masks_to_bounds: true
-    position: $params.wipe_win
-    sublayers:
-      - bounds: [0, 0, 1280, 720]
-        position: $params.wipe_inv
-        content: { image: { source: $inputs.camera, fit: cover } }
-  - id: divider_line
-    position: $params.divider
-    content: { rect: { size: [3, 720], color: [1, 1, 1, 0.55] } }
 `;
 
 const bar = document.getElementById('bar');
@@ -443,33 +433,9 @@ function fallbackToCpu(why) {
   fresh.width = 1280; fresh.height = 720;
   canvas.replaceWith(fresh);
   canvas = fresh;
-  hookWipe(canvas);
   ctx = canvas.getContext('2d');
 }
 
-// ---- wipe ------------------------------------------------------------------
-function setWipe(s) {
-  s = Math.max(0, Math.min(stageW, s));
-  fs.setParamVec2(inst, 'wipe_win', s - 640, 360);
-  fs.setParamVec2(inst, 'wipe_inv', 1920 - s, 360);
-  fs.setParamVec2(inst, 'divider', s, 360);
-}
-let dragging = false;
-function hookWipe(el) {
-  el.addEventListener('pointerdown', e => {
-    dragging = true; el.setPointerCapture(e.pointerId);
-    const r = el.getBoundingClientRect();
-    setWipe((e.clientX - r.left) / r.width * stageW);
-    e.preventDefault();
-  });
-  el.addEventListener('pointermove', e => {
-    if (!dragging) return;
-    const r = el.getBoundingClientRect();
-    setWipe((e.clientX - r.left) / r.width * stageW);
-  });
-  el.addEventListener('pointerup', () => { dragging = false; });
-}
-hookWipe(canvas);
 
 // ---- webcam ----------------------------------------------------------------
 const res = new URLSearchParams(location.search).get('res');
@@ -505,6 +471,34 @@ async function camUp() {
 }
 await camUp();
 document.addEventListener('pointerdown', () => { if (!video) camUp(); }, { passive: true });
+
+// ---- original peek: hold the button (or Space) to see the raw feed -------
+// A pure viewer overlay — the engine, the scene, and any stateful filter
+// fields are untouched while peeking.
+const origView = document.getElementById('origView');
+const peekBtn = document.getElementById('peek');
+function peekShow(on) {
+  if (on && video) {
+    if (origView.srcObject !== video.srcObject) {
+      origView.srcObject = video.srcObject;
+    }
+    origView.play().catch(() => {});
+    origView.style.display = 'block';
+  } else {
+    origView.style.display = 'none';
+  }
+}
+peekBtn.addEventListener('pointerdown', e => { e.preventDefault(); peekShow(true); });
+for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) {
+  peekBtn.addEventListener(ev, () => peekShow(false));
+}
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && !e.repeat && e.target.tagName !== 'INPUT') {
+    e.preventDefault();
+    peekShow(true);
+  }
+});
+document.addEventListener('keyup', e => { if (e.code === 'Space') peekShow(false); });
 
 // ---- render loop -----------------------------------------------------------
 let last = performance.now(), frames = 0, fpsShown = 0;
