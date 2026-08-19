@@ -738,6 +738,7 @@ const SPEC = Object.fromEntries(CATALOG.map(f => [f.name, f]));
 // Japanese identity (name → [label, blurb, emoji]).
 const JA = {
   lut: ['カラーLUT', '3D LUTカラーグレード', '🎞'],
+  texture: ['テクスチャ', '紙・粒状・光漏れのタイル合成', '🧵'],
   grayscale: ['モノクロ', '輝度だけ残す', '🌑'], sepia: ['セピア', '古写真の褐色', '🟤'],
   invert: ['ネガ反転', '色を反転', '🔃'], hue: ['色相回転', '色相環をずらす', '🌈'],
   exposure: ['露出', 'EVで明るく/暗く', '☀️'], white_balance: ['ホワイトバランス', '色温度と色被り', '🌡'],
@@ -832,6 +833,11 @@ function addNode(type, x, y, extra = {}) {
     Object.assign(n, { name: extra.name, on: true,
         vals: s.params.map(p => extra.params?.[p.name] !== undefined
             ? clampToRange(p, extra.params[p.name]) : p.def) });
+    if (extra.name === 'texture') {
+      const k = extra.params && TEX_PLATES[extra.params._tex] ? extra.params._tex : 'grain';
+      n.tex = k;
+      n.texLabel = TEX_PLATES[k].jp;
+    }
   } else if (type === 'mix') {
     Object.assign(n, { blend: extra.blend || 'normal', op: extra.op ?? 0.5 });
   } else if (type === 'split') {
@@ -1107,6 +1113,48 @@ const LUT_PRESETS = [
   ['faded_film', '退色フィルム', '浅黒の褪せたレトロ'],
   ['mono_noir', 'モノクロノワール', '冷たい銀のハイコントラストB&W'],
 ];
+// texture用プレート: [ファイル, 一辺, 和名, 推奨params]
+// 推奨はc1のペアリング表 (grainは中灰0.5が恒等元なのでoverlayが破綻しない)
+const TEX_PLATES = {
+  washi:   { src: './washi.jpg',   size: 1024, jp: '和紙',
+             rec: { blend: 0, strength: 0.7, scale: 1.6, fit: 0 } },
+  wcpaper: { src: './wcpaper.jpg', size: 1024, jp: '冷圧紙',
+             rec: { blend: 0, strength: 0.7, scale: 1.6, fit: 0 } },
+  canvas:  { src: './canvas.jpg',  size: 1024, jp: 'キャンバス',
+             rec: { blend: 0, strength: 0.6, scale: 2.0, fit: 0 } },
+  grain:   { src: './grain.jpg',   size: 512,  jp: '粒状',
+             rec: { blend: 2, strength: 0.45, scale: 0.45, fit: 0 } },
+  dust:    { src: './dust.jpg',    size: 1024, jp: 'ほこり傷',
+             rec: { blend: 1, strength: 0.7, scale: 1, fit: 0 } },
+  leak:    { src: './leak.jpg',    size: 1024, jp: 'リークライト',
+             rec: { blend: 1, strength: 0.85, scale: 1, fit: 1 } },
+};
+const texData = {}, texUploaded = new Set();
+function ensureTexImg(key) {
+  const pl = TEX_PLATES[key];
+  if (!pl) return false;
+  if (!(key in texData)) {
+    texData[key] = null;                // fetch in flight
+    (async () => {
+      try {
+        const bmp = await createImageBitmap(await (await fetch(pl.src)).blob());
+        const c = document.createElement('canvas');
+        c.width = c.height = pl.size;
+        const cx = c.getContext('2d');
+        cx.drawImage(bmp, 0, 0, pl.size, pl.size);
+        texData[key] = cx.getImageData(0, 0, pl.size, pl.size).data;
+        pushChains(simT);
+      } catch (e) { console.error('texture plate load failed:', key, e); }
+    })();
+  }
+  if (!texData[key]) return false;
+  if (!texUploaded.has(key)) {          // image buffers live per instance
+    const ptr = fs.imageBuffer(inst, 'texb_' + key, pl.size, pl.size);
+    mod.HEAPU8.set(texData[key], ptr);
+    texUploaded.add(key);
+  }
+  return true;
+}
 const lutData = {}, lutUploaded = new Set();
 function ensureLutImg(key) {
   if (!(key in lutData)) {
@@ -1140,6 +1188,7 @@ function rebuildScene() {
   inst = next;
   for (const k of Object.keys(papers)) papers[k][3] = false;
   lutUploaded.clear();
+  texUploaded.clear();
   maskReady = false;                    // mask buffers live per instance
   maskHReady = false;
   handMaskZeroed = false;
@@ -1174,6 +1223,14 @@ function pushChains(t) {
     const lutNode = u.deco.filters.find(n => n.on && n.name === 'lut' && n.lut);
     if (lutNode && ensureLutImg(lutNode.lut)) {
       fs.setFilterImage(inst, u.id, 'lut', 'lut_' + lutNode.lut, 512, 512);
+    }
+    const texNode = u.deco.filters.find(n => n.on && n.name === 'texture');
+    if (texNode) {
+      const key = TEX_PLATES[texNode.tex] ? texNode.tex : 'grain';
+      if (ensureTexImg(key)) {
+        fs.setFilterImage(inst, u.id, 'texture', 'texb_' + key,
+                          TEX_PLATES[key].size, TEX_PLATES[key].size);
+      }
     }
   }
 }
@@ -1367,6 +1424,8 @@ function nodeMeta(n) {
                                  ac: NODE_ACCENT.out, outs: [], ins: [''] };
   if (n.type === 'filter' && n.name === 'lut') return { emoji: '🎞',
       j: n.lutLabel || 'カラーLUT', e: 'lut', ac: '#f0c674', outs: [''], ins: [''] };
+  if (n.type === 'filter' && n.name === 'texture') return { emoji: '🧵',
+      j: n.texLabel || 'テクスチャ', e: 'texture', ac: '#e0a06a', outs: [''], ins: [''] };
   return { emoji: jaEmoji(n.name), j: jaLabel(n.name), e: n.name,
            ac: accentOf(n.name), outs: [''], ins: [''] };
 }
@@ -2005,6 +2064,31 @@ function renderInspector() {
       : n.type === 'hands' ? '両手の親指+人差し指の指フレーム。枠内/枠外ポートで枝分かれ'
       : n.type === 'xform' ? '小窓(ドラッグ移動/ホイール拡縮)か全面ミキサーでブレンド合成'
       : '入ってきた枝を下から順に重ねます (グラフの縦位置=重なり順)';
+  if (n.type === 'filter' && n.name === 'texture') {
+    const row = document.createElement('label');
+    row.className = 'slider';
+    row.append('テクスチャ');
+    const sel = document.createElement('select');
+    for (const [k, pl] of Object.entries(TEX_PLATES)) {
+      const o = document.createElement('option');
+      o.value = k;
+      o.textContent = pl.jp;
+      if ((n.tex || 'grain') === k) o.selected = true;
+      sel.append(o);
+    }
+    sel.addEventListener('change', () => {
+      const pl = TEX_PLATES[sel.value];
+      n.tex = sel.value;
+      n.texLabel = pl.jp;
+      SPEC.texture.params.forEach((p, i) => {
+        if (pl.rec[p.name] !== undefined) n.vals[i] = pl.rec[p.name];
+      });
+      applyGraph(false);
+      renderInspector();
+    });
+    row.append(sel);
+    paramsBox.append(row);
+  }
   if (n.type === 'filter') {
     if (timeIndex(SPEC[n.name]) >= 0) {
       const row = sliderRow('アニメ速度', 0, 2, 0.05, animSpeed, v => { animSpeed = v; });
@@ -2221,6 +2305,7 @@ function packGraph() {
       if (n.type === 'filter') {
         o.f = n.name;
         if (n.name === 'lut' && n.lut) o.lu = n.lut;
+        if (n.name === 'texture' && n.tex) o.tx = n.tex;
         if (!n.on) o.off = 1;
         const s = SPEC[n.name], v = {};
         s.params.forEach((p, i) => {
@@ -2319,6 +2404,10 @@ function unpackGraph(packed) {
           if (o.f === 'lut' && typeof o.lu === 'string') {
             n.lut = o.lu;
             n.lutLabel = (LUT_PRESETS.find(p => p[0] === o.lu) || [null, null])[1];
+          }
+          if (o.f === 'texture') {
+            n.tex = TEX_PLATES[o.tx] ? o.tx : 'grain';
+            n.texLabel = TEX_PLATES[n.tex].jp;
           }
         } else if (o.t === 'person' && !nodes.some(x => x.type === 'person')) {
           n = addNode('person', o.x, o.y, { feather: Number(o.fe) || 5 });
@@ -2544,6 +2633,54 @@ function buildPalette(q) {
     cat.append(h, grid);
     palBody.append(cat);
   }
+  // texture plates — the engine's texture filter with a bound plate
+  const tmatch = Object.entries(TEX_PLATES).filter(([k, pl]) => !q ||
+      pl.jp.includes(q) || k.includes(q) || 'texture'.includes(q) || 'テクスチャ'.includes(q));
+  if (tmatch.length) {
+    const cat = document.createElement('div');
+    cat.className = 'palcat';
+    const h = document.createElement('h4');
+    h.textContent = '🧵 テクスチャ';
+    h.style.color = '#e0a06a';
+    const grid = document.createElement('div');
+    grid.className = 'palgrid';
+    const TEX_DESC = { washi: '楮繊維の和紙目', wcpaper: '水彩の冷圧紙目',
+                       canvas: '画布の織り目', grain: '銀塩の粒子',
+                       dust: 'ほこりと引っかき傷', leak: 'フィルムの光漏れ' };
+    for (const [key, pl] of tmatch) {
+      const btn = document.createElement('button');
+      btn.className = 'palitem';
+      btn.style.setProperty('--ac', '#e0a06a');
+      const pe = document.createElement('span');
+      pe.className = 'pe';
+      pe.textContent = '🧵';
+      const tx = document.createElement('div');
+      const t = document.createElement('div');
+      t.className = 't';
+      t.textContent = pl.jp + ' ';
+      const sm = document.createElement('small');
+      sm.textContent = 'texture';
+      t.append(sm);
+      const d = document.createElement('div');
+      d.className = 'd';
+      d.textContent = TEX_DESC[key] || '';
+      tx.append(t, d);
+      btn.append(pe, tx);
+      btn.addEventListener('click', () => {
+        palOverlay.classList.remove('open');
+        const f = addFilterNode('texture', { ...pl.rec });
+        if (f) {
+          f.tex = key;
+          f.texLabel = pl.jp;
+          applyGraph(true);
+          say('「' + pl.jp + '」テクスチャを重ねました — 強さと粗さはスライダで');
+        }
+      });
+      grid.append(btn);
+    }
+    cat.append(h, grid);
+    palBody.append(cat);
+  }
   // LUT color grades — the engine's native lut filter with a bound atlas
   const lmatch = LUT_PRESETS.filter(p => !q || p[1].toLowerCase().includes(q) ||
                                     p[0].includes(q) || 'lut'.includes(q) || 'カラー'.includes(q));
@@ -2748,7 +2885,30 @@ const LOOK_PRESETS = [
     chain: [{ name: 'sepia', params: { intensity: 0.45 } },
             { name: 'wobble', params: { amount: 2.5, fps: 12 } },
             { name: 'ntsc', params: { noise: 0.12, artifacts: 0.2, fringing: 0.1 } },
+            { name: 'texture', params: { _tex: 'dust', blend: 1, strength: 0.7 } },
             { name: 'vignette', params: { start: 0.35, end: 1.0 } }] },
+  // ---- 質感 (texture 54) ----
+  { cat: '質感', emoji: '🎞', name: 'フィルムグレイン',
+    keys: ['グレイン', '粒状', 'ざらざら', 'ざらつき', '銀塩'],
+    chain: [{ name: 'color_transform', params: { contrast: 1.08, saturation: 0.92 } },
+            { name: 'texture', params: { _tex: 'grain', blend: 2, strength: 0.5, scale: 0.45 } }] },
+  { cat: '質感', emoji: '📽', name: '古い映画',
+    keys: ['古い映画', '昔の映画', 'サイレント', '映写機', 'フィルム傷'],
+    chain: [{ name: 'sepia', params: { intensity: 0.6 } },
+            { name: 'texture', params: { _tex: 'dust', blend: 1, strength: 0.8 } },
+            { name: 'vignette', params: { start: 0.35, end: 1.0 } }] },
+  { cat: '質感', emoji: '🌅', name: 'リークライト',
+    keys: ['光漏れ', 'リーク', 'エモい光', 'エモく'],
+    chain: [{ name: 'white_balance', params: { temperature: 0.3 } },
+            { name: 'texture', params: { _tex: 'leak', blend: 1, strength: 0.85, fit: 1 } }] },
+  { cat: '質感', emoji: '🖼', name: 'キャンバス画',
+    keys: ['キャンバス', '画布', '厚塗り'],
+    chain: [{ name: 'oilpaint', params: { radius: 6 } },
+            { name: 'texture', params: { _tex: 'canvas', blend: 0, strength: 0.6, scale: 2 } }] },
+  { cat: '質感', emoji: '📜', name: '和紙の風合い',
+    keys: ['和紙', '紙に描いた', '紙の質感', '紙目'],
+    chain: [{ name: 'color_transform', params: { saturation: 0.9 } },
+            { name: 'texture', params: { _tex: 'washi', blend: 0, strength: 0.7, scale: 1.6 } }] },
   { cat: 'レトロ', emoji: '🟤', name: '古い写真', keys: ['古い写真', 'セピア', 'アンティーク', '色あせ'],
     chain: [{ name: 'sepia', params: { intensity: 0.8 } },
             { name: 'blur', params: { radius: 0.8 } },
@@ -2923,6 +3083,16 @@ function bestLook(t) {
 
 // ---- built-in composer (offline "AI") --------------------------------------
 const RECIPES = [
+  [/フィルムグレイン|グレイン|粒状|ざらざら|ざらつき/,
+   [['texture', { _tex: 'grain', blend: 2, strength: 0.5, scale: 0.45 }]], '銀塩の粒子を重ねて'],
+  [/古い映画|昔の映画|8\s*ミリ|映写機|フィルム傷|サイレント映画/,
+   [['sepia', {}], ['vignette', {}],
+    ['texture', { _tex: 'dust', blend: 1, strength: 0.8 }]], 'ほこりと傷の走る古いフィルム'],
+  [/光漏れ|リークライト|リーク|エモい光/,
+   [['texture', { _tex: 'leak', blend: 1, strength: 0.85, fit: 1 }]], 'フィルムの光漏れを差し込んで'],
+  [/キャンバス|画布/,
+   [['oilpaint', { radius: 6 }],
+    ['texture', { _tex: 'canvas', blend: 0, strength: 0.6, scale: 2 }]], 'キャンバス地に厚塗りで'],
   [/夕焼|夕暮|サンセット|sunset|ノスタルジ|黄昏/, [['white_balance', { temperature: 0.55 }], ['color_transform', { saturation: 1.1 }], ['vignette', {}]], '夕暮れの空気は色温度とビネットで'],
   [/昔|レトロ|フィルム|昭和|vhs|ビデオ|テープ|古いカメラ|古びた/, [['ntsc', { noise: 0.15 }], ['crt', {}]], 'アナログ信号を通してブラウン管へ'],
   [/映画|シネマ|cinema|劇場/, [['color_transform', { contrast: 1.15, saturation: 0.85 }], ['vignette', { start: 0.3 }]], 'コントラスト高め・彩度控えめのシネマルック'],
