@@ -2816,7 +2816,7 @@ function openShaderPanel(target) {
   shTarget = target;
   const n = target === 'out' ? null : nodeById(target);
   $('shCode').value = n ? n.code : (postCode || SHADER_TEMPLATES[1][1]);
-  $('shTitle').textContent = n ? '🧪 GLSLシェーダノード — この枝の入力にかかります'
+  $('shTitle').textContent = n ? '🧪 ' + (n.name || 'GLSLシェーダノード') + ' — この枝の入力にかかります'
                                : '🧪 仕上げシェーダ — 出力全体への最終パス';
   $('shName').value = (n && n.name) || '';
   renderShLib();
@@ -2841,10 +2841,12 @@ function applyShader() {
   if (err) { $('shErr').textContent = err; return err; }
   n.code = code;
   n.on = true;
+  const nm = $('shName').value.trim().slice(0, 40);
+  if (nm) n.name = nm;                 // 適用でも名前は反映 — 保存専用にしない
   delete procCache[n.id];
   applyGraph(true);
   $('shErr').textContent = '';
-  say('シェーダをノードに適用しました — 後段のフィルタとも合成されます');
+  say('「' + (n.name || 'シェーダ') + '」をノードに適用しました — 後段のフィルタとも合成されます');
   return null;
 }
 async function genShader() {
