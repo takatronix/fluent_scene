@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.14.2 — 2026-08-19 (anime.html: AnimeGANv3ブラウザデモ)
+
+- **anime.html**: AnimeGANv3 (公式ONNX, Hayao/Shinkai) をonnxruntime-web
+  (WebGPU→wasmフォールバック) でブラウザ推論するアナライザデモ。
+  MediaPipe自撮りセグメンテーションとのJS合成で「人物だけ/背景だけ
+  アニメ」スコープ、原画|アニメのドラッグ比較、解像度ラダー
+  (256/384/512)。推論はエンジン外 (設計書
+  docs/design/anime_style_filter.ja.md) — コアは無変更。
+  シェーダ実装の `anime` フィルタ (FS_ANIME=40) とは別物・相補
+  (あちらは単一パスのセル画様式、こちらはGANの画風変換)
+- モデル重みは `wasm/dist/models/` に同梱 (**非商用ライセンス**、
+  models/LICENSE.txt)。GitHubリリース資産はCORSヘッダを返さないため
+  同一オリジン配置が唯一のブラウザ配布経路
+- デモハブに anime gan カード追加
+
 ## 0.14.1 — 2026-08-19 (水彩の絵画化 / 印象派の長筆致・原色)
 
 - **watercolor**: 実カメラで「滲んだ写真」にしかならない指摘 (オーナー)

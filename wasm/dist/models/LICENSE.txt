@@ -1,0 +1,15 @@
+AnimeGANv3_Hayao_36.onnx / AnimeGANv3_Shinkai_37.onnx
+
+Official pretrained AnimeGANv3 generators by TachibanaYoshino, taken
+unmodified from https://github.com/TachibanaYoshino/AnimeGANv3
+(release v1.1.0).
+
+These weights are NOT covered by this repository's MIT license. They are
+made freely available for NON-COMMERCIAL purposes only (academic research,
+teaching, personal use). For commercial use you must obtain an
+authorization letter from the author — see the AnimeGANv3 repository
+README for contact details.
+
+They are bundled here solely so the anime.html demo can run same-origin
+in the browser. The fluent_scene engine itself does not link or contain
+them.

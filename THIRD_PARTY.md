@@ -3,11 +3,12 @@
 fluent_scene 本体は **MIT** (© 2026 takatronix)。ただし以下の例外・系譜・
 同梱物があります。**商用利用の可否はこの表が正**です。
 
-## ⚠️ 非商用の例外 (この1本のみ)
+## ⚠️ 非商用の例外 (この2件のみ)
 
 | 対象 | 由来 | ライセンス | 備考 |
 |---|---|---|---|
 | `notebook` フィルタ (`FS_NOTEBOOK`) | flockaroo "notebook drawings" ([shadertoy XtVGD1](https://www.shadertoy.com/view/XtVGD1)) の移植 | **CC BY-NC-SA 3.0 — 非商用限定** | 商用ビルドに含めないこと。他の全フィルタは MIT |
+| AnimeGANv3 学習済み重み (`wasm/dist/models/*.onnx`) | [TachibanaYoshino/AnimeGANv3](https://github.com/TachibanaYoshino/AnimeGANv3) 公式リリース v1.1.0、無改変 | **非商用限定** (商用は作者の許諾レター要) | anime.html デモ専用アセット。エンジンにはリンクしない。詳細 `wasm/dist/models/LICENSE.txt` |
 
 ## 独自実装だが系譜を明記するもの (すべて MIT)
 
@@ -50,6 +51,8 @@ fluent_scene 本体は **MIT** (© 2026 takatronix)。ただし以下の例外�
 | `portrait.html` | [@mediapipe/tasks-vision](https://www.npmjs.com/package/@mediapipe/tasks-vision) (CDN) | Apache-2.0 | |
 | `portrait.html` | Selfie Segmenter モデル (Google 配布) | Apache-2.0 ([model card](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20MediaPipe%20Selfie%20Segmentation.pdf)) | 実行時に CDN からダウンロード |
 | `gaze.html` | MediaPipe Face Landmarker | Apache-2.0 | 同上 |
+| `anime.html` | [onnxruntime-web](https://www.npmjs.com/package/onnxruntime-web) (CDN) | MIT | GAN 推論ランタイム |
+| `anime.html` | MediaPipe Selfie Segmenter | Apache-2.0 | 人物/背景スコープ用。実行時に CDN からダウンロード |
 
 ## 今後の NN フィルタ実験の方針 (オーナー決定 2026-08-19)
 

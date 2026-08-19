@@ -1,0 +1,291 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>fluent scene — anime style (AnimeGANv3)</title>
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; align-items: center;
+         justify-content: center; gap: 10px;
+         background: radial-gradient(120% 120% at 50% 0%, #131822 0%, #07090d 70%);
+         color: #dfe5ec; font: 14px/1.5 system-ui, sans-serif; }
+  #v { display: block; max-width: 96vw; max-height: 78vh; aspect-ratio: 16 / 9;
+       background: #000; border-radius: 14px;
+       box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.5);
+       touch-action: none; user-select: none; cursor: ew-resize; }
+  #bar { font-family: ui-monospace, monospace; color: #7c8a99; font-size: 12px;
+         white-space: pre-wrap; text-align: center; max-width: 96vw; }
+  #ui { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  button, select { font: 13px system-ui, sans-serif; color: #dfe5ec;
+         background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+         border-radius: 999px; padding: 7px 16px; cursor: pointer; }
+  button:hover, select:hover { background: rgba(255,255,255,0.16); }
+  #start { font-size: 15px; padding: 10px 26px;
+           background: rgba(60,190,130,0.25); border-color: rgba(60,190,130,0.5); }
+</style>
+<canvas id="v" width="1280" height="720"></canvas>
+<div id="ui">
+  <button id="start">▶ start camera</button>
+  <select id="model" title="style">
+    <option value="models/AnimeGANv3_Hayao_36.onnx">Hayao style</option>
+    <option value="models/AnimeGANv3_Shinkai_37.onnx">Shinkai style</option>
+  </select>
+  <select id="scope" title="where the style lands">
+    <option value="full">everything</option>
+    <option value="person">person only</option>
+    <option value="background">background only</option>
+  </select>
+  <select id="res" title="inference size">
+    <option value="256">256px (fast)</option>
+    <option value="384" selected>384px</option>
+    <option value="512">512px (fine)</option>
+  </select>
+  <button id="flip" title="switch camera">🔄</button>
+</div>
+<div id="bar">AnimeGANv3 in your browser — drag on the video for an original | anime split.
+Weights © TachibanaYoshino, non-commercial license (models/LICENSE.txt).</div>
+<a href="https://x.com/takatronix" target="_blank" rel="noopener" style="position:fixed;right:12px;bottom:10px;z-index:9;font:11px ui-monospace,monospace;color:rgba(255,255,255,0.6);text-decoration:none;background:rgba(0,0,0,0.35);padding:4px 10px;border-radius:999px;backdrop-filter:blur(4px)">fluent_scene · by <b style="color:rgba(255,255,255,0.85)">@takatronix</b></a>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.js"></script>
+<script type="module">
+// Anime-style AI filter — the analyzer pattern from the anime_style_filter
+// design doc, Phase A. The GAN (AnimeGANv3, ~4 MB generator) runs OUTSIDE
+// the engine: camera frame in, stylized frame out. "Person only" composes
+// it with a second analyzer (MediaPipe selfie segmentation) the same way
+// the engine's mask plumbing will (Phase C): mix(src, anime, mask).
+//
+// Model I/O (deploy/test_by_onnx.py): NHWC float32 RGB, x/127.5−1,
+// H and W multiples of 8 (min 256), dynamic shape. Output in [−1, 1].
+// URL knobs: ?ep=wasm forces the CPU path, ?auto=1 starts without a click
+// (headless smoke), ?res=256 picks the ladder rung.
+const bar = document.getElementById('bar');
+const view = document.getElementById('v');
+const vctx = view.getContext('2d');
+const q = new URLSearchParams(location.search);
+
+// The runtime comes from a CDN <script>; if that fetch failed, keep the page
+// alive and say so instead of dying on the first `ort.` reference.
+const haveOrt = typeof ort !== 'undefined';
+if (haveOrt) {
+  ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
+  if (crossOriginIsolated) ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 1);
+}
+
+let session = null, epName = '?', busy = false, stream = null, facing = 'user';
+const mk = () => { const c = document.createElement('canvas'); return [c, c.getContext('2d', { willReadFrequently: true })]; };
+const [srcCanvas, srcCtx] = mk();       // the exact frame the GAN sees
+const [animeCanvas, animeCtx] = mk();   // raw GAN output
+const [maskCanvas, maskCtx] = mk();     // segmentation alpha
+const [outCanvas, outCtx] = mk();       // composed frame we display
+const video = document.createElement('video');
+video.playsInline = true; video.muted = true;   // iOS: playsinline is the key
+
+// ---- original | anime split compare ----------------------------------------
+let split = 0;
+function pointerSplit(e) {
+  const r = view.getBoundingClientRect();
+  split = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+}
+view.addEventListener('pointerdown', e => { view.setPointerCapture(e.pointerId); pointerSplit(e); });
+view.addEventListener('pointermove', e => { if (e.buttons) pointerSplit(e); });
+
+// ---- GAN session: same-origin model, download progress, webgpu → wasm ------
+async function loadModel(url) {
+  session = null;
+  if (!haveOrt) { bar.textContent = 'onnxruntime-web failed to load from the CDN — check the connection and reload'; throw new Error('no ort'); }
+  const name = url.split('/').pop();
+  const resp = await fetch(url);
+  if (!resp.ok) { bar.textContent = 'model fetch failed: ' + resp.status; throw new Error(url); }
+  const total = +resp.headers.get('content-length') || 0;
+  const parts = []; let got = 0;
+  for (const reader = resp.body.getReader();;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value); got += value.length;
+    bar.textContent = `downloading ${name}… ${(got / 1048576).toFixed(1)}` +
+                      (total ? ` / ${(total / 1048576).toFixed(1)} MB` : ' MB');
+  }
+  const buf = new Uint8Array(got); let o = 0;
+  for (const p of parts) { buf.set(p, o); o += p.length; }
+  let lastErr = null;
+  for (const ep of (q.get('ep') ? [q.get('ep')] : ['webgpu', 'wasm'])) {
+    try { session = await ort.InferenceSession.create(buf, { executionProviders: [ep] }); epName = ep; break; }
+    catch (e) { lastErr = e; }
+  }
+  if (!session) { bar.textContent = 'model load failed: ' + lastErr; throw lastErr; }
+}
+
+// ---- segmentation analyzer (lazy): MediaPipe selfie segmenter --------------
+let segmenter = null, segLoading = false;
+async function ensureSegmenter() {
+  if (segmenter || segLoading) return;
+  segLoading = true;
+  bar.textContent = 'loading segmenter…';
+  try {
+    const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+    const vision = await import(`${MP}/vision_bundle.mjs`);
+    const files = await vision.FilesetResolver.forVisionTasks(`${MP}/wasm`);
+    const make = delegate => vision.ImageSegmenter.createFromOptions(files, {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
+        delegate,
+      },
+      runningMode: 'VIDEO',
+      outputConfidenceMasks: true,
+      outputCategoryMask: false,
+    });
+    try { segmenter = await make('GPU'); }
+    catch (e) { console.error('segmenter GPU delegate failed, retrying on CPU:', e); segmenter = await make('CPU'); }
+  } catch (e) {
+    console.error('segmenter unavailable:', e);
+    document.getElementById('scope').value = 'full';
+    bar.textContent = 'segmenter unavailable — falling back to everything';
+  } finally { segLoading = false; }
+}
+document.getElementById('scope').addEventListener('change',
+  e => { if (e.target.value !== 'full') ensureSegmenter(); });
+
+function drawMask(conf, w, h, invert) {
+  // confidence → alpha at model resolution, then let the canvas scaler feather
+  const mw = conf.width, mh = conf.height, m = conf.getAsFloat32Array();
+  const [tiny, tctx] = mk();
+  tiny.width = mw; tiny.height = mh;
+  const id = tctx.createImageData(mw, mh);
+  for (let i = 0; i < mw * mh; i++) id.data[i * 4 + 3] = (invert ? 1 - m[i] : m[i]) * 255;
+  tctx.putImageData(id, 0, 0);
+  maskCanvas.width = w; maskCanvas.height = h;
+  maskCtx.imageSmoothingEnabled = true;
+  maskCtx.filter = 'blur(1.5px)';
+  maskCtx.drawImage(tiny, 0, 0, w, h);
+  maskCtx.filter = 'none';
+}
+
+// ---- camera -----------------------------------------------------------------
+async function startCamera() {
+  if (stream) for (const t of stream.getTracks()) t.stop();
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(
+      { video: { width: 1280, height: 720, facingMode: facing }, audio: false });
+  } catch (e) {
+    bar.textContent = 'webcam: ' + e + ' (needs https or localhost)';
+    throw e;
+  }
+  video.srcObject = stream;
+  await video.play();
+}
+document.getElementById('flip').addEventListener('click', async () => {
+  facing = facing === 'user' ? 'environment' : 'user';
+  if (stream) await startCamera();
+});
+
+// ---- inference loop: capture → GAN (+ mask) → compose one coherent frame ---
+const to8 = x => Math.max(256, x - x % 8);
+let emaMs = 0, emaFps = 0, lastT = performance.now();
+
+async function inferOnce() {
+  if (!session || busy || video.readyState < 2) return;
+  busy = true;
+  try {
+    const long = parseInt(document.getElementById('res').value, 10);
+    const ar = video.videoWidth / video.videoHeight || 16 / 9;
+    const w = to8(ar >= 1 ? long : Math.round(long * ar));
+    const h = to8(ar >= 1 ? Math.round(long / ar) : long);
+    if (srcCanvas.width !== w || srcCanvas.height !== h) {
+      srcCanvas.width = w; srcCanvas.height = h;
+      animeCanvas.width = w; animeCanvas.height = h;
+      outCanvas.width = w; outCanvas.height = h;
+    }
+    srcCtx.drawImage(video, 0, 0, w, h);
+
+    // mask first, on the SAME frame the GAN will see (time-consistent pair)
+    const scope = document.getElementById('scope').value;
+    let haveMask = false;
+    if (scope !== 'full' && segmenter) {
+      const res = segmenter.segmentForVideo(srcCanvas, performance.now());
+      const conf = res.confidenceMasks && res.confidenceMasks[0];
+      if (conf) { drawMask(conf, w, h, scope === 'background'); haveMask = true; }
+      res.close();
+    }
+
+    const rgba = srcCtx.getImageData(0, 0, w, h).data;
+    const n = w * h;
+    const inp = new Float32Array(n * 3);
+    for (let i = 0, j = 0; i < n; i++, j += 4) {
+      inp[i * 3]     = rgba[j]     / 127.5 - 1;
+      inp[i * 3 + 1] = rgba[j + 1] / 127.5 - 1;
+      inp[i * 3 + 2] = rgba[j + 2] / 127.5 - 1;
+    }
+    const t0 = performance.now();
+    const out = (await session.run(
+      { [session.inputNames[0]]: new ort.Tensor('float32', inp, [1, h, w, 3]) }))[session.outputNames[0]];
+    emaMs = emaMs ? emaMs * 0.9 + (performance.now() - t0) * 0.1 : performance.now() - t0;
+
+    const o = out.data;
+    const pix = new Uint8ClampedArray(n * 4);
+    for (let i = 0, j = 0; i < n; i++, j += 4) {
+      pix[j]     = (o[i * 3]     + 1) * 127.5;
+      pix[j + 1] = (o[i * 3 + 1] + 1) * 127.5;
+      pix[j + 2] = (o[i * 3 + 2] + 1) * 127.5;
+      pix[j + 3] = 255;
+    }
+    animeCtx.putImageData(new ImageData(pix, w, h), 0, 0);
+
+    // compose: whole frame from the paired source, so person/background
+    // never smear against a newer camera frame
+    if (haveMask) {
+      animeCtx.globalCompositeOperation = 'destination-in';
+      animeCtx.drawImage(maskCanvas, 0, 0);
+      animeCtx.globalCompositeOperation = 'source-over';
+      outCtx.drawImage(srcCanvas, 0, 0);
+      outCtx.drawImage(animeCanvas, 0, 0);
+    } else {
+      outCtx.drawImage(animeCanvas, 0, 0);
+    }
+
+    const now = performance.now();
+    emaFps = emaFps ? emaFps * 0.9 + 100 / (now - lastT) : 1000 / (now - lastT);
+    lastT = now;
+    bar.textContent = `${epName} · ${w}x${h} · infer ${emaMs.toFixed(0)} ms · ${emaFps.toFixed(1)} fps`
+      + (epName === 'wasm' ? ' (no WebGPU — CPU fallback)' : '');
+  } catch (e) {
+    console.error(e);
+    bar.textContent = 'inference error: ' + e;
+  } finally { busy = false; }
+}
+
+function draw() {
+  requestAnimationFrame(draw);
+  if (video.readyState < 2) return;
+  const W = view.width, H = view.height;
+  if (outCanvas.width) vctx.drawImage(outCanvas, 0, 0, W, H);
+  else vctx.drawImage(video, 0, 0, W, H);
+  if (split > 0.002) {
+    const sw = Math.round(split * W);
+    vctx.drawImage(video, 0, 0, video.videoWidth * split, video.videoHeight, 0, 0, sw, H);
+    vctx.fillStyle = 'rgba(255,255,255,0.8)';
+    vctx.fillRect(sw - 1, 0, 2, H);
+  }
+  inferOnce();   // fire-and-forget; `busy` keeps queue depth at 1
+}
+
+const startBtn = document.getElementById('start');
+async function start() {
+  startBtn.disabled = true; startBtn.textContent = '…';
+  try {
+    await startCamera();                       // the user gesture turns the key (iOS)
+    await loadModel(document.getElementById('model').value);
+    startBtn.remove();
+    draw();
+  } catch (e) { startBtn.disabled = false; startBtn.textContent = '▶ start camera'; }
+}
+startBtn.addEventListener('click', start);
+document.getElementById('model').addEventListener('change', async e => {
+  if (!stream) return;
+  const keep = session; session = null;      // pause the loop while swapping
+  try { await loadModel(e.target.value); } catch (err) { session = keep; }
+});
+if (q.get('res')) document.getElementById('res').value = q.get('res');
+if (q.get('scope')) {
+  document.getElementById('scope').value = q.get('scope');
+  if (q.get('scope') !== 'full') ensureSegmenter();
+}
+if (q.get('auto')) start();
+</script>
