@@ -5233,6 +5233,64 @@ $('filePick').addEventListener('change', async e => {
   } catch (err) { say('読み込めません: ' + err.message, true); }
   e.target.value = '';
 });
+// 📋 クリップボード貼り付け (オーナー指示): 画像を選択中ノードへ文脈配線 —
+// src=入力ソース / 🧵=テクスチャ / glsl=🖼u_tex / 🎭=顔画像 / それ以外=📚へ追加。
+// 📚管理オーバレイを開いている間は常に📚へ
+async function pasteName() {
+  const all = await resAll();
+  let i = 1;
+  while (all.some(r => r.n === '貼り付け' + i)) i++;
+  return '貼り付け' + i;
+}
+async function handlePastedImage(file) {
+  const sel = nodeById(selId);
+  const overlayOpen = $('resOverlay').classList.contains('open');
+  if (!overlayOpen && sel && sel.type === 'src') {
+    const dt = new DataTransfer();
+    dt.items.add(new File([file], file.name || 'paste.png',
+                          { type: file.type || 'image/png' }));
+    $('filePick').files = dt.files;
+    $('filePick').dispatchEvent(new Event('change'));
+    say('貼り付けた画像を入力ソースにしました');
+    return;
+  }
+  const named = new File([file], await pasteName() + '.png',
+                         { type: file.type || 'image/png' });
+  const name = await resAdd(named);
+  if (!name) return;
+  if (overlayOpen) renderResGrid();
+  populateTexSel();
+  if (!overlayOpen && sel && sel.type === 'filter' && sel.name === 'texture') {
+    sel.tex = 'r:' + name;
+    sel.texLabel = name;
+    applyGraph(false);
+    renderInspector();
+    say('貼り付けた画像「' + name + '」をテクスチャにしました');
+  } else if (!overlayOpen && sel && sel.type === 'glsl') {
+    sel.tex = name;
+    applyGraph(false);
+    renderInspector();
+    say('貼り付けた画像「' + name + '」をシェーダの🖼テクスチャにしました');
+  } else if (!overlayOpen && sel && sel.type === 'face') {
+    sel.res = name;
+    applyGraph(false);
+    renderInspector();
+    say('顔画像「' + name + '」を使います — 顔が映ると差し替わります');
+  } else {
+    say('📚リソース「' + name + '」に追加しました — 🧵テクスチャ/🖼シェーダ/🎭お面から使えます');
+  }
+}
+document.addEventListener('paste', e => {
+  const a = document.activeElement;
+  if (a && (/INPUT|TEXTAREA|SELECT/.test(a.tagName) || a.isContentEditable)) return;
+  const it = [...(e.clipboardData && e.clipboardData.items || [])]
+      .find(x => x.type && x.type.startsWith('image/'));
+  if (!it) return;
+  const f = it.getAsFile();
+  if (!f) return;
+  e.preventDefault();
+  handlePastedImage(f);
+});
 window.addEventListener('dragover', e => e.preventDefault());
 window.addEventListener('drop', e => {
   e.preventDefault();
@@ -5380,6 +5438,7 @@ for (const s of nodes.filter(n => n.type === 'src' && n.kind === 'camera')) {
 }
 // testing hook (headless CI drives the graph through this)
 window.__studio = {
+  pasteImage: handlePastedImage,
   addFilterNode, addNode, connect, removeNode, applyGraph, compile,
   get nodes() { return nodes; }, get edges() { return edges; },
   get branches() { return branches; },
