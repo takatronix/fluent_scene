@@ -112,15 +112,29 @@
           transition: 0.15s; }
   #aibar .mini:hover { color: var(--ink); border-color: rgba(255,255,255,0.25);
           transform: translateY(-1px) rotate(15deg); }
+  #lookRow { width: min(93vw, 760px); margin-top: 8px; overflow: hidden; }
+  #lookTrack { display: flex; width: max-content;
+           animation: lookflow 100s linear infinite; }
+  #lookRow:hover #lookTrack, #lookRow.paused #lookTrack { animation-play-state: paused; }
+  @keyframes lookflow { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  #lookTrack .preset { flex: none; margin-right: 6px; padding: 5px 12px; font-size: 12px;
+           background: rgba(13, 11, 25, 0.72); backdrop-filter: blur(10px);
+           -webkit-backdrop-filter: blur(10px); }
+  @media (prefers-reduced-motion: reduce) {
+    #lookTrack { animation: none; }
+    #lookRow { overflow-x: auto; }
+  }
+  body.theater #lookRow { position: fixed; left: 50%; transform: translateX(-50%);
+           bottom: 74px; z-index: 30; margin: 0; }
   #aiSay { min-height: 18px; font-size: 12.5px; color: var(--dim); margin-top: 7px;
            text-align: center; padding: 0 12px; }
   #aiSay b { color: var(--cyan); font-weight: 600; }
   #aiSay.err { color: #ff8f8f; }
 
   /* ---- dock: node graph + inspector ---- */
-  #dock { width: min(97vw, 1340px); margin-top: 10px; padding: 10px 14px 12px;
-          border-radius: 20px; background: var(--glass); border: 1px solid var(--line);
-          backdrop-filter: blur(20px); display: flex; flex-direction: column; gap: 9px;
+  #dock { width: min(97vw, 1340px); margin-top: 10px; padding: 8px 10px;
+          border-radius: 16px; background: var(--glass); border: 1px solid var(--line);
+          backdrop-filter: blur(20px); display: flex; flex-direction: column; gap: 6px;
           box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45); }
   #toolbar { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
   #toolbar button { background: rgba(255,255,255,0.035); color: var(--ink);
@@ -215,10 +229,17 @@
   #dockMain { display: flex; gap: 12px; flex: 1; min-height: 0; align-items: stretch; }
   #dockMain #graph { flex: 1; min-width: 0; height: auto; min-height: 220px; }
   #insp[hidden] { display: none !important; }
-  #insp { width: 234px; min-width: 220px; flex: none; display: flex; flex-direction: column; gap: 8px;
-          min-height: 0; overflow-y: auto; overflow-x: hidden; padding-left: 12px;
-          border-left: 1px solid var(--line); scrollbar-width: thin;
+  /* エディタの横にくっついてくる別ウィンドウ (placeInspが位置追従) */
+  #insp { position: fixed; z-index: 26; width: 248px; max-height: 70vh;
+          display: flex; flex-direction: column; gap: 8px;
+          padding: 10px 12px; border-radius: 16px;
+          background: rgba(13, 11, 24, 0.9); border: 1px solid var(--line);
+          backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+          overflow-y: auto; overflow-x: hidden; scrollbar-width: thin;
           scrollbar-color: #2c2745 transparent; }
+  #inspHead button { flex: none; }
+  #inspPin.on { color: #0c0a14; background: var(--grad); border-color: transparent; }
   #inspector { display: flex; flex-direction: column; gap: 10px; min-height: 24px; }
   #inspector .row input[type=range] { flex: 1; width: auto; min-width: 0; }
   #inspector .minmax { display: flex; justify-content: space-between;
@@ -366,7 +387,8 @@
           height: auto; border-radius: 0; }
 
   /* ---- theater mode: video fullscreen, dock = floating window ---- */
-  #dockBar { display: none; }
+  #dock[hidden] { display: none !important; }
+  /* ---- theater mode: video fullscreen, dock = floating window ---- */
   body.theater { padding: 0; height: 100vh; overflow: hidden; }
   body.theater header, body.theater #bar { display: none; }
   body.theater #frame { position: fixed; inset: 0; width: 100vw; z-index: 10;
@@ -380,29 +402,12 @@
   body.theater #aiSay { position: fixed; left: 0; right: 0; bottom: 112px; z-index: 30;
           margin: 0; text-shadow: 0 1px 6px #000; pointer-events: none; }
   body.theater #dock { position: fixed; right: 16px; top: 16px; z-index: 25;
-          width: min(720px, 94vw); height: min(560px, 86vh); max-height: 92vh;
-          min-width: 250px;
-          min-height: 42px; overflow: hidden; resize: both;
+          width: min(640px, 94vw); height: auto; max-height: 86vh; min-width: 250px;
+          min-height: 42px; overflow: auto; resize: both;
           background: rgba(13, 11, 24, 0.94); backdrop-filter: blur(20px);
           -webkit-backdrop-filter: blur(20px);
           box-shadow: 0 30px 90px rgba(0, 0, 0, 0.8); }
-  body.theater #dockBar { display: flex; align-items: center; gap: 8px;
-          cursor: grab; user-select: none; touch-action: none;
-          font: 700 12px ui-monospace, monospace; color: var(--dim);
-          padding: 0 2px 4px; }
-  #dockBar .sp { flex: 1; }
-  #dockBar button { background: none; border: 1px solid var(--line); color: var(--dim);
-          border-radius: 7px; width: 26px; height: 23px; cursor: pointer; font-size: 12px; }
-  #dockBar button:hover { color: var(--ink); border-color: rgba(255,255,255,0.3); }
-  body.theater #dock.min { height: auto !important; width: 250px !important;
-          resize: none; overflow: hidden; }
-  body.theater #dock.min > :not(#dockBar) { display: none !important; }
   #dock[hidden] { display: none !important; }
-  #dockRestore { display: none; position: fixed; right: 16px; top: 16px; z-index: 25;
-          font-size: 16px; background: rgba(13, 11, 24, 0.94); color: var(--ink);
-          border: 1px solid var(--line); border-radius: 999px; width: 42px; height: 42px;
-          cursor: pointer; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7); }
-  body.theater #dockRestore.show { display: block; }
 
   /* theater window is frosted glass on desktop — the video stays visible
      through it (phones keep the solid panel: blur is too expensive there) */
@@ -436,8 +441,8 @@
     #toolbar .tip { display: none; }
     #graph { height: 240px; }
     #dockMain { flex-direction: column; }
-    #insp { width: 100%; border-left: none; padding-left: 0; max-height: 250px;
-            border-top: 1px solid var(--line); padding-top: 8px; }
+    #insp { left: 2vw !important; right: 2vw !important; width: 96vw;
+            top: auto !important; bottom: 8px; max-height: 42vh; }
     /* the top strip is tight on a phone: sources shrink, fps pill moves down */
     #srcBtns button { padding: 4px 8px; font-size: 12px; }
     #srcTag { font-size: 10px; padding: 3px 8px; }
@@ -476,16 +481,14 @@
   <input id="aiText" placeholder="どんな見た目にしたい?">
   <button id="aiGo">生成</button>
   <button id="aiDice" class="mini" title="おまかせ">🎲</button>
+  <button id="aiEdit" class="mini" style="width:auto;padding:0 12px;font-size:12.5px"
+    title="フィルタエディタ (ノードグラフ) を開く">✏️ 編集</button>
   <button id="aiLooks" class="mini" title="ルックプリセット">🎨</button>
   <button id="aiGear" class="mini" title="AI設定">⚙</button>
 </div>
+<div id="lookRow"><div id="lookTrack"></div></div>
 <div id="aiSay"></div>
 <div id="dock">
-  <div id="dockBar"><span>🎛 フィルタ</span><span class="sp"></span>
-    <button id="inspToggle" title="パラメータパネルの表示/非表示">⫿</button>
-    <button id="dockMin" title="最小化">–</button>
-    <button id="dockClose" title="しまう">✕</button>
-  </div>
   <div id="toolbar">
     <span id="viewTabs">
       <button data-view="graph" class="on">グラフ</button><button
@@ -512,6 +515,7 @@
         <button id="btnShare" title="共有リンクをコピー">🔗</button>
         <button id="btnSnap" title="PNGスナップ">📸</button>
       </span>
+      <button id="dockClose" title="しまう (✏️編集で再表示)">✕</button>
     </span>
   </div>
   <div id="dockMain">
@@ -538,20 +542,21 @@
     <!-- TODO(v2): 双方向 — このYAMLを編集→パース→グラフへ逆反映
          (fvs parserは実行前full検査なので安全に往復できるはず) -->
   </div>
-  <div id="insp">
-    <div id="inspHead" hidden>
-      <span class="pname"></span><span class="psum"></span>
-      <button id="paramRand" title="パラメータをランダムに振る">🎲</button>
-      <button id="paramReset">リセット</button>
-    </div>
-    <div id="inspector">
-      <span id="params" style="display:contents"></span>
-    </div>
   </div>
+</div>
+<div id="insp" hidden>
+  <div id="inspHead">
+    <span class="pname"></span><span class="psum"></span>
+    <button id="paramRand" title="パラメータをランダムに振る">🎲</button>
+    <button id="paramReset">リセット</button>
+    <button id="inspPin" title="選択を外しても閉じない">📌</button>
+    <button id="inspClose" title="閉じる">✕</button>
+  </div>
+  <div id="inspector">
+    <span id="params" style="display:contents"></span>
   </div>
 </div>
 <div id="bar">loading wasm…</div>
-<button id="dockRestore" title="フィルタウィンドウを開く">🎛</button>
 
 <div id="lookOverlay" class="overlay">
   <div class="panel">
@@ -732,6 +737,9 @@ const JA = {
   halftone: ['網点', '印刷ドット', '🔘'], ripple: ['波紋', '水の屈折', '💦'],
   lsd: ['トリップ', 'サイケデリア', '👁'], fractal: ['フラクタル', '無限飛行', '🌌'],
   notebook: ['ノート鉛筆', '方眼紙に鉛筆', '📓'], wobble: ['手描き揺れ', 'コマ撮りの震え', '〰️'],
+  kaleido: ['万華鏡', '折りたたみ反射', '🔯'], fisheye: ['魚眼', 'レンズ歪み', '🐠'],
+  chromab: ['色収差', 'RGBの色ずれ', '💠'], mirror: ['シンメトリー', '鏡映合成', '🪞'],
+  thermal: ['サーモグラフィ', '熱画像風', '🔥'], glitch: ['グリッチ', 'デジタル破損', '🧨'],
 };
 const jaLabel = n => (JA[n] || [n])[0];
 const jaEmoji = n => (JA[n] || ['', '', '🔧'])[2] || '🔧';
@@ -742,11 +750,12 @@ const CATS = [
   ['PAINT', ['impressionist', 'anime', 'inkline', 'watercolor', 'sumie', 'oilpaint',
              'stainedglass', 'pixelart', 'notebook', 'wobble']],
   ['ART', ['sketch', 'toon', 'halftone', 'emboss', 'edge_sobel', 'posterize', 'solarize', 'pixelate']],
-  ['ANALOG', ['ntsc', 'crt']],
-  ['LENS', ['bokeh', 'blur', 'bilateral', 'median', 'motion_blur', 'zoom_blur', 'sharpen']],
-  ['TRIP', ['lsd', 'fractal', 'swirl', 'ripple']],
+  ['ANALOG', ['ntsc', 'crt', 'glitch']],
+  ['LENS', ['bokeh', 'blur', 'bilateral', 'median', 'motion_blur', 'zoom_blur', 'sharpen',
+             'fisheye', 'chromab']],
+  ['TRIP', ['lsd', 'fractal', 'swirl', 'ripple', 'kaleido', 'mirror']],
   ['COLOR', ['grayscale', 'sepia', 'invert', 'hue', 'exposure', 'white_balance', 'levels',
-             'threshold', 'rgb', 'haze', 'color_transform', 'vignette', 'beauty']],
+             'threshold', 'rgb', 'haze', 'color_transform', 'vignette', 'beauty', 'thermal']],
 ];
 const CAT_OF = {};
 for (const [label, names] of CATS) for (const n of names) CAT_OF[n] = label;
@@ -1765,9 +1774,7 @@ function setTheater(on) {
           .then(() => { fsWasOn = true; }).catch(() => {});
     }
   } else {
-    dock.classList.remove('min');
     dock.hidden = false;
-    $('dockRestore').classList.remove('show');
     for (const p of ['width', 'height', 'left', 'top', 'right']) dock.style[p] = '';
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   }
@@ -1777,17 +1784,14 @@ $('btnFull').addEventListener('click',
 document.addEventListener('fullscreenchange', () => {
   if (!document.fullscreenElement && fsWasOn) { fsWasOn = false; setTheater(false); }
 });
-$('dockMin').addEventListener('click', () => dock.classList.toggle('min'));
-$('dockClose').addEventListener('click', () => {
-  dock.hidden = true;
-  $('dockRestore').classList.add('show');
+$('dockClose').addEventListener('click', () => { dock.hidden = true; });
+$('aiEdit').addEventListener('click', () => {
+  dock.hidden = !dock.hidden;
 });
-$('dockRestore').addEventListener('click', () => {
-  dock.hidden = false;
-  $('dockRestore').classList.remove('show');
-});
-$('dockBar').addEventListener('pointerdown', e => {
-  if (e.target.closest('button')) return;
+$('toolbar').addEventListener('pointerdown', e => {
+  if (!document.body.classList.contains('theater')) return;
+  if (e.target.closest('button') || e.target.closest('input') ||
+      e.target.closest('select') || e.target.closest('label')) return;
   e.preventDefault();
   const r = dock.getBoundingClientRect();
   dock.style.left = r.left + 'px';
@@ -1797,6 +1801,7 @@ $('dockBar').addEventListener('pointerdown', e => {
   const onMove = ev => {
     dock.style.left = Math.max(0, Math.min(innerWidth - 80, ev.clientX - ox)) + 'px';
     dock.style.top = Math.max(0, Math.min(innerHeight - 40, ev.clientY - oy)) + 'px';
+    placeInsp();                       // 小窓はエディタにくっついてくる
   };
   const onUp = () => {
     window.removeEventListener('pointermove', onMove);
@@ -1808,15 +1813,19 @@ $('dockBar').addEventListener('pointerdown', e => {
 
 // ---- inspector -------------------------------------------------------------
 const paramsBox = $('params'), inspHead = $('inspHead');
+let inspClosedFor = null;             // ✕で閉じたノード — 別ノード選択で再表示
 function renderInspector() {
   paramsBox.replaceChildren();
   const n = nodeById(selId);
   const insp = $('insp');
   if (!n) {
-    if (insp) insp.hidden = true;   // 未選択時はパネルごと消してグラフを全幅に
+    if (insp && !inspPinned) insp.hidden = true;   // 📌中は残す
     return;
   }
-  if (insp) insp.hidden = false;
+  if (inspClosedFor === n.id && insp.hidden) return;   // このノードは閉じられた
+  inspClosedFor = null;
+  insp.hidden = false;
+  if (typeof placeInsp === 'function') placeInsp();
   const m = nodeMeta(n);
   inspHead.hidden = false;
   $('paramReset').hidden = n.type !== 'filter';
@@ -1972,10 +1981,29 @@ function sliderRow(name, lo, hi, step, val, onInput) {
   label.append(name, row, mm);
   return label;
 }
-if (localStorage.getItem('fs_insp_hidden') === '1') document.body.classList.add('inspHidden');
-$('inspToggle').addEventListener('click', () => {
-  const on = document.body.classList.toggle('inspHidden');
-  localStorage.setItem('fs_insp_hidden', on ? '1' : '0');
+// パラメータ小窓はドックの右肩に吸着し、移動/リサイズに追従する
+let inspPinned = localStorage.getItem('fs_insp_pin') === '1';
+function placeInsp() {
+  const insp = $('insp');
+  if (insp.hidden || COARSE) return;
+  const r = dock.getBoundingClientRect();
+  const w = 248 + 10;
+  const fitsRight = r.right + w < window.innerWidth - 4;
+  insp.style.left = (fitsRight ? r.right + 10 : Math.max(4, r.left - w)) + 'px';
+  insp.style.top = Math.max(4, r.top) + 'px';
+  insp.style.maxHeight = Math.max(220, Math.min(r.height, window.innerHeight - r.top - 12)) + 'px';
+}
+new ResizeObserver(placeInsp).observe(dock);
+window.addEventListener('resize', placeInsp);
+$('inspPin').classList.toggle('on', inspPinned);
+$('inspPin').addEventListener('click', () => {
+  inspPinned = !inspPinned;
+  localStorage.setItem('fs_insp_pin', inspPinned ? '1' : '0');
+  $('inspPin').classList.toggle('on', inspPinned);
+});
+$('inspClose').addEventListener('click', () => {
+  inspClosedFor = selId;
+  $('insp').hidden = true;
 });
 $('paramRand').addEventListener('click', () => {
   const n = nodeById(selId);
@@ -2623,6 +2651,23 @@ $('aiLooks').addEventListener('click', () => {
   lookSearch.value = '';
 });
 lookSearch.addEventListener('input', buildLookPicker);
+// 流れるルック列 — 2周複製のシームレスマーキー。触ると止まる
+{
+  const track = $('lookTrack');
+  for (let k = 0; k < 2; k++) {
+    for (const pr of LOOK_PRESETS) {
+      const b = document.createElement('button');
+      b.className = 'preset';
+      b.textContent = pr.emoji + ' ' + pr.name;
+      b.addEventListener('click', () => setBranchChain(lookSpec(pr), pr.emoji + ' ' + pr.name + ' を適用'));
+      track.append(b);
+    }
+  }
+  track.style.animationDuration = (LOOK_PRESETS.length * 3) + 's';
+  const row = $('lookRow');
+  row.addEventListener('pointerdown', () => row.classList.add('paused'));
+  window.addEventListener('pointerup', () => setTimeout(() => row.classList.remove('paused'), 400));
+}
 
 // built-in composer, first pass: match against the look vocabulary
 function bestLook(t) {
@@ -4077,7 +4122,7 @@ updateBar();
 // theater by default — the video owns the screen, the dock floats
 // (「画面スクロール必須なのなんとかならんか」). ⛶で従来レイアウトに戻せる
 setTheater(true);
-if (COARSE) { dock.hidden = true; $('dockRestore').classList.add('show'); }
+if (COARSE) dock.hidden = true;              // スマホは✏️編集で開く
 if (dockView !== 'graph') setDockView(dockView);
 // camera sources start on the sample so nothing is black while the
 // permission prompt is up; the webcam takes over the moment it lands.
