@@ -1184,6 +1184,45 @@ function ensureTexImg(key) {
   }
   return true;
 }
+// 📚リソース(fs_studio_res)のユーザー画像をtextureプレートとして給餌。
+// 無い/ロード中はパススルー(sayで案内) — 勝手にgrainへ化けさせない
+const texResData = new Map();          // 'r:名前' -> {d,w,h} | null(取得中) | 'bad'
+const texResUploaded = new Set();
+function ensureTexRes(key) {
+  const name = key.slice(2);
+  if (!texResData.has(key)) {
+    texResData.set(key, null);
+    (async () => {
+      const bmp = await resBitmap(name);
+      if (!bmp) {
+        texResData.set(key, 'bad');
+        if (!warnedRes.has(name)) {
+          warnedRes.add(name);
+          say('テクスチャ「' + name + '」が見つかりません — ⋯の📚リソースに追加してください', true);
+        }
+        return;
+      }
+      const sc = Math.min(1, 1024 / Math.max(bmp.width, bmp.height));
+      const w = Math.max(1, Math.round(bmp.width * sc));
+      const h = Math.max(1, Math.round(bmp.height * sc));
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const cx = c.getContext('2d');
+      cx.drawImage(bmp, 0, 0, w, h);
+      texResData.set(key, { d: cx.getImageData(0, 0, w, h).data, w, h });
+      pushChains(simT);
+    })();
+  }
+  const rec = texResData.get(key);
+  if (!rec || rec === 'bad') return null;
+  if (!texResUploaded.has(key)) {       // image buffers live per instance
+    const ptr = fs.imageBuffer(inst, 'texb_' + key, rec.w, rec.h);
+    mod.HEAPU8.set(rec.d, ptr);
+    texResUploaded.add(key);
+  }
+  return rec;
+}
 const lutData = {}, lutUploaded = new Set();
 function ensureLutImg(key) {
   if (!(key in lutData)) {
@@ -1218,6 +1257,7 @@ function rebuildScene() {
   for (const k of Object.keys(papers)) papers[k][3] = false;
   lutUploaded.clear();
   texUploaded.clear();
+  texResUploaded.clear();
   maskReady = false;                    // mask buffers live per instance
   maskHReady = false;
   handMaskZeroed = false;
@@ -1255,10 +1295,16 @@ function pushChains(t) {
     }
     const texNode = u.deco.filters.find(n => n.on && n.name === 'texture');
     if (texNode) {
-      const key = TEX_PLATES[texNode.tex] ? texNode.tex : 'grain';
-      if (ensureTexImg(key)) {
-        fs.setFilterImage(inst, u.id, 'texture', 'texb_' + key,
-                          TEX_PLATES[key].size, TEX_PLATES[key].size);
+      const k = texNode.tex || 'grain';
+      if (k.startsWith('r:')) {
+        const rec = ensureTexRes(k);
+        if (rec) fs.setFilterImage(inst, u.id, 'texture', 'texb_' + k, rec.w, rec.h);
+      } else {
+        const key = TEX_PLATES[k] ? k : 'grain';
+        if (ensureTexImg(key)) {
+          fs.setFilterImage(inst, u.id, 'texture', 'texb_' + key,
+                            TEX_PLATES[key].size, TEX_PLATES[key].size);
+        }
       }
     }
   }
@@ -2404,15 +2450,55 @@ function renderInspector() {
       if ((n.tex || 'grain') === k) o.selected = true;
       sel.append(o);
     }
-    sel.addEventListener('change', () => {
-      const pl = TEX_PLATES[sel.value];
-      n.tex = sel.value;
-      n.texLabel = pl.jp;
-      SPEC.texture.params.forEach((p, i) => {
-        if (pl.rec[p.name] !== undefined) n.vals[i] = pl.rec[p.name];
-      });
+    const upOpt = document.createElement('option');
+    upOpt.value = '__up';
+    upOpt.textContent = '📁 画像を追加…';
+    sel.append(upOpt);
+    // 📚リソースの画像は非同期で選択肢に合流 (現在値がr:なら先に仮置き)
+    if (n.tex && n.tex.startsWith('r:')) {
+      const o = document.createElement('option');
+      o.value = n.tex;
+      o.textContent = '📚 ' + n.tex.slice(2);
+      o.selected = true;
+      sel.insertBefore(o, upOpt);
+    }
+    resAll().then(recs => {
+      for (const rec of recs) {
+        const v = 'r:' + rec.n;
+        if ([...sel.options].some(o => o.value === v)) continue;
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = '📚 ' + rec.n;
+        sel.insertBefore(o, upOpt);
+      }
+    }).catch(() => {});
+    const useTex = v => {
+      n.tex = v;
+      if (TEX_PLATES[v]) {
+        n.texLabel = TEX_PLATES[v].jp;
+        SPEC.texture.params.forEach((p, i) => {
+          if (TEX_PLATES[v].rec[p.name] !== undefined) n.vals[i] = TEX_PLATES[v].rec[p.name];
+        });
+      } else {
+        n.texLabel = v.slice(2, 42);
+      }
       applyGraph(false);
       renderInspector();
+    };
+    sel.addEventListener('change', () => {
+      if (sel.value === '__up') {
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.accept = 'image/*';
+        inp.addEventListener('change', async () => {
+          const name = inp.files[0] && await resAdd(inp.files[0]);
+          if (name) useTex('r:' + name);
+          else renderInspector();       // キャンセル/失敗時はselectを現在値へ戻す
+        });
+        inp.click();
+        return;
+      }
+      useTex(sel.value);
     });
     row.append(sel);
     paramsBox.append(row);
@@ -2786,8 +2872,9 @@ function unpackGraph(packed) {
             n.lutLabel = (LUT_PRESETS.find(p => p[0] === o.lu) || [null, null])[1];
           }
           if (o.f === 'texture') {
-            n.tex = TEX_PLATES[o.tx] ? o.tx : 'grain';
-            n.texLabel = TEX_PLATES[n.tex].jp;
+            const raw = typeof o.tx === 'string' ? o.tx : 'grain';
+            n.tex = (TEX_PLATES[raw] || raw.startsWith('r:')) ? raw : 'grain';
+            n.texLabel = TEX_PLATES[n.tex] ? TEX_PLATES[n.tex].jp : n.tex.slice(2, 42);
           }
         } else if (o.t === 'person' && !nodes.some(x => x.type === 'person')) {
           n = addNode('person', o.x, o.y, { feather: Number(o.fe) || 5 });
