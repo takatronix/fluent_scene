@@ -1647,10 +1647,47 @@ function prepFaceSource(name) {
       uv[i * 2 + 1] = 1 - pts[i].y;    // FLIP_Yアップロードに合わせる
       al[i] = faceOvalSet && faceOvalSet.has(i) ? 0 : 1;   // 輪郭で0→縁がなじむ
     }
+    // 切り抜き(透過PNG)対策: 透明部のRGBは0なので、そのまま貼ると黒が乗り、
+    // 縮小時のbilinearが0を拾って黒フチになる。顔中心の肌色で下地を塗ってから
+    // 画像を重ね、透明部が黒を持たないようにする(不透明写真では見た目不変)
+    let cx0 = 0, cy0 = 0;
+    for (const p of pts) { cx0 += p.x; cy0 += p.y; }
+    cx0 /= pts.length;
+    cy0 /= pts.length;
+    let rr = 0;
+    for (const p of pts) rr = Math.max(rr, Math.hypot(p.x - cx0, p.y - cy0));
+    const mc = document.createElement('canvas');
+    mc.width = mc.height = 32;
+    mc.getContext('2d').drawImage(bmp,
+        Math.max(0, (cx0 - rr * 0.25) * bmp.width), Math.max(0, (cy0 - rr * 0.25) * bmp.height),
+        Math.max(1, rr * 0.5 * bmp.width), Math.max(1, rr * 0.5 * bmp.height), 0, 0, 32, 32);
+    const md = mc.getContext('2d').getImageData(0, 0, 32, 32).data;
+    let sr = 0, sg = 0, sb = 0, sn = 0;
+    for (let i = 0; i < md.length; i += 4) {
+      if (md[i + 3] < 200) continue;             // 透明画素は平均に混ぜない
+      sr += md[i]; sg += md[i + 1]; sb += md[i + 2]; sn++;
+    }
+    const fill = sn ? [Math.round(sr / sn), Math.round(sg / sn), Math.round(sb / sn)]
+                    : [190, 150, 130];
     const tc = document.createElement('canvas');
     tc.width = bmp.width;
     tc.height = bmp.height;
-    tc.getContext('2d').drawImage(bmp, 0, 0);
+    const tg = tc.getContext('2d');
+    tg.drawImage(bmp, 0, 0);
+    const im = tg.getImageData(0, 0, tc.width, tc.height);
+    const dd = im.data;
+    let translucent = false;
+    for (let i = 3; i < dd.length; i += 4) if (dd[i] < 250) { translucent = true; break; }
+    if (translucent) {                           // 透明/半透明のRGBを肌色へ寄せる (αは保持)
+      for (let i = 0; i < dd.length; i += 4) {
+        const a = dd[i + 3] / 255;
+        if (a >= 0.98) continue;
+        dd[i] = dd[i] * a + fill[0] * (1 - a);
+        dd[i + 1] = dd[i + 1] * a + fill[1] * (1 - a);
+        dd[i + 2] = dd[i + 2] * a + fill[2] * (1 - a);
+      }
+      tg.putImageData(im, 0, 0);
+    }
     faceSrcCache.set(name, { idx, uv, al, tc, count: idx.length, nLm: pts.length });
     say('顔画像「' + name + '」準備OK — 顔が映ると差し替わります');
   })();
@@ -1700,7 +1737,13 @@ in float vA;
 uniform sampler2D u_f;
 uniform float u_a;
 out vec4 o;
-void main() { o = vec4(texture(u_f, vU).rgb, vA * u_a); }`);
+void main() {
+  vec4 s = texture(u_f, vU);
+  // 顔が画枠からはみ出した写真はUVが[0,1]外になる — CLAMP_TO_EDGEの
+  // 引き伸ばし(尾を引くスミア)を出さないよう範囲外は透明にする
+  float inUV = step(0.0, vU.x) * step(vU.x, 1.0) * step(0.0, vU.y) * step(vU.y, 1.0);
+  o = vec4(s.rgb, vA * u_a * s.a * inUV);
+}`);
   faceState = { bgProg, meshProg,
     bgTex: gl.createTexture(), faceTex: gl.createTexture(), faceTexFor: null,
     posBuf: gl.createBuffer(), uvBuf: gl.createBuffer(), aBuf: gl.createBuffer(),
