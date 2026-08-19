@@ -24,7 +24,7 @@ wasm ビルドです。サーバー処理はなく、映像はタブの外に出
 
 | デモ | 内容 |
 |---|---|
-| [filter studio](https://takatronix.github.io/fluent_scene/edit.html) | GUIフィルタエディタ — 47フィルタをノードでつなぎ・並べ替え・調整。「昔のカメラみたいに」とAIに頼むとチェーンが自動で組み上がる（内蔵オフラインAI、または自分のClaude / OpenAI互換キー。キーはlocalStorageのみ）。共有リンク・Scene YAML書き出し付き |
+| [filter studio](https://takatronix.github.io/fluent_scene/edit.html) | ノードグラフの映像合成エディタ — 複数入力を回転・ブレンドで重ね、人物抽出(MediaPipe→レイヤーマスク)で背景だけ別フィルタ、47フィルタを自由に配線。「昔のカメラみたいに」「背景だけ水墨画に」とAIに頼むと自動で配線される（内蔵オフラインAI、または自分のClaude / OpenAI互換キー。キーはlocalStorageのみ）。共有リンク・Scene YAML書き出し付き |
 | [filter lab](https://takatronix.github.io/fluent_scene/filters.html) | 全47フィルタをWebカメラでワンタップ切替 — 単一ソースGLSL∩C++のカタログ実演 |
 | [プレイグラウンド](https://takatronix.github.io/fluent_scene/) | ライブラリ一式が手元のタブで動く（CPU wasm・ポートレート演出付き） |
 | [beauty](https://takatronix.github.io/fluent_scene/beauty.html) | 美顔フィルタ — 磨皮(分散ゲートWiener)+肌限定美白+3D LUT、Webカメラでワイプ比較 |

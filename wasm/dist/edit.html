@@ -9,7 +9,7 @@
     --ink: #eef0ff; --dim: #a6a3c2; --faint: #625d7e;
     --bg: #06050b; --glass: rgba(16, 14, 30, 0.6); --line: rgba(255, 255, 255, 0.07);
     --cyan: #7ee8fa; --violet: #c86ef0; --amber: #ffb35c; --coral: #ff7a6e;
-    --blue: #6ea8ff; --magenta: #ff6ec7;
+    --blue: #6ea8ff; --magenta: #ff6ec7; --green: #7ef0b0;
     --grad: linear-gradient(115deg, var(--cyan), var(--violet) 55%, var(--amber));
   }
   * { box-sizing: border-box; }
@@ -18,7 +18,6 @@
          align-items: center; padding: 22px clamp(10px, 2vw, 26px) 20px;
          background: var(--bg); color: var(--ink); overflow-x: hidden;
          font: 14px/1.55 -apple-system, "Hiragino Sans", "Noto Sans CJK JP", system-ui, sans-serif; }
-  /* aurora backdrop — three slow drifting blobs behind everything */
   #aurora { position: fixed; inset: -20%; z-index: -1; filter: blur(90px) saturate(1.2);
             opacity: 0.5; pointer-events: none; }
   #aurora i { position: absolute; border-radius: 50%; }
@@ -49,7 +48,7 @@
   header a:hover { color: var(--ink); }
 
   /* ---- preview ---- */
-  #frame { position: relative; width: min(97vw, calc(54vh * 16 / 9), 1340px); }
+  #frame { position: relative; width: min(97vw, calc(46vh * 16 / 9), 1340px); }
   #frame::before { content: ''; position: absolute; inset: -1px; border-radius: 21px;
        background: var(--grad); opacity: 0.35; z-index: 0;
        -webkit-mask: linear-gradient(#fff 0 0) content-box exclude, linear-gradient(#fff 0 0);
@@ -63,7 +62,10 @@
           font: 11px ui-monospace, monospace; color: var(--dim);
           background: rgba(0, 0, 0, 0.55); border: 1px solid var(--line);
           padding: 4px 11px; border-radius: 999px; backdrop-filter: blur(8px); }
-  #srcBtns { position: absolute; top: 14px; left: 14px; z-index: 3; display: flex; gap: 6px; }
+  #srcBtns { position: absolute; top: 14px; left: 14px; z-index: 3; display: flex; gap: 6px;
+          align-items: center; }
+  #srcTag { font: 700 11px ui-monospace, monospace; color: #0c0a14;
+          background: var(--grad); padding: 4px 10px; border-radius: 999px; }
   #srcBtns button { font-size: 13px; color: var(--dim); background: rgba(0, 0, 0, 0.55);
           border: 1px solid var(--line); padding: 5px 12px; border-radius: 999px;
           cursor: pointer; backdrop-filter: blur(8px); transition: 0.15s; }
@@ -75,7 +77,7 @@
           background: rgba(0, 0, 0, 0.4); padding: 3px 14px; border-radius: 999px;
           pointer-events: none; white-space: nowrap; backdrop-filter: blur(6px); }
 
-  /* ---- AI command bar — floats over the preview's bottom edge ---- */
+  /* ---- AI command bar ---- */
   #aibar { position: relative; z-index: 4; display: flex; gap: 8px; align-items: center;
            width: min(93vw, 760px); margin-top: -24px; padding: 8px 10px 8px 16px;
            border-radius: 999px; background: rgba(13, 11, 25, 0.85);
@@ -109,77 +111,85 @@
   #aiSay b { color: var(--cyan); font-weight: 600; }
   #aiSay.err { color: #ff8f8f; }
 
-  /* ---- chain dock ---- */
-  #dock { width: min(97vw, 1340px); margin-top: 10px; padding: 14px 16px 12px;
+  /* ---- dock: node graph + inspector ---- */
+  #dock { width: min(97vw, 1340px); margin-top: 10px; padding: 10px 14px 12px;
           border-radius: 20px; background: var(--glass); border: 1px solid var(--line);
-          backdrop-filter: blur(20px); display: flex; flex-direction: column; gap: 10px;
+          backdrop-filter: blur(20px); display: flex; flex-direction: column; gap: 9px;
           box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45); }
-  #chain { display: flex; gap: 0; align-items: stretch; overflow-x: auto;
-           padding: 8px 2px 10px; scrollbar-width: thin; scrollbar-color: #322c50 transparent; }
-  .endcap { flex: none; display: flex; flex-direction: column; justify-content: center;
-            align-items: center; gap: 1px; font: 10px ui-monospace, monospace;
-            letter-spacing: 0.18em; color: var(--faint);
-            background: rgba(255, 255, 255, 0.025); border: 1px dashed rgba(255, 255, 255, 0.12);
-            border-radius: 13px; padding: 8px 13px; white-space: nowrap; }
-  .endcap span { font-size: 16px; letter-spacing: 0; }
-  .wire { flex: none; width: 30px; align-self: center; height: 2px; position: relative;
-          border-radius: 2px; overflow: visible;
-          background: linear-gradient(90deg, rgba(126,232,250,0.7), rgba(200,110,240,0.7));
-          background-size: 12px 100%; animation: flow 0.8s linear infinite; }
-  @keyframes flow { from { background-position: 0 0; } to { background-position: 12px 0; } }
-  .wire::after { content: ''; position: absolute; right: -2px; top: -3.5px;
-          border: 4.5px solid transparent; border-left: 6px solid rgba(200, 110, 240, 0.9); }
-  .node { flex: none; display: flex; flex-direction: column; gap: 1px; min-width: 118px;
-          background: rgba(22, 19, 38, 0.9); border: 1px solid var(--line);
-          border-left: 3px solid var(--ac, var(--violet)); border-radius: 13px;
-          padding: 8px 12px 7px; cursor: grab; position: relative; touch-action: none;
-          transition: border-color 0.13s, box-shadow 0.2s, transform 0.15s; }
-  .node:hover { transform: translateY(-2px);
-          box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5); }
-  .node.sel { border-color: var(--ac, var(--violet)); border-left-width: 3px;
-          box-shadow: 0 0 0 1px var(--ac, var(--violet)), 0 0 24px color-mix(in srgb, var(--ac, var(--violet)) 45%, transparent); }
-  .node.off { border-left-color: var(--faint); }
-  .node.off .jname, .node.off .emoji { opacity: 0.3; filter: grayscale(1); }
-  .node.off .ename { opacity: 0.4; text-decoration: line-through; }
-  .node.dragging { opacity: 0.25; }
-  .node.pop { animation: pop 0.42s cubic-bezier(0.24, 1.6, 0.4, 1); }
-  @keyframes pop { 0% { transform: scale(0.2) translateX(-30px); opacity: 0; }
-                   65% { transform: scale(1.1); opacity: 1; } 100% { transform: none; } }
-  .node .emoji { position: absolute; left: 10px; top: 8px; font-size: 17px; }
-  .node .jname { font-size: 12.5px; font-weight: 700; white-space: nowrap;
-          padding: 0 34px 0 24px; }
-  .node .ename { font: 9.5px ui-monospace, monospace; color: var(--faint);
-          white-space: nowrap; padding-left: 24px; }
-  .node .pw { position: absolute; top: 7px; right: 25px; width: 13px; height: 13px;
-          border-radius: 50%; border: 1px solid var(--faint); background: transparent;
-          cursor: pointer; padding: 0; transition: 0.15s; }
-  .node:not(.off) .pw { background: var(--ac, var(--cyan)); border-color: transparent;
-          box-shadow: 0 0 9px var(--ac, var(--cyan)); }
-  .node .rm { position: absolute; top: 3px; right: 4px; background: none; border: none;
-          color: var(--faint); font-size: 13px; cursor: pointer; padding: 2px; line-height: 1; }
-  .node .rm:hover { color: #ff8a8a; }
-  #addNode { flex: none; align-self: center; width: 38px; height: 38px; border-radius: 50%;
-          border: 1px dashed rgba(255, 255, 255, 0.25); background: transparent;
-          color: var(--cyan); font-size: 19px; cursor: pointer; transition: 0.18s; }
-  #addNode:hover { background: rgba(126, 232, 250, 0.1); transform: scale(1.12) rotate(90deg);
-          border-color: var(--cyan); box-shadow: 0 0 18px rgba(126, 232, 250, 0.3); }
-  #ghost { position: fixed; z-index: 50; pointer-events: none; opacity: 0.92;
-           transform: translate(-50%, -50%) rotate(-3deg); box-shadow: 0 20px 50px rgba(0,0,0,0.7); }
+  #toolbar { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+  #toolbar button { background: rgba(255,255,255,0.035); color: var(--ink);
+          border: 1px solid var(--line); border-radius: 999px; padding: 5px 13px;
+          font-size: 12.5px; cursor: pointer; transition: 0.15s; }
+  #toolbar button:hover { border-color: rgba(255,255,255,0.3); transform: translateY(-1px); }
+  #toolbar button:disabled { opacity: 0.35; cursor: default; transform: none; }
+  #toolbar .tip { font-size: 11px; color: var(--faint); margin-left: auto; }
 
-  /* ---- params ---- */
-  #paramHead { display: flex; align-items: baseline; gap: 10px; }
-  #paramHead .pname { font: 700 13px ui-monospace, monospace; color: var(--cyan); }
-  #paramHead .psum { font-size: 11px; color: var(--faint); flex: 1; overflow: hidden;
+  #graph { position: relative; height: 285px; overflow: auto; border-radius: 14px;
+           background:
+             radial-gradient(rgba(255,255,255,0.05) 1px, transparent 1.4px) 0 0 / 26px 26px,
+             rgba(0, 0, 0, 0.25);
+           border: 1px solid var(--line); scrollbar-width: thin;
+           scrollbar-color: #322c50 transparent; }
+  #gInner { position: relative; width: 2200px; height: 560px; }
+  #edgeSvg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; }
+  #edgeSvg path.edge { fill: none; stroke: url(#egrad); stroke-width: 2.2; }
+  #edgeSvg path.hit { fill: none; stroke: transparent; stroke-width: 14;
+          pointer-events: stroke; cursor: pointer; }
+  #edgeSvg path.hit:hover + path.edge, #edgeSvg g:hover path.edge { stroke-width: 3.4;
+          filter: drop-shadow(0 0 6px rgba(200,110,240,0.8)); }
+  #edgeSvg path.temp { fill: none; stroke: rgba(126,232,250,0.8); stroke-width: 2;
+          stroke-dasharray: 6 5; }
+  .gnode { position: absolute; z-index: 2; width: 150px;
+          background: rgba(22, 19, 38, 0.94); border: 1px solid var(--line);
+          border-left: 3px solid var(--ac, var(--violet)); border-radius: 13px;
+          padding: 8px 12px 7px; cursor: grab; touch-action: none;
+          transition: box-shadow 0.2s; }
+  .gnode.sel { border-color: var(--ac, var(--violet));
+          box-shadow: 0 0 0 1px var(--ac, var(--violet)), 0 0 24px color-mix(in srgb, var(--ac, var(--violet)) 45%, transparent); }
+  .gnode.off .jname, .gnode.off .emoji { opacity: 0.3; filter: grayscale(1); }
+  .gnode.off .ename { opacity: 0.4; text-decoration: line-through; }
+  .gnode.pop { animation: pop 0.42s cubic-bezier(0.24, 1.6, 0.4, 1); }
+  @keyframes pop { 0% { transform: scale(0.2); opacity: 0; }
+                   65% { transform: scale(1.1); opacity: 1; } 100% { transform: none; } }
+  .gnode .emoji { position: absolute; left: 10px; top: 8px; font-size: 17px; }
+  .gnode .jname { font-size: 12.5px; font-weight: 700; white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis; padding: 0 22px 0 24px; }
+  .gnode .ename { font: 9.5px ui-monospace, monospace; color: var(--faint);
+          white-space: nowrap; padding-left: 24px; }
+  .gnode .pw { position: absolute; top: 7px; right: 22px; width: 13px; height: 13px;
+          border-radius: 50%; border: 1px solid var(--faint); background: transparent;
+          cursor: pointer; padding: 0; }
+  .gnode:not(.off) .pw { background: var(--ac, var(--cyan)); border-color: transparent;
+          box-shadow: 0 0 9px var(--ac, var(--cyan)); }
+  .gnode .rm { position: absolute; top: 2px; right: 3px; background: none; border: none;
+          color: var(--faint); font-size: 12px; cursor: pointer; padding: 2px; line-height: 1; }
+  .gnode .rm:hover { color: #ff8a8a; }
+  .port { position: absolute; width: 14px; height: 14px; border-radius: 50%;
+          background: #14111f; border: 2px solid var(--ac, var(--violet));
+          cursor: crosshair; z-index: 3; transition: 0.12s; }
+  .port:hover { transform: scale(1.35); box-shadow: 0 0 10px var(--ac, var(--violet)); }
+  .port.in { left: -8px; }
+  .port.out { right: -8px; }
+  .port .plabel { position: absolute; right: 18px; top: -2px; font-size: 9px;
+          color: var(--dim); white-space: nowrap; pointer-events: none; }
+
+  /* ---- inspector ---- */
+  #inspector { display: flex; gap: 10px 22px; flex-wrap: wrap; align-items: flex-end;
+          min-height: 30px; }
+  #inspHead { display: flex; align-items: baseline; gap: 10px; width: 100%; }
+  #inspHead .pname { font: 700 13px ui-monospace, monospace; color: var(--cyan); }
+  #inspHead .psum { font-size: 11px; color: var(--faint); flex: 1; overflow: hidden;
           text-overflow: ellipsis; white-space: nowrap; }
-  #paramHead button { background: none; border: 1px solid var(--line); color: var(--dim);
+  #inspHead button { background: none; border: 1px solid var(--line); color: var(--dim);
           border-radius: 999px; font-size: 11px; padding: 3px 11px; cursor: pointer; }
-  #paramHead button:hover { color: var(--ink); border-color: rgba(255,255,255,0.25); }
-  #controls { display: flex; gap: 10px 22px; flex-wrap: wrap; align-items: flex-end; }
-  #controls label.slider { display: flex; flex-direction: column; gap: 3px;
+  #inspHead button:hover { color: var(--ink); border-color: rgba(255,255,255,0.25); }
+  #inspector label.slider { display: flex; flex-direction: column; gap: 3px;
           font: 11px ui-monospace, monospace; color: var(--dim); }
-  #controls .row { display: flex; align-items: center; gap: 8px; }
-  #controls output { font: 11px ui-monospace, monospace; color: var(--cyan);
+  #inspector .row { display: flex; align-items: center; gap: 8px; }
+  #inspector output { font: 11px ui-monospace, monospace; color: var(--cyan);
           min-width: 44px; text-align: right; }
+  #inspector select { background: #14111f; color: var(--ink); border: 1px solid var(--line);
+          border-radius: 9px; padding: 5px 9px; font-size: 12px; }
   input[type=range] { -webkit-appearance: none; appearance: none; width: 150px; height: 4px;
           border-radius: 2px; background: #2b2547; outline: none; }
   input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
@@ -191,7 +201,6 @@
   #tail label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
   input[type=checkbox] { accent-color: var(--violet); }
 
-  /* ---- presets + share ---- */
   #presets { display: flex; gap: 7px; align-items: center; overflow-x: auto; padding: 2px 0 6px;
              scrollbar-width: thin; scrollbar-color: #322c50 transparent; }
   .preset { flex: none; background: rgba(255, 255, 255, 0.035); color: var(--ink);
@@ -239,7 +248,6 @@
            color: var(--ink); }
   .palitem:hover { border-color: var(--ac, var(--violet)); background: rgba(255,255,255,0.06);
            transform: translateY(-1px); }
-  .palitem:disabled { opacity: 0.3; cursor: default; transform: none; }
   .palitem .pe { font-size: 19px; flex: none; }
   .palitem .t { font-size: 12.5px; font-weight: 700; }
   .palitem .t small { font: 9.5px ui-monospace, monospace; color: var(--faint); font-weight: 400; }
@@ -268,7 +276,7 @@
 <header>
   <h1>FILTER STUDIO</h1>
   <span class="tag">AI</span>
-  <small>つないで、ゆらして、AIに描かせる — 47フィルタ · wasm</small>
+  <small>ノードでつなぐ映像合成 — 47フィルタ · 人物抽出 · wasm</small>
   <span class="links">
     <a href="./filters.html">filter lab</a>
     <a href="./index.html">← demos</a>
@@ -277,6 +285,7 @@
 <div id="frame">
   <canvas id="v" width="1280" height="720"></canvas>
   <div id="srcBtns">
+    <span id="srcTag">入力</span>
     <button id="srcCam" title="Webカメラ">📷 カメラ</button>
     <button id="srcFile" title="画像・動画を開く">🖼 ファイル</button>
     <button id="srcSample" title="サンプル映像">✨ サンプル</button>
@@ -294,12 +303,28 @@
 </div>
 <div id="aiSay"></div>
 <div id="dock">
-  <div id="chain"></div>
-  <div id="paramHead" hidden>
+  <div id="toolbar">
+    <button id="tbFilter">+ フィルタ</button>
+    <button id="tbSrc">+ 入力</button>
+    <button id="tbPerson">+ 人物抽出</button>
+    <button id="tbXform">+ 変形/合成</button>
+    <span class="tip">●出力ポート→●入力ポートへドラッグで接続 · 線クリックで切断 · 縦位置が重なり順(下=手前)</span>
+  </div>
+  <div id="graph"><div id="gInner">
+    <svg id="edgeSvg">
+      <defs><linearGradient id="egrad" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="rgba(126,232,250,0.75)"/>
+        <stop offset="1" stop-color="rgba(200,110,240,0.75)"/>
+      </linearGradient></defs>
+      <g id="edgeG"></g>
+      <path id="tempEdge" class="temp" d=""/>
+    </svg>
+  </div></div>
+  <div id="inspHead" hidden>
     <span class="pname"></span><span class="psum"></span>
     <button id="paramReset">リセット</button>
   </div>
-  <div id="controls">
+  <div id="inspector">
     <span id="params" style="display:contents"></span>
     <span id="tail">
       <span id="share">
@@ -351,82 +376,63 @@
 </div>
 <a href="https://x.com/takatronix" target="_blank" rel="noopener" style="position:fixed;right:12px;bottom:10px;z-index:9;font:11px ui-monospace,monospace;color:rgba(255,255,255,0.6);text-decoration:none;background:rgba(0,0,0,0.35);padding:4px 10px;border-radius:999px;backdrop-filter:blur(4px)">fluent_scene · by <b style="color:rgba(255,255,255,0.85)">@takatronix</b></a>
 <script type="module">
-// Filter studio — the filter lab grown into an editor: the chain is a row of
-// nodes you add, reorder, toggle and tune, and an AI (built-in offline
-// composer, or your own Claude / OpenAI-compatible endpoint — the key lives
-// only in localStorage) writes chains from natural language, connecting the
-// nodes one by one while the preview updates live. Everything runs in this
-// tab: the catalog and every slider come from fs_filters_json() (single
-// source: filters_def.h), the chain is pushed with fs_layer_clear_filters +
-// fs_layer_set_filter in order, and the wipe compares against the input.
+// Filter studio — a free node graph now, in the spirit of the FV pipeline
+// editor: sources, a person-extract node (MediaPipe Selfie Segmenter →
+// the engine's M1 layer mask), filter nodes, transform/blend nodes, and an
+// output that stacks every incoming branch. The graph compiles to what the
+// engine truly is — a layer tree: each source→output path becomes a layer
+// (its filters as the chain, its person-port as a mask, its transform as
+// position/rotation/scale/opacity/blend). Structure changes recompile the
+// Scene document (fs_create, milliseconds); drags ride runtime params.
+// The AI (built-in offline composer, or your own Claude / OpenAI-compatible
+// endpoint — the key lives only in localStorage) rewrites the selected
+// branch's filters from natural language, node by node, live.
 import createFluentScene from './fluent_scene.mjs';
 
-const SCENE = `
-schema: fluent.scene/v1alpha2
-stage: { size: [1280, 720] }
-inputs:
-  camera: { type: image.rgba8, update: per_frame }
-params:
-  wipe_win: { type: vec2, default: [0, 360], runtime_mutable: true,
-              animate: { duration: 0.1, ease: ease_out } }
-  wipe_inv: { type: vec2, default: [1280, 360], runtime_mutable: true,
-              animate: { duration: 0.1, ease: ease_out } }
-  divider: { type: vec2, default: [640, 360], runtime_mutable: true,
-             animate: { duration: 0.1, ease: ease_out } }
-layers:
-  - id: after
-    content: { image: { source: $inputs.camera, fit: cover } }
-  - id: before_win
-    bounds: [0, 0, 1280, 720]
-    masks_to_bounds: true
-    position: $params.wipe_win
-    sublayers:
-      - bounds: [0, 0, 1280, 720]
-        position: $params.wipe_inv
-        content: { image: { source: $inputs.camera, fit: cover } }
-  - id: divider_line
-    position: $params.divider
-    content: { rect: { size: [3, 720], color: [1, 1, 1, 0.55] } }
-`;
+const STAGE_W = 1280, STAGE_H = 720;
+const SEG_W = 256, SEG_H = 144;
+const NODE_W = 150, NODE_H = 52;
+const MAX_FILTERS = 14;                 // total filter nodes in the graph
 
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const bar = $('bar'), pill = $('pill'), aiSay = $('aiSay');
+const bar = $('bar'), pill = $('pill'), aiSay = $('aiSay'), hint = $('hint');
 let canvas = $('v');
 let ctx = null;
 
 const mod = await createFluentScene();
 const fs = {
-  create: mod.cwrap('fs_create', 'number', ['number']),
+  create: mod.cwrap('fs_create', 'number', ['string']),
+  destroy: mod.cwrap('fs_destroy', null, ['number']),
   error: mod.cwrap('fs_error', 'string', []),
-  stageW: mod.cwrap('fs_stage_width', 'number', ['number']),
   imageBuffer: mod.cwrap('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
   commitImage: mod.cwrap('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
   render: mod.cwrap('fs_render', 'number', ['number', 'number', 'number', 'number']),
   renderW: mod.cwrap('fs_render_width', 'number', ['number']),
   renderH: mod.cwrap('fs_render_height', 'number', ['number']),
   renderStride: mod.cwrap('fs_render_stride', 'number', ['number']),
+  setParamF32: mod.cwrap('fs_set_param_f32', 'number', ['number', 'string', 'number']),
   setParamVec2: mod.cwrap('fs_set_param_vec2', 'number', ['number', 'string', 'number', 'number']),
   setFilter: mod.cwrap('fs_layer_set_filter', 'number',
       ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
   clearFilters: mod.cwrap('fs_layer_clear_filters', 'number', ['number', 'string']),
   setFilterImage: mod.cwrap('fs_layer_set_filter_image', 'number',
       ['number', 'string', 'string', 'string', 'number', 'number']),
+  setMask: mod.cwrap('fs_layer_set_mask', 'number',
+      ['number', 'string', 'string', 'number', 'number', 'number', 'number']),
   filtersJson: mod.cwrap('fs_filters_json', 'string', []),
 };
 
-const yamlPtr = mod.stringToNewUTF8(SCENE);
-const inst = fs.create(yamlPtr);
-if (!inst) { bar.textContent = 'scene rejected:\n' + fs.error(); throw new Error(fs.error()); }
-const stageW = fs.stageW(inst);
-
-// ---- catalog ---------------------------------------------------------------
+{
+  const probe = fs.create('schema: fluent.scene/v1alpha2\nstage: { size: [16, 16] }\nlayers: []\n');
+  if (!probe) { bar.textContent = 'wasm rejected: ' + fs.error(); throw new Error(fs.error()); }
+  fs.destroy(probe);
+}
 const HIDDEN = new Set(['lut', 'face', 'opacity']);
 const CATALOG = JSON.parse(fs.filtersJson()).filter(f => !HIDDEN.has(f.name));
 const SPEC = Object.fromEntries(CATALOG.map(f => [f.name, f]));
-const MAX_CHAIN = 6;
 
-// Japanese identity for the palette and node cards (name → [label, blurb, emoji]).
+// Japanese identity (name → [label, blurb, emoji]).
 const JA = {
   grayscale: ['モノクロ', '輝度だけ残す', '🌑'], sepia: ['セピア', '古写真の褐色', '🟤'],
   invert: ['ネガ反転', '色を反転', '🔃'], hue: ['色相回転', '色相環をずらす', '🌈'],
@@ -469,6 +475,8 @@ const CATS = [
 const CAT_OF = {};
 for (const [label, names] of CATS) for (const n of names) CAT_OF[n] = label;
 const accentOf = n => CAT_COLOR[CAT_OF[n]] || 'var(--violet)';
+const NODE_ACCENT = { src: 'var(--green)', person: 'var(--amber)', xform: 'var(--blue)',
+                      out: 'var(--cyan)' };
 
 function rangeFor(p) {
   const byName = {
@@ -489,21 +497,655 @@ const clampToRange = (p, v) => {
   return Math.min(hi, Math.max(lo, Number(v) || 0));
 };
 
-// ---- chain state -----------------------------------------------------------
-// chain: [{ name, on, vals: [per-param values, filters_def order] }]
-let chain = [];
-let selected = -1;
+// ---- graph model -----------------------------------------------------------
+// nodes: {id, type, x, y, ...}   type: src | person | filter | xform | out
+//   src:    {kind, video, img, dirty, grab, gctx}
+//   filter: {name, on, vals}
+//   person: {feather}
+//   xform:  {pos, rot, scale, op, blend}
+// edges: {from, fp, to} — every in-port is single (except out, which stacks).
+let nodes = [], edges = [], nextId = 1, selId = null;
+let inst = 0;
+let branches = [];                     // compile() result, in stacking order
+const nodeById = id => nodes.find(n => n.id === id);
+const outNode = () => nodes.find(n => n.type === 'out');
+const filterCount = () => nodes.filter(n => n.type === 'filter').length;
 
-function makeNode(name, overrides = {}) {
-  const s = SPEC[name];
-  return { name, on: true,
-           vals: s.params.map(p => overrides[p.name] !== undefined
-               ? clampToRange(p, overrides[p.name]) : p.def) };
+function addNode(type, x, y, extra = {}) {
+  const n = { id: 'n' + nextId++, type, x, y };
+  if (type === 'src') {
+    const grab = document.createElement('canvas');
+    grab.width = STAGE_W; grab.height = STAGE_H;
+    Object.assign(n, { kind: extra.kind || 'sample', video: null, img: null, dirty: true,
+                       grab, gctx: grab.getContext('2d', { willReadFrequently: true }) });
+  } else if (type === 'filter') {
+    const s = SPEC[extra.name];
+    Object.assign(n, { name: extra.name, on: true,
+        vals: s.params.map(p => extra.params?.[p.name] !== undefined
+            ? clampToRange(p, extra.params[p.name]) : p.def) });
+  } else if (type === 'person') {
+    n.feather = extra.feather ?? 5;
+  } else if (type === 'xform') {
+    Object.assign(n, { pos: extra.pos || [STAGE_W * 0.72, STAGE_H * 0.7],
+                       rot: extra.rot ?? -6, scale: extra.scale ?? 0.45,
+                       op: extra.op ?? 1, blend: extra.blend || 'normal' });
+  }
+  nodes.push(n);
+  return n;
 }
-const animated = () => chain.some(n => n.on && timeIndex(SPEC[n.name]) >= 0);
+function connect(fromId, fp, toId) {
+  const from = nodeById(fromId), to = nodeById(toId);
+  if (!from || !to || from === to) return false;
+  if (to.type === 'src' || from.type === 'out') return false;
+  // cycle guard: can we reach `to` walking upstream from `from`?
+  const seen = new Set();
+  const up = id => {
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return id === toId || edges.filter(e => e.to === id).some(e => up(e.from));
+  };
+  if (up(fromId)) return false;
+  if (to.type !== 'out') edges = edges.filter(e => e.to !== toId);   // single in
+  edges = edges.filter(e => !(e.from === fromId && e.fp === fp && e.to === toId));
+  edges.push({ from: fromId, fp, to: toId });
+  return true;
+}
+function removeNode(id) {
+  const n = nodeById(id);
+  if (!n || n.type === 'out') return;
+  if (n.type === 'src' && nodes.filter(x => x.type === 'src').length === 1) return;
+  if (n.type === 'src') releaseSource(n);
+  // heal the line: single-in single-out nodes reconnect their neighbours
+  const inn = edges.find(e => e.to === id);
+  const outs = edges.filter(e => e.from === id);
+  edges = edges.filter(e => e.from !== id && e.to !== id);
+  if (inn && n.type !== 'person') {
+    for (const o of outs) connect(inn.from, inn.fp, o.to);
+  }
+  nodes = nodes.filter(x => x.id !== id);
+  if (selId === id) selId = null;
+}
 
-// The filter clock — dt accumulated through the ⏱ multiplier, so changing
-// speed re-paces without teleporting `time`.
+// ---- compile: graph → layer branches --------------------------------------
+function compile() {
+  const out = outNode();
+  branches = [];
+  if (!out) return;
+  const srcs = nodes.filter(n => n.type === 'src');
+  for (const first of edges.filter(x => x.to === out.id)) {
+    // walk upstream edge by edge; the edge we exit a person node through
+    // (its fp) says whether this branch is the 人物 (0) or 背景 (1) side
+    const br = { filters: [], person: null, personPort: 0, xform: null, src: null,
+                 tail: first.from };
+    let e = first, guard = 0;
+    while (guard++ < 40) {
+      const n = nodeById(e.from);
+      if (!n) break;
+      if (n.type === 'src') { br.src = n; break; }
+      if (n.type === 'filter') br.filters.unshift(n);
+      else if (n.type === 'xform') { if (!br.xform) br.xform = n; }
+      else if (n.type === 'person') {
+        if (!br.person) { br.person = n; br.personPort = e.fp; }
+      }
+      const inn = edges.find(x => x.to === n.id);
+      if (!inn) break;
+      e = inn;
+    }
+    if (br.src) {
+      br.srcIdx = srcs.indexOf(br.src);
+      branches.push(br);
+    }
+  }
+  // stacking order: higher on the graph = further back (stable for ties);
+  // a masked 人物 branch always composites in front of its full-frame 背景
+  const key = br => nodeById(br.tail).y + (br.person && br.personPort === 0 ? 10000 : 0);
+  branches.sort((a, b) => key(a) - key(b));
+}
+
+const wipeMode = () => branches.length === 1 && !branches[0].xform && !branches[0].person &&
+                       nodes.filter(n => n.type === 'src').length === 1;
+
+function sceneYaml() {
+  const srcs = nodes.filter(n => n.type === 'src');
+  let y = `schema: fluent.scene/v1alpha2
+stage: { size: [${STAGE_W}, ${STAGE_H}] }
+inputs:
+  paper: { type: image.rgba8 }
+  maskP: { type: image.rgba8 }
+`;
+  srcs.forEach((s, i) => { y += `  in${i}: { type: image.rgba8, update: per_frame }\n`; });
+  let params = '';
+  if (wipeMode()) {
+    params += `  wipe_win: { type: vec2, default: [0, 360], runtime_mutable: true,
+              animate: { duration: 0.1, ease: ease_out } }
+  wipe_inv: { type: vec2, default: [1280, 360], runtime_mutable: true,
+              animate: { duration: 0.1, ease: ease_out } }
+  divider: { type: vec2, default: [640, 360], runtime_mutable: true,
+             animate: { duration: 0.1, ease: ease_out } }
+`;
+  }
+  branches.forEach((br, i) => {
+    if (!br.xform) return;
+    const l = br.xform;
+    params += `  p${i}: { type: vec2, default: [${l.pos[0].toFixed(1)}, ${l.pos[1].toFixed(1)}], runtime_mutable: true,
+        animate: { duration: 0.12, ease: ease_out } }
+  r${i}: { type: f32, default: ${l.rot.toFixed(1)}, runtime_mutable: true,
+        animate: { duration: 0.12, ease: ease_out } }
+  o${i}: { type: f32, default: ${l.op.toFixed(2)}, runtime_mutable: true }
+`;
+  });
+  if (params) y += 'params:\n' + params;
+  y += 'layers:\n';
+  if (!branches.length) {
+    y += `  - id: empty
+    content: { rect: { size: [${STAGE_W}, ${STAGE_H}], color: [0.03, 0.02, 0.06, 1] } }
+`;
+    return y;
+  }
+  branches.forEach((br, i) => {
+    if (br.xform) {
+      const l = br.xform;
+      y += `  - id: B${i}
+    bounds: [0, 0, ${STAGE_W}, ${STAGE_H}]
+    position: $params.p${i}
+    rotation: $params.r${i}
+    scale: [${l.scale.toFixed(3)}, ${l.scale.toFixed(3)}]
+    opacity: $params.o${i}
+${l.blend !== 'normal' ? `    blend: ${l.blend}\n` : ''}    corner_radius: 22
+    masks_to_bounds: true
+    shadow: {}
+    content: { image: { source: $inputs.in${br.srcIdx}, fit: cover } }
+`;
+    } else {
+      y += `  - id: B${i}
+    content: { image: { source: $inputs.in${br.srcIdx}, fit: cover } }
+`;
+    }
+  });
+  if (wipeMode()) {
+    y += `  - id: before_win
+    bounds: [0, 0, 1280, 720]
+    masks_to_bounds: true
+    position: $params.wipe_win
+    sublayers:
+      - bounds: [0, 0, 1280, 720]
+        position: $params.wipe_inv
+        content: { image: { source: $inputs.in0, fit: cover } }
+  - id: divider_line
+    position: $params.divider
+    content: { rect: { size: [3, 720], color: [1, 1, 1, 0.55] } }
+`;
+  }
+  return y;
+}
+
+let paperData = null, paperUploaded = false;
+function ensurePaper() {
+  if (!paperData || paperUploaded) return;
+  const ptr = fs.imageBuffer(inst, 'paper', 1024, 1024);
+  mod.HEAPU8.set(paperData, ptr);
+  paperUploaded = true;
+}
+(async () => {
+  try {
+    const img = new Image();
+    img.src = './washi.jpg';
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = c.height = 1024;
+    const cx = c.getContext('2d');
+    cx.drawImage(img, 0, 0, 1024, 1024);
+    paperData = cx.getImageData(0, 0, 1024, 1024).data;
+    pushChains(simT);
+  } catch (e) { console.error('washi load failed:', e); }
+})();
+
+function rebuildScene() {
+  compile();
+  const next = fs.create(sceneYaml());
+  if (!next) { console.error('scene rejected:', fs.error()); return false; }
+  if (inst) fs.destroy(inst);
+  inst = next;
+  paperUploaded = false;
+  maskReady = false;                    // mask buffer lives per instance
+  for (const n of nodes) if (n.type === 'src') n.dirty = true;
+  pushChains(simT);
+  return true;
+}
+let rebuildTimer = 0;
+function rebuildSoon() {
+  if (rebuildTimer) return;
+  rebuildTimer = setTimeout(() => { rebuildTimer = 0; rebuildScene(); }, 120);
+}
+
+function pushChains(t) {
+  if (!inst) return;
+  branches.forEach((br, i) => {
+    const id = `B${i}`;
+    fs.clearFilters(inst, id);
+    for (const node of br.filters) {
+      if (!node.on) continue;
+      const v = node.vals.slice();
+      const ti = timeIndex(SPEC[node.name]);
+      if (ti >= 0) v[ti] = anim.checked ? t : 0;
+      fs.setFilter(inst, id, node.name, v[0] || 0, v[1] || 0, v[2] || 0, v[3] || 0, v[4] || 0);
+    }
+    if (br.filters.some(n => n.on && n.name === 'sumie')) {
+      ensurePaper();
+      if (paperUploaded) fs.setFilterImage(inst, id, 'sumie', 'paper', 1024, 1024);
+    }
+  });
+}
+function pushMasks() {
+  if (!inst || !maskReady) return;
+  branches.forEach((br, i) => {
+    if (!br.person) return;
+    fs.setMask(inst, `B${i}`, 'maskP', SEG_W, SEG_H,
+               br.personPort === 0 ? 0 : 1, br.person.feather);
+  });
+}
+
+// ---- person segmentation (MediaPipe, loaded on demand) ---------------------
+let segmenter = null, segLoading = false, maskReady = false;
+const segCanvas = document.createElement('canvas');
+segCanvas.width = SEG_W; segCanvas.height = SEG_H;
+const segCtx = segCanvas.getContext('2d', { willReadFrequently: true });
+async function loadSegmenter() {
+  if (segmenter || segLoading) return;
+  segLoading = true;
+  say('人物抽出モデルを読み込み中… (MediaPipe / CDN)');
+  try {
+    const { FilesetResolver, ImageSegmenter } = await import(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs');
+    const vision = await FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm');
+    segmenter = await ImageSegmenter.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/' +
+                        'selfie_segmenter/float16/latest/selfie_segmenter.tflite',
+        delegate: 'GPU',
+      },
+      runningMode: 'VIDEO',
+      outputConfidenceMasks: true,
+      outputCategoryMask: false,
+    });
+    say('人物抽出モデル準備OK — 人物側と背景側に別々のフィルタを');
+  } catch (e) {
+    console.error('segmenter init failed:', e);
+    say('人物抽出モデルを読み込めません (' + e.message + ') — ネット接続が必要です', true);
+  } finally { segLoading = false; }
+}
+function updateMask(nowMs) {
+  const pn = nodes.find(n => n.type === 'person');
+  if (!pn || !segmenter || !branches.some(b => b.person)) return;
+  const br = branches.find(b => b.person);
+  const src = br && br.src;
+  if (!src) return;
+  segCtx.drawImage(src.grab, 0, 0, SEG_W, SEG_H);
+  const res = segmenter.segmentForVideo(segCanvas, nowMs);
+  const masks = res.confidenceMasks;
+  if (masks && masks.length > 0) {
+    const m = masks[masks.length - 1].getAsFloat32Array();
+    const ptr = fs.imageBuffer(inst, 'maskP', SEG_W, SEG_H);
+    const heap = mod.HEAPU8;
+    for (let i = 0; i < SEG_W * SEG_H; ++i) heap[ptr + i * 4 + 3] = (m[i] * 255) | 0;
+    maskReady = true;
+    pushMasks();
+  }
+  res.close();
+}
+
+// ---- graph rendering -------------------------------------------------------
+const gInner = $('gInner'), edgeG = $('edgeG'), tempEdge = $('tempEdge');
+const SRC_EMOJI = { camera: '📷', image: '🖼', video: '🎬', sample: '✨' };
+const animatedGraph = () => branches.some(b =>
+    b.filters.some(n => n.on && timeIndex(SPEC[n.name]) >= 0));
+
+function nodeMeta(n) {
+  if (n.type === 'src') return { emoji: SRC_EMOJI[n.kind] || '⬛', j: '入力', e: n.kind,
+                                 ac: NODE_ACCENT.src, outs: [''], hasIn: false };
+  if (n.type === 'person') return { emoji: '🧍', j: '人物抽出', e: 'segment',
+                                 ac: NODE_ACCENT.person, outs: ['人物', '背景'], hasIn: true };
+  if (n.type === 'xform') return { emoji: '🎚', j: '変形/合成', e: n.blend,
+                                 ac: NODE_ACCENT.xform, outs: [''], hasIn: true };
+  if (n.type === 'out') return { emoji: '🖼', j: '出力', e: 'stack',
+                                 ac: NODE_ACCENT.out, outs: [], hasIn: true };
+  return { emoji: jaEmoji(n.name), j: jaLabel(n.name), e: n.name,
+           ac: accentOf(n.name), outs: [''], hasIn: true };
+}
+const nodeH = n => n.type === 'person' ? 66 : NODE_H;
+function portXY(n, isOut, portIdx) {
+  const h = nodeH(n);
+  if (!isOut) return [n.x, n.y + h / 2];
+  const m = nodeMeta(n);
+  const k = m.outs.length;
+  return [n.x + NODE_W, n.y + h * (portIdx + 1) / (k + 1)];
+}
+
+let justAddedId = null;
+function renderGraph() {
+  // nodes
+  for (const el of [...gInner.querySelectorAll('.gnode')]) el.remove();
+  for (const n of nodes) {
+    const m = nodeMeta(n);
+    const card = document.createElement('div');
+    card.className = 'gnode' + (n.id === selId ? ' sel' : '') +
+        (n.type === 'filter' && !n.on ? ' off' : '') + (n.id === justAddedId ? ' pop' : '');
+    card.style.setProperty('--ac', m.ac);
+    card.style.left = n.x + 'px';
+    card.style.top = n.y + 'px';
+    card.style.height = nodeH(n) + 'px';
+    card.dataset.id = n.id;
+    const em = document.createElement('div');
+    em.className = 'emoji';
+    em.textContent = m.emoji;
+    const j = document.createElement('div');
+    j.className = 'jname';
+    j.textContent = m.j;
+    const e = document.createElement('div');
+    e.className = 'ename';
+    e.textContent = m.e;
+    card.append(em, j, e);
+    if (n.type === 'filter') {
+      const pw = document.createElement('button');
+      pw.className = 'pw';
+      pw.title = n.on ? 'オフにする' : 'オンにする';
+      pw.addEventListener('click', ev => {
+        ev.stopPropagation();
+        n.on = !n.on;
+        applyGraph(false);
+      });
+      card.append(pw);
+    }
+    if (n.type !== 'out' && !(n.type === 'src' && nodes.filter(x => x.type === 'src').length === 1)) {
+      const rm = document.createElement('button');
+      rm.className = 'rm';
+      rm.textContent = '×';
+      rm.title = '削除';
+      rm.addEventListener('click', ev => {
+        ev.stopPropagation();
+        removeNode(n.id);
+        applyGraph(true);
+      });
+      card.append(rm);
+    }
+    if (m.hasIn) {
+      const p = document.createElement('div');
+      p.className = 'port in';
+      p.style.setProperty('--ac', m.ac);
+      p.style.top = (nodeH(n) / 2 - 7) + 'px';
+      p.dataset.id = n.id;
+      card.append(p);
+    }
+    m.outs.forEach((label, k) => {
+      const p = document.createElement('div');
+      p.className = 'port out';
+      p.style.setProperty('--ac', m.ac);
+      p.style.top = (nodeH(n) * (k + 1) / (m.outs.length + 1) - 7) + 'px';
+      p.dataset.id = n.id;
+      p.dataset.port = k;
+      if (label) {
+        const t = document.createElement('span');
+        t.className = 'plabel';
+        t.textContent = label;
+        p.append(t);
+      }
+      hookOutPort(p);
+      card.append(p);
+    });
+    hookNodeDrag(card, n);
+    gInner.append(card);
+  }
+  if (justAddedId) {
+    const n = nodeById(justAddedId);
+    if (n) $('graph').scrollTo({ left: Math.max(0, n.x - 300),
+                                 top: Math.max(0, n.y - 120), behavior: 'smooth' });
+  }
+  justAddedId = null;
+  drawEdges();
+}
+function edgePath(x1, y1, x2, y2) {
+  const dx = Math.max(40, Math.abs(x2 - x1) * 0.5);
+  return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+}
+function drawEdges() {
+  edgeG.replaceChildren();
+  for (const e of edges) {
+    const from = nodeById(e.from), to = nodeById(e.to);
+    if (!from || !to) continue;
+    const [x1, y1] = portXY(from, true, e.fp);
+    const [x2, y2] = portXY(to, false, 0);
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    hit.setAttribute('class', 'hit');
+    hit.setAttribute('d', edgePath(x1, y1, x2, y2));
+    hit.addEventListener('click', () => {
+      edges = edges.filter(x => x !== e);
+      applyGraph(true);
+    });
+    const vis = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    vis.setAttribute('class', 'edge');
+    vis.setAttribute('d', edgePath(x1, y1, x2, y2));
+    g.append(hit, vis);
+    edgeG.append(g);
+  }
+}
+
+// node drag / select
+function hookNodeDrag(card, n) {
+  card.addEventListener('pointerdown', e => {
+    if (e.target.closest('button') || e.target.closest('.port')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX, startY = e.clientY;
+    const ox = n.x, oy = n.y;
+    let moved = false;
+    const onMove = ev => {
+      const dx = ev.clientX - startX, dy = ev.clientY - startY;
+      if (!moved && Math.hypot(dx, dy) > 5) moved = true;
+      if (moved) {
+        n.x = Math.max(0, Math.min(2050, ox + dx));
+        n.y = Math.max(0, Math.min(500, oy + dy));
+        card.style.left = n.x + 'px';
+        card.style.top = n.y + 'px';
+        drawEdges();
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (moved) applyGraph(true);              // y decides stacking order
+      else { selId = n.id; renderGraph(); renderInspector(); updateSrcUI(); updateHint(); }
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  });
+}
+// connect drag from an out port
+function hookOutPort(p) {
+  p.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    const fromId = p.dataset.id, fp = Number(p.dataset.port);
+    const from = nodeById(fromId);
+    const gRect = () => gInner.getBoundingClientRect();
+    const onMove = ev => {
+      const r = gRect();
+      const [x1, y1] = portXY(from, true, fp);
+      tempEdge.setAttribute('d', edgePath(x1, y1, ev.clientX - r.left, ev.clientY - r.top));
+    };
+    const onUp = ev => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      tempEdge.setAttribute('d', '');
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const inPort = el && el.closest ? el.closest('.port.in') : null;
+      const toCard = el && el.closest ? el.closest('.gnode') : null;
+      const toId = inPort ? inPort.dataset.id : (toCard ? toCard.dataset.id : null);
+      if (toId && connect(fromId, fp, toId)) applyGraph(true);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  });
+}
+$('graph').addEventListener('pointerdown', e => {
+  if (e.target.closest('.gnode') || e.target.closest('.port')) return;
+  selId = null;
+  renderGraph();
+  renderInspector();
+  updateSrcUI();
+  updateHint();
+});
+window.addEventListener('keydown', e => {
+  if (e.key === 'Delete' && selId && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
+    removeNode(selId);
+    applyGraph(true);
+  }
+});
+
+function applyGraph(structural) {
+  if (structural) rebuildScene();
+  else { compile(); pushChains(simT); }
+  renderGraph();
+  renderInspector();
+  updateSrcUI();
+  updateHint();
+  updateBar();
+  saveHash();
+}
+
+// ---- toolbar ---------------------------------------------------------------
+function freeSpot(nearX, nearY) {
+  let x = nearX, y = nearY;
+  while (nodes.some(n => Math.abs(n.x - x) < 60 && Math.abs(n.y - y) < 46)) { x += 26; y += 30; }
+  return [Math.min(1900, x), Math.min(480, y)];
+}
+$('tbFilter').addEventListener('click', () => openPalette());
+$('tbSrc').addEventListener('click', () => {
+  const [x, y] = freeSpot(60, 300);
+  const n = addNode('src', x, y, { kind: 'sample' });
+  selId = justAddedId = n.id;
+  applyGraph(true);
+  say('入力を追加 — 上のボタンでカメラ/ファイル/サンプルを選べます');
+});
+$('tbPerson').addEventListener('click', () => {
+  if (nodes.some(n => n.type === 'person')) { say('人物抽出は1個までです', true); return; }
+  // splice the split right after the source: the source's existing chain
+  // becomes the 背景 side, the 人物 side goes clean to the front
+  const src = selectedSrc() || nodes.find(n => n.type === 'src');
+  const out = outNode();
+  const [x, y] = freeSpot(src.x + 190, src.y + 90);
+  const pn = addNode('person', x, y);
+  const oldOuts = edges.filter(e => e.from === src.id);
+  edges = edges.filter(e => e.from !== src.id);
+  connect(src.id, 0, pn.id);
+  if (oldOuts.length) for (const o of oldOuts) connect(pn.id, 1, o.to);   // 背景→旧チェーン
+  else connect(pn.id, 1, out.id);
+  connect(pn.id, 0, out.id);                                             // 人物 (手前)
+  selId = justAddedId = pn.id;
+  applyGraph(true);
+  loadSegmenter();
+  say('人物と背景に分けました — 背景側の線にフィルタを足すと人物だけ残ります');
+});
+$('tbXform').addEventListener('click', () => {
+  const [x, y] = freeSpot(600, 340);
+  const n = addNode('xform', x, y);
+  selId = justAddedId = n.id;
+  applyGraph(true);
+  say('変形/合成ノード — 線の途中に挟むとその枝が小窓になります (ドラッグ移動/ホイール拡縮)');
+});
+
+// ---- inspector -------------------------------------------------------------
+const paramsBox = $('params'), inspHead = $('inspHead');
+function renderInspector() {
+  paramsBox.replaceChildren();
+  const n = nodeById(selId);
+  if (!n) { inspHead.hidden = true; return; }
+  const m = nodeMeta(n);
+  inspHead.hidden = false;
+  $('paramReset').hidden = n.type !== 'filter';
+  inspHead.querySelector('.pname').textContent = m.emoji + ' ' + m.j + ' · ' + m.e;
+  inspHead.querySelector('.psum').textContent =
+      n.type === 'filter' ? SPEC[n.name].summary
+      : n.type === 'src' ? 'プレビュー左上のボタンでソース切替'
+      : n.type === 'person' ? 'MediaPipeで人物マスク。人物/背景ポートで枝分かれ'
+      : n.type === 'xform' ? 'この枝を小窓化: 位置はプレビューをドラッグ、拡縮はホイール'
+      : '入ってきた枝を下から順に重ねます (グラフの縦位置=重なり順)';
+  if (n.type === 'filter') {
+    SPEC[n.name].params.forEach((p, i) => {
+      if (p.name === 'time') return;
+      const [lo, hi, step] = rangeFor(p);
+      paramsBox.append(sliderRow(p.name, lo, hi, step, n.vals[i], v => {
+        n.vals[i] = v;
+        pushChains(simT);
+        saveHash();
+      }));
+    });
+  } else if (n.type === 'person') {
+    paramsBox.append(sliderRow('ぼかし(feather)', 0, 24, 0.5, n.feather, v => {
+      n.feather = v;
+      pushMasks();
+      saveHash();
+    }));
+  } else if (n.type === 'xform') {
+    const bi = () => branches.findIndex(b => b.xform === n);
+    const sel = document.createElement('label');
+    sel.textContent = 'ブレンド';
+    sel.style.cssText = 'display:flex;flex-direction:column;gap:3px;font:11px ui-monospace,monospace;color:var(--dim)';
+    const s = document.createElement('select');
+    for (const [v, l] of [['normal', '通常'], ['add', '加算'], ['screen', 'スクリーン'], ['multiply', '乗算']]) {
+      s.add(new Option(l, v));
+    }
+    s.value = n.blend;
+    s.addEventListener('change', () => { n.blend = s.value; rebuildScene(); saveHash(); });
+    sel.append(s);
+    paramsBox.append(sel);
+    paramsBox.append(sliderRow('回転', -180, 180, 1, n.rot, v => {
+      n.rot = v;
+      if (bi() >= 0) fs.setParamF32(inst, 'r' + bi(), v);
+      saveHash();
+    }));
+    paramsBox.append(sliderRow('スケール', 0.1, 1.6, 0.01, n.scale, v => {
+      n.scale = v;
+      rebuildSoon();
+      saveHash();
+    }));
+    paramsBox.append(sliderRow('不透明度', 0, 1, 0.01, n.op, v => {
+      n.op = v;
+      if (bi() >= 0) fs.setParamF32(inst, 'o' + bi(), v);
+      saveHash();
+    }));
+  }
+}
+function sliderRow(name, lo, hi, step, val, onInput) {
+  const label = document.createElement('label');
+  label.className = 'slider';
+  const row = document.createElement('div');
+  row.className = 'row';
+  const input = document.createElement('input');
+  const out = document.createElement('output');
+  input.type = 'range'; input.min = lo; input.max = hi; input.step = step;
+  input.value = val;
+  out.textContent = Number(val).toFixed(step >= 1 ? 0 : 2);
+  input.addEventListener('input', () => {
+    const v = Number(input.value);
+    out.textContent = v.toFixed(step >= 1 ? 0 : 2);
+    onInput(v);
+  });
+  row.append(input, out);
+  label.append(name, row);
+  return label;
+}
+$('paramReset').addEventListener('click', () => {
+  const n = nodeById(selId);
+  if (!n || n.type !== 'filter') return;
+  n.vals = SPEC[n.name].params.map(p => p.def);
+  pushChains(simT);
+  saveHash();
+  renderInspector();
+});
+
+// ---- clock -----------------------------------------------------------------
 const speed = $('speed'), speedOut = $('speedOut'), anim = $('anim');
 speed.addEventListener('input', () => { speedOut.textContent = Number(speed.value).toFixed(2); });
 let simT = 0, simLast = performance.now();
@@ -514,282 +1156,93 @@ function simNow() {
   return simT;
 }
 
-// washi paper for sumie, through the generic filter-image parameter.
-let paperReady = false;
-(async () => {
-  try {
-    const img = new Image();
-    img.src = './washi.jpg';
-    await img.decode();
-    const c = document.createElement('canvas');
-    c.width = c.height = 1024;
-    const cx = c.getContext('2d');
-    cx.drawImage(img, 0, 0, 1024, 1024);
-    const d = cx.getImageData(0, 0, 1024, 1024).data;
-    const ptr = fs.imageBuffer(inst, 'paper', 1024, 1024);
-    mod.HEAPU8.set(d, ptr);
-    paperReady = true;
-    pushChain(simT);
-  } catch (e) { console.error('washi load failed:', e); }
-})();
-
-function pushChain(t) {
-  fs.clearFilters(inst, 'after');
-  for (const node of chain) {
-    if (!node.on) continue;
-    const v = node.vals.slice();
-    const ti = timeIndex(SPEC[node.name]);
-    if (ti >= 0) v[ti] = anim.checked ? t : 0;
-    fs.setFilter(inst, 'after', node.name, v[0] || 0, v[1] || 0, v[2] || 0, v[3] || 0, v[4] || 0);
-  }
-  if (paperReady && chain.some(n => n.on && n.name === 'sumie')) {
-    fs.setFilterImage(inst, 'after', 'sumie', 'paper', 1024, 1024);
-  }
-}
-
-// ---- chain persistence (URL hash) ------------------------------------------
+// ---- persistence (URL hash) ------------------------------------------------
 function saveHash() {
-  const packed = chain.map(n => {
-    const o = { n: n.name };
-    if (!n.on) o.x = 1;
-    const s = SPEC[n.name], v = {};
-    s.params.forEach((p, i) => {
-      if (p.name !== 'time' && Math.abs(n.vals[i] - p.def) > 1e-6) v[p.name] = +n.vals[i].toFixed(3);
-    });
-    if (Object.keys(v).length) o.v = v;
-    return o;
-  });
+  const srcs = nodes.filter(n => n.type === 'src');
+  const packed = {
+    n: nodes.map(n => {
+      const o = { i: n.id, t: n.type, x: Math.round(n.x), y: Math.round(n.y) };
+      if (n.type === 'src') o.k = n.kind === 'camera' ? 'cam' : 'smp';
+      if (n.type === 'filter') {
+        o.f = n.name;
+        if (!n.on) o.off = 1;
+        const s = SPEC[n.name], v = {};
+        s.params.forEach((p, i) => {
+          if (p.name !== 'time' && Math.abs(n.vals[i] - p.def) > 1e-6) v[p.name] = +n.vals[i].toFixed(3);
+        });
+        if (Object.keys(v).length) o.v = v;
+      }
+      if (n.type === 'person') o.fe = +n.feather.toFixed(1);
+      if (n.type === 'xform') o.xf = [+n.pos[0].toFixed(1), +n.pos[1].toFixed(1),
+          +n.rot.toFixed(1), +n.scale.toFixed(3), +n.op.toFixed(2), n.blend];
+      return o;
+    }),
+    e: edges.map(e => [e.from, e.fp, e.to]),
+  };
+  const trivial = nodes.length === 2 && !edges.length;
   history.replaceState(null, '',
-      packed.length ? '#c=' + encodeURIComponent(JSON.stringify(packed)) : location.pathname);
+      trivial ? location.pathname : '#g=' + encodeURIComponent(JSON.stringify(packed)));
 }
 function loadHash() {
-  const m = location.hash.match(/#c=(.+)/);
-  if (!m) return false;
-  try {
-    const packed = JSON.parse(decodeURIComponent(m[1]));
-    const out = [];
-    for (const o of packed) {
-      if (!SPEC[o.n] || out.some(n => n.name === o.n) || out.length >= MAX_CHAIN) continue;
-      const node = makeNode(o.n, o.v || {});
-      if (o.x) node.on = false;
-      out.push(node);
+  const legacy = list => {          // old #c= / #s= chain links → linear graph
+    nodes = []; edges = []; nextId = 1;
+    const src = addNode('src', 40, 140, { kind: 'camera' });
+    const out = addNode('out', 40 + 190 * (list.length + 1), 140);
+    let prev = src;
+    for (const o of list) {
+      if (!SPEC[o.n]) continue;
+      const f = addNode('filter', prev.x + 190, 140, { name: o.n, params: o.v || {} });
+      if (o.x) f.on = false;
+      connect(prev.id, 0, f.id);
+      prev = f;
     }
-    if (!out.length) return false;
-    chain = out;
+    connect(prev.id, 0, out.id);
     return true;
-  } catch { return false; }
-}
-
-// ---- chain strip UI --------------------------------------------------------
-const chainBox = $('chain');
-let dragIdx = null;
-let justAdded = -1;                 // index that gets the pop-in animation
-
-function renderChain() {
-  chainBox.replaceChildren();
-  const inCap = document.createElement('div');
-  inCap.className = 'endcap';
-  inCap.innerHTML = '<span>🎥</span>入力';
-  chainBox.append(inCap, wire());
-  chain.forEach((node, i) => {
-    const card = document.createElement('div');
-    card.className = 'node' + (i === selected ? ' sel' : '') + (node.on ? '' : ' off') +
-        (i === dragIdx ? ' dragging' : '') + (i === justAdded ? ' pop' : '');
-    card.style.setProperty('--ac', accentOf(node.name));
-    card.dataset.i = i;
-    const em = document.createElement('div');
-    em.className = 'emoji';
-    em.textContent = jaEmoji(node.name);
-    const j = document.createElement('div');
-    j.className = 'jname';
-    j.textContent = jaLabel(node.name);
-    const e = document.createElement('div');
-    e.className = 'ename';
-    e.textContent = node.name;
-    const pw = document.createElement('button');
-    pw.className = 'pw';
-    pw.title = node.on ? 'オフにする' : 'オンにする';
-    pw.addEventListener('click', ev => {
-      ev.stopPropagation();
-      node.on = !node.on;
-      applyChain();
-    });
-    const rm = document.createElement('button');
-    rm.className = 'rm';
-    rm.textContent = '×';
-    rm.title = '削除';
-    rm.addEventListener('click', ev => {
-      ev.stopPropagation();
-      chain.splice(i, 1);
-      if (selected >= chain.length) selected = chain.length - 1;
-      applyChain();
-    });
-    card.append(em, j, e, pw, rm);
-    hookNodePointer(card);
-    chainBox.append(card, wire());
-  });
-  justAdded = -1;
-  const add = document.createElement('button');
-  add.id = 'addNode';
-  add.textContent = '+';
-  add.title = 'フィルタを追加';
-  add.disabled = chain.length >= MAX_CHAIN;
-  add.addEventListener('click', openPalette);
-  const outCap = document.createElement('div');
-  outCap.className = 'endcap';
-  outCap.innerHTML = '<span>🖼</span>出力';
-  chainBox.append(add, wire(), outCap);
-}
-function wire() {
-  const w = document.createElement('div');
-  w.className = 'wire';
-  return w;
-}
-
-// click = select; drag > 8px = reorder with a ghost following the pointer.
-function hookNodePointer(card) {
-  card.addEventListener('pointerdown', e => {
-    if (e.target.closest('button')) return;
-    e.preventDefault();
-    const startX = e.clientX, startY = e.clientY;
-    const myIdx = () => Number(card.dataset.i);
-    let ghost = null;
-    const onMove = ev => {
-      if (!ghost && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 8) {
-        dragIdx = myIdx();
-        ghost = card.cloneNode(true);
-        ghost.id = 'ghost';
-        ghost.style.width = card.offsetWidth + 'px';
-        ghost.style.setProperty('--ac', accentOf(chain[dragIdx].name));
-        document.body.append(ghost);
-        renderChain();
+  };
+  let m = location.hash.match(/#g=(.+)/);
+  if (m) {
+    try {
+      const packed = JSON.parse(decodeURIComponent(m[1]));
+      nodes = []; edges = []; nextId = 1;
+      const idMap = {};
+      for (const o of packed.n || []) {
+        let n = null;
+        if (o.t === 'src') n = addNode('src', o.x, o.y, { kind: o.k === 'cam' ? 'camera' : 'sample' });
+        else if (o.t === 'filter' && SPEC[o.f]) {
+          n = addNode('filter', o.x, o.y, { name: o.f, params: o.v || {} });
+          if (o.off) n.on = false;
+        } else if (o.t === 'person' && !nodes.some(x => x.type === 'person')) {
+          n = addNode('person', o.x, o.y, { feather: Number(o.fe) || 5 });
+        } else if (o.t === 'xform' && Array.isArray(o.xf)) {
+          n = addNode('xform', o.x, o.y, { pos: [Number(o.xf[0]) || 0, Number(o.xf[1]) || 0],
+              rot: Number(o.xf[2]) || 0, scale: Math.min(1.6, Math.max(0.1, Number(o.xf[3]) || 0.45)),
+              op: Math.min(1, Math.max(0, Number(o.xf[4]) ?? 1)),
+              blend: ['add', 'multiply', 'screen'].includes(o.xf[5]) ? o.xf[5] : 'normal' });
+        } else if (o.t === 'out' && !nodes.some(x => x.type === 'out')) {
+          n = addNode('out', o.x, o.y);
+        }
+        if (n) idMap[o.i] = n.id;
       }
-      if (!ghost) return;
-      ghost.style.left = ev.clientX + 'px';
-      ghost.style.top = ev.clientY + 'px';
-      // insertion index from card midpoints
-      const cards = [...chainBox.querySelectorAll('.node')];
-      let target = cards.length - 1;
-      for (let k = 0; k < cards.length; ++k) {
-        const r = cards[k].getBoundingClientRect();
-        if (ev.clientX < r.left + r.width / 2) { target = k - (k > dragIdx ? 1 : 0); break; }
-        if (k === cards.length - 1) target = cards.length - 1;
+      if (!nodes.some(x => x.type === 'out')) addNode('out', 900, 140);
+      if (!nodes.some(x => x.type === 'src')) addNode('src', 40, 140, { kind: 'camera' });
+      for (const [f, fp, t] of packed.e || []) {
+        if (idMap[f] && idMap[t]) connect(idMap[f], Number(fp) || 0, idMap[t]);
       }
-      target = Math.max(0, Math.min(chain.length - 1, target));
-      if (target !== dragIdx) {
-        const [moved] = chain.splice(dragIdx, 1);
-        chain.splice(target, 0, moved);
-        if (selected === dragIdx) selected = target;
-        else if (selected > dragIdx && selected <= target) --selected;
-        else if (selected < dragIdx && selected >= target) ++selected;
-        dragIdx = target;
-        renderChain();
-      }
-    };
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      if (ghost) {
-        ghost.remove();
-        dragIdx = null;
-        applyChain();
-      } else {
-        selected = myIdx();
-        renderChain();
-        renderParams();
-      }
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  });
-}
-
-window.addEventListener('keydown', e => {
-  if (e.key === 'Delete' && selected >= 0 && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
-    chain.splice(selected, 1);
-    if (selected >= chain.length) selected = chain.length - 1;
-    applyChain();
+      return true;
+    } catch { return false; }
   }
-});
-
-// ---- param sliders ---------------------------------------------------------
-const paramsBox = $('params'), paramHead = $('paramHead');
-
-function renderParams() {
-  paramsBox.replaceChildren();
-  if (selected < 0 || !chain[selected]) { paramHead.hidden = true; return; }
-  const node = chain[selected];
-  const s = SPEC[node.name];
-  paramHead.hidden = false;
-  paramHead.querySelector('.pname').textContent =
-      jaEmoji(node.name) + ' ' + jaLabel(node.name) + ' · ' + node.name;
-  paramHead.querySelector('.psum').textContent = s.summary;
-  s.params.forEach((p, i) => {
-    if (p.name === 'time') return;              // the clock drives this one
-    const [lo, hi, step] = rangeFor(p);
-    const label = document.createElement('label');
-    label.className = 'slider';
-    const row = document.createElement('div');
-    row.className = 'row';
-    const input = document.createElement('input');
-    const out = document.createElement('output');
-    input.type = 'range'; input.min = lo; input.max = hi; input.step = step;
-    input.value = node.vals[i];
-    out.textContent = Number(node.vals[i]).toFixed(step >= 1 ? 0 : 2);
-    input.addEventListener('input', () => {
-      node.vals[i] = Number(input.value);
-      out.textContent = Number(input.value).toFixed(step >= 1 ? 0 : 2);
-      pushChain(simT);
-      saveHash();
-    });
-    row.append(input, out);
-    label.append(p.name, row);
-    paramsBox.append(label);
-  });
-}
-$('paramReset').addEventListener('click', () => {
-  const node = chain[selected];
-  if (!node) return;
-  node.vals = SPEC[node.name].params.map(p => p.def);
-  pushChain(simT);
-  saveHash();
-  renderParams();
-});
-
-function applyChain() {
-  if (selected >= chain.length) selected = chain.length - 1;
-  renderChain();
-  renderParams();
-  pushChain(simT);
-  saveHash();
-  updateBar();
-}
-
-// AI/preset apply: the nodes snap in one by one while the preview updates —
-// watching the chain assemble is half the fun.
-let applySeq = 0;
-async function setChainAnimated(spec, comment) {
-  const seq = ++applySeq;
-  chain = [];
-  selected = -1;
-  applyChain();
-  say(comment);
-  for (const [name, over] of spec) {
-    if (!SPEC[name] || chain.some(n => n.name === name) || chain.length >= MAX_CHAIN) continue;
-    if (chain.length) await sleep(230);
-    if (seq !== applySeq) return;               // superseded by a newer apply
-    chain.push(makeNode(name, over || {}));
-    selected = justAdded = chain.length - 1;
-    applyChain();
+  m = location.hash.match(/#s=(.+)/);
+  if (m) {
+    try {
+      const arr = JSON.parse(decodeURIComponent(m[1]));
+      return legacy((arr[0] && arr[0].c) || []);
+    } catch { return false; }
   }
-}
-function say(text, isErr = false) {
-  aiSay.classList.toggle('err', isErr);
-  aiSay.replaceChildren();
-  if (!text) return;
-  const b = document.createElement('b');
-  b.textContent = '✦ ';
-  aiSay.append(b, text);
+  m = location.hash.match(/#c=(.+)/);
+  if (m) {
+    try { return legacy(JSON.parse(decodeURIComponent(m[1]))); } catch { return false; }
+  }
+  return false;
 }
 
 // ---- palette ---------------------------------------------------------------
@@ -807,6 +1260,35 @@ function openPalette() {
   palSearch.focus();
 }
 palSearch.addEventListener('input', () => buildPalette(palSearch.value.trim().toLowerCase()));
+// Adding a filter splices it into the selected node's outgoing line, or
+// drops it free for hand-wiring.
+function addFilterNode(name, params = {}) {
+  if (filterCount() >= MAX_FILTERS) { say('フィルタは合計' + MAX_FILTERS + '個まで', true); return null; }
+  const sel = nodeById(selId);
+  let x = 400, y = 60;
+  let spliceEdge = null;
+  if (sel && sel.type !== 'out') {
+    spliceEdge = edges.find(e => e.from === sel.id);
+    x = sel.x + 190;
+    y = sel.y + (spliceEdge ? 0 : 0);
+  }
+  const [fx, fy] = spliceEdge ? [x, nodeById(spliceEdge.to).type === 'out' ? sel.y : sel.y]
+                              : freeSpot(x, y);
+  const f = addNode('filter', spliceEdge ? x : fx, spliceEdge ? sel.y : fy, { name, params });
+  if (spliceEdge) {
+    const toId = spliceEdge.to, fp = spliceEdge.fp;
+    edges = edges.filter(e => e !== spliceEdge);
+    connect(sel.id, fp, f.id);
+    connect(f.id, 0, toId);
+    // nudge downstream nodes right so the row keeps breathing room
+    const to = nodeById(toId);
+    if (to && to.x < f.x + 190) to.x = f.x + 190;
+  } else if (sel && sel.type !== 'out') {
+    connect(sel.id, sel.type === 'person' ? 1 : 0, f.id);
+  }
+  selId = justAddedId = f.id;
+  return f;
+}
 function buildPalette(q) {
   palBody.replaceChildren();
   for (const [label, names] of CATS) {
@@ -824,7 +1306,6 @@ function buildPalette(q) {
       const btn = document.createElement('button');
       btn.className = 'palitem';
       btn.style.setProperty('--ac', CAT_COLOR[label]);
-      btn.disabled = chain.some(x => x.name === n);
       const pe = document.createElement('span');
       pe.className = 'pe';
       pe.textContent = jaEmoji(n);
@@ -837,20 +1318,79 @@ function buildPalette(q) {
       t.append(sm);
       const d = document.createElement('div');
       d.className = 'd';
-      d.textContent = btn.disabled ? '追加済み' : (JA[n] || ['', ''])[1];
+      d.textContent = (JA[n] || ['', ''])[1];
       tx.append(t, d);
       btn.append(pe, tx);
       btn.addEventListener('click', () => {
-        chain.push(makeNode(n));
-        selected = justAdded = chain.length - 1;
         palOverlay.classList.remove('open');
-        applyChain();
+        if (addFilterNode(n)) applyGraph(true);
       });
       grid.append(btn);
     }
     cat.append(h, grid);
     palBody.append(cat);
   }
+}
+
+// ---- AI: rewrite the target branch's filters -------------------------------
+// target branch = the one holding the selected node, else the base branch.
+function targetBranch() {
+  compile();
+  if (!branches.length) return null;
+  const sel = nodeById(selId);
+  if (sel) {
+    const hit = branches.find(b => b.filters.includes(sel) || b.src === sel ||
+                                   b.xform === sel || (b.person === sel));
+    if (hit) return hit;
+  }
+  return branches[0];
+}
+let applySeq = 0;
+// Rewrites one branch's filters: strip, then splice new nodes one by one
+// along the head→tail edge (head = person port or src; tail = xform or out).
+// `pick` optionally chooses the branch (e.g. the 背景 side).
+async function setBranchChain(spec, comment, pick = null) {
+  const seq = ++applySeq;
+  compile();
+  const br = (pick && branches.find(pick)) || targetBranch();
+  if (!br) { say('出力につながる枝がありません — ●を線でつないでください', true); return; }
+  const headId = br.person ? br.person.id : br.src.id;
+  const headFp = br.person ? br.personPort : 0;
+  const tailId = br.xform ? br.xform.id : outNode().id;
+  for (const f of br.filters.slice()) removeNode(f.id);
+  if (!edges.some(e => e.from === headId && e.fp === headFp && e.to === tailId)) {
+    connect(headId, headFp, tailId);
+  }
+  applyGraph(true);
+  say(comment);
+  let cur = { id: headId, fp: headFp };
+  for (const [name, over] of spec) {
+    if (!SPEC[name] || filterCount() >= MAX_FILTERS) continue;
+    await sleep(230);
+    if (seq !== applySeq) return;
+    const e = edges.find(x => x.from === cur.id && x.fp === cur.fp && x.to === tailId);
+    if (!e) return;                            // user rewired mid-animation
+    const f = addNode('filter', 0, 0, { name, params: over || {} });
+    const a = nodeById(cur.id);
+    f.x = Math.min(1900, a.x + 190);
+    f.y = a.type === 'person' ? a.y + (cur.fp === 0 ? -14 : 52) : a.y;
+    edges = edges.filter(x => x !== e);
+    connect(cur.id, cur.fp, f.id);
+    connect(f.id, 0, tailId);
+    const tailN = nodeById(tailId);
+    if (tailN.x < f.x + 190) tailN.x = f.x + 190;
+    selId = justAddedId = f.id;
+    cur = { id: f.id, fp: 0 };
+    applyGraph(true);
+  }
+}
+function say(text, isErr = false) {
+  aiSay.classList.toggle('err', isErr);
+  aiSay.replaceChildren();
+  if (!text) return;
+  const b = document.createElement('b');
+  b.textContent = '✦ ';
+  aiSay.append(b, text);
 }
 
 // ---- presets ---------------------------------------------------------------
@@ -872,12 +1412,11 @@ for (const [label, spec] of PRESETS) {
   const b = document.createElement('button');
   b.className = 'preset';
   b.textContent = label;
-  b.addEventListener('click', () => setChainAnimated(spec, ''));
+  b.addEventListener('click', () => setBranchChain(spec, ''));
   $('presetBtns').append(b);
 }
 
 // ---- built-in composer (offline "AI") --------------------------------------
-// keyword recipes: matched fragments concatenate, tone→art→finish ordered.
 const RECIPES = [
   [/夕焼|夕暮|サンセット|sunset|ノスタルジ|黄昏/, [['white_balance', { temperature: 0.55 }], ['color_transform', { saturation: 1.1 }], ['vignette', {}]], '夕暮れの空気は色温度とビネットで'],
   [/昔|レトロ|フィルム|昭和|vhs|ビデオ|テープ|古いカメラ|古びた/, [['ntsc', { noise: 0.15 }], ['crt', {}]], 'アナログ信号を通してブラウン管へ'],
@@ -905,7 +1444,6 @@ const RECIPES = [
   [/古写真|アンティーク|大正|明治/, [['sepia', {}], ['vignette', {}], ['ntsc', { noise: 0.08 }]], 'セピアに時間の傷を少し'],
   [/絵本|パステル/, [['watercolor', { edge: 0.5 }], ['exposure', { stops: 0.25 }]], '淡い水彩で絵本のページに'],
 ];
-// direct filter-name / JA-label mention also works ("sumieとcrt" etc.)
 function composeBuiltin(text) {
   const t = text.toLowerCase();
   const frags = [];
@@ -919,20 +1457,19 @@ function composeBuiltin(text) {
     }
   }
   if (!frags.length) return null;
-  // intensity modifiers scale the numeric overrides
   let k = 1;
   if (/強|激し|めっちゃ|超|ガッツリ|strong/.test(t)) k = 1.4;
   if (/弱|ほんのり|少し|軽く|うっすら|subtle/.test(t)) k = 0.6;
   const scaled = frags.map(([n, o]) => [n, k === 1 ? o :
       Object.fromEntries(Object.entries(o).map(([pn, pv]) => [pn, pv * k]))]);
-  // tone first, style mid, finish last
   const FINISH = new Set(['vignette', 'crt', 'ntsc', 'halftone', 'wobble', 'median']);
   const TONE = new Set(['grayscale', 'sepia', 'white_balance', 'exposure', 'levels',
                         'color_transform', 'rgb', 'hue', 'bilateral', 'beauty']);
   scaled.sort((a, b) => (TONE.has(a[0]) ? 0 : FINISH.has(a[0]) ? 2 : 1) -
                         (TONE.has(b[0]) ? 0 : FINISH.has(b[0]) ? 2 : 1));
   // last match wins: later recipes are the more specific ones
-  return { chain: scaled, comment: comments[comments.length - 1] || 'こんな組み合わせにしてみました' };
+  return { chain: scaled, comment: comments[comments.length - 1] || 'こんな組み合わせにしてみました',
+           person: /人物|背景|ポートレ|自分以外|人だけ/.test(t) };
 }
 function composeRandom() {
   const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -948,9 +1485,6 @@ function composeRandom() {
 }
 
 // ---- AI providers ----------------------------------------------------------
-// The key never leaves this machine except toward the API the user picked:
-// it is kept in localStorage only, and sent only in that provider's auth
-// header. Built-in composer = zero setup, zero network.
 const CFG_KEY = 'fs_studio_ai';
 let aiCfg = { prov: 'builtin', claudeKey: '', claudeModel: 'claude-opus-5',
               oaiBase: 'http://localhost:11434/v1', oaiModel: '', oaiKey: '' };
@@ -1034,24 +1568,35 @@ function parseAiJson(text) {
 const aiText = $('aiText'), aiGo = $('aiGo'), aibar = $('aibar');
 async function generate() {
   const text = aiText.value.trim();
-  if (!text) { setChainAnimated(...unpack(composeRandom())); return; }
+  if (!text) { const r = composeRandom(); setBranchChain(r.chain, r.comment); return; }
   aiGo.disabled = true;
   aibar.classList.add('busy');
   try {
     if (aiCfg.prov === 'claude' && aiCfg.claudeKey) {
       say('Claudeが考えています…');
-      setChainAnimated(...unpack(parseAiJson(await askClaude(text))));
+      const r = parseAiJson(await askClaude(text));
+      await setBranchChain(r.chain, r.comment);
     } else if (aiCfg.prov === 'openai' && aiCfg.oaiBase && aiCfg.oaiModel) {
       say('AIが考えています…');
-      setChainAnimated(...unpack(parseAiJson(await askOpenAI(text))));
+      const r = parseAiJson(await askOpenAI(text));
+      await setBranchChain(r.chain, r.comment);
     } else {
       const r = composeBuiltin(text);
-      if (r) setChainAnimated(...unpack(r));
-      else {
+      if (r && r.person) {
+        // 「背景だけ水墨画に」— build the portrait split, style the 背景 branch
+        if (!nodes.some(n => n.type === 'person')) {
+          $('tbPerson').click();
+          await sleep(400);
+        }
+        await setBranchChain(r.chain, r.comment + ' — 人物はそのまま、背景だけ',
+            b => b.person && b.personPort === 1);
+      } else if (r) {
+        await setBranchChain(r.chain, r.comment);
+      } else {
         const rnd = composeRandom();
         rnd.comment = 'うまく読み取れなかったので、おまかせで: ' +
             rnd.chain.map(([n]) => jaLabel(n)).join(' → ') + ' (⚙からLLM接続もできます)';
-        setChainAnimated(...unpack(rnd));
+        await setBranchChain(rnd.chain, rnd.comment);
       }
     }
   } catch (e) {
@@ -1062,14 +1607,12 @@ async function generate() {
     aibar.classList.remove('busy');
   }
 }
-const unpack = r => [r.chain, r.comment];
 aiGo.addEventListener('click', generate);
 aiText.addEventListener('keydown', e => { if (e.key === 'Enter') generate(); });
-$('aiDice').addEventListener('click', () => setChainAnimated(...unpack(composeRandom())));
+$('aiDice').addEventListener('click', () => { const r = composeRandom(); setBranchChain(r.chain, r.comment); });
 
-// rotating placeholder ideas
-const IDEAS = ['昔のカメラみたいな映像', '夕暮れのフィルム風', 'ホラー映画っぽく',
-               'ゴッホの絵みたいに', '水墨画にして', 'サイバーパンクな街',
+const IDEAS = ['昔のカメラみたいな映像', '背景だけ水墨画にして', 'ホラー映画っぽく',
+               'ゴッホの絵みたいに', '夕暮れのフィルム風', 'サイバーパンクな街',
                'レトロゲームの画面', 'ふわふわの夢の中', '雨の日の絵本'];
 let ideaIdx = 0;
 setInterval(() => {
@@ -1125,20 +1668,25 @@ async function copyText(t, btn, okLabel) {
 $('btnShare').addEventListener('click', e =>
     copyText(location.href, e.currentTarget, '✅ コピー済'));
 $('btnYaml').addEventListener('click', e => {
-  const lines = chain.filter(n => n.on).map(n => {
-    const s = SPEC[n.name];
-    const ps = s.params.map((p, i) => p.name === 'time' ? null : `${p.name}: ${+n.vals[i].toFixed(3)}`)
-        .filter(Boolean).join(', ');
-    return `  - { ${n.name}: { ${ps} } }`;
+  let y = sceneYaml();
+  branches.forEach((br, i) => {
+    const on = br.filters.filter(n => n.on);
+    if (!on.length) return;
+    const lines = on.map(n => {
+      const s = SPEC[n.name];
+      const ps = s.params.map((p, j) => p.name === 'time' ? null : `${p.name}: ${+n.vals[j].toFixed(3)}`)
+          .filter(Boolean).join(', ');
+      return `      - { ${n.name}: { ${ps} } }`;
+    });
+    y = y.replace(`  - id: B${i}\n`, `  - id: B${i}\n    filters:\n${lines.join('\n')}\n`);
   });
-  copyText('filters:\n' + (lines.length ? lines.join('\n') : '  []'), e.currentTarget, '✅ YAML');
+  copyText(y, e.currentTarget, '✅ YAML');
 });
 $('btnSnap').addEventListener('click', () => {
   canvas.toBlob(b => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(b);
-    a.download = 'fluent_scene_' +
-        (chain.filter(n => n.on).map(n => n.name).join('-') || 'original') + '.png';
+    a.download = 'fluent_scene_studio.png';
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }, 'image/png');
@@ -1171,8 +1719,6 @@ try {
 }
 if (!gpu) {
   if (navigator.gpu) {
-    // a failed WebGPU attempt may have claimed the canvas — a claimed
-    // canvas returns null from getContext('2d'), so start from a fresh node
     const fresh = canvas.cloneNode(false);
     fresh.width = 1280; fresh.height = 720;
     canvas.replaceWith(fresh);
@@ -1190,102 +1736,161 @@ function fallbackToCpu(why) {
   fresh.width = 1280; fresh.height = 720;
   canvas.replaceWith(fresh);
   canvas = fresh;
-  hookWipe(canvas);
+  hookCanvas(canvas);
   ctx = canvas.getContext('2d');
 }
 
-// ---- wipe ------------------------------------------------------------------
+// ---- canvas interaction: wipe / move selected branch's xform ----------------
 function setWipe(s) {
-  s = Math.max(0, Math.min(stageW, s));
+  s = Math.max(0, Math.min(STAGE_W, s));
   fs.setParamVec2(inst, 'wipe_win', s - 640, 360);
   fs.setParamVec2(inst, 'wipe_inv', 1920 - s, 360);
   fs.setParamVec2(inst, 'divider', s, 360);
 }
-let dragging = false;
-function hookWipe(el) {
+function stagePoint(el, e) {
+  const r = el.getBoundingClientRect();
+  return [(e.clientX - r.left) / r.width * STAGE_W,
+          (e.clientY - r.top) / r.height * STAGE_H];
+}
+// the xform the preview manipulates: the selected node's branch, else the
+// topmost branch that has one
+function activeXform() {
+  const sel = nodeById(selId);
+  if (sel && sel.type === 'xform') return sel;
+  const br = sel ? branches.find(b => b.filters.includes(sel) || b.src === sel) : null;
+  if (br && br.xform) return br.xform;
+  const anyBr = [...branches].reverse().find(b => b.xform);
+  return anyBr ? anyBr.xform : null;
+}
+function updateHint() {
+  const xf = activeXform();
+  if (wipeMode()) {
+    hint.textContent = 'ドラッグで境界移動 · 左=原画';
+    canvas.style.cursor = 'ew-resize';
+  } else if (xf) {
+    hint.textContent = '小窓をドラッグで移動 · ホイールで拡縮';
+    canvas.style.cursor = 'move';
+  } else {
+    hint.textContent = 'ノードを線でつないで合成 (下の枝ほど手前)';
+    canvas.style.cursor = 'default';
+  }
+}
+let dragging = false, dragOff = [0, 0], dragXf = null;
+function hookCanvas(el) {
   el.addEventListener('pointerdown', e => {
     dragging = true; el.setPointerCapture(e.pointerId);
-    const r = el.getBoundingClientRect();
-    setWipe((e.clientX - r.left) / r.width * stageW);
+    const [sx, sy] = stagePoint(el, e);
+    if (wipeMode()) {
+      setWipe(sx);
+    } else {
+      dragXf = activeXform();
+      if (dragXf) dragOff = [dragXf.pos[0] - sx, dragXf.pos[1] - sy];
+    }
     e.preventDefault();
   });
   el.addEventListener('pointermove', e => {
     if (!dragging) return;
-    const r = el.getBoundingClientRect();
-    setWipe((e.clientX - r.left) / r.width * stageW);
+    const [sx, sy] = stagePoint(el, e);
+    if (wipeMode()) {
+      setWipe(sx);
+    } else if (dragXf) {
+      dragXf.pos = [sx + dragOff[0], sy + dragOff[1]];
+      const bi = branches.findIndex(b => b.xform === dragXf);
+      if (bi >= 0) fs.setParamVec2(inst, 'p' + bi, dragXf.pos[0], dragXf.pos[1]);
+    }
   });
-  el.addEventListener('pointerup', () => { dragging = false; });
+  el.addEventListener('pointerup', () => { dragging = false; dragXf = null; saveHash(); });
+  el.addEventListener('wheel', e => {
+    const xf = activeXform();
+    if (wipeMode() || !xf) return;
+    e.preventDefault();
+    xf.scale = Math.min(1.6, Math.max(0.1, xf.scale * (e.deltaY < 0 ? 1.06 : 0.94)));
+    rebuildSoon();
+    if (nodeById(selId) === xf) renderInspector();
+    saveHash();
+  }, { passive: false });
 }
-hookWipe(canvas);
+hookCanvas(canvas);
 
-// ---- input sources ---------------------------------------------------------
-// webcam by default; picked image / picked video / procedural sample keep
-// the studio playable with no camera and no upload.
-let CAM_W = 1280, CAM_H = 720;
-const grab = document.createElement('canvas');
-grab.width = CAM_W; grab.height = CAM_H;
-const grabCtx = grab.getContext('2d', { willReadFrequently: true });
-let source = { kind: 'none', video: null, img: null, dirty: true };
-
-function setSrcButtons() {
-  $('srcCam').classList.toggle('on', source.kind === 'camera');
-  $('srcFile').classList.toggle('on', source.kind === 'image' || source.kind === 'video');
-  $('srcSample').classList.toggle('on', source.kind === 'sample');
+// ---- input sources (per src node) ------------------------------------------
+let camStream = null;
+function selectedSrc() {
+  const sel = nodeById(selId);
+  if (sel && sel.type === 'src') return sel;
+  return nodes.find(n => n.type === 'src');
 }
-function stopVideoSrc() {
-  if (source.video) {
-    if (source.video.srcObject) for (const t of source.video.srcObject.getTracks()) t.stop();
-    source.video.pause();
+function updateSrcUI() {
+  const s = selectedSrc();
+  if (!s) return;
+  const idx = nodes.filter(n => n.type === 'src').indexOf(s);
+  $('srcTag').textContent = '入力' + (nodes.filter(n => n.type === 'src').length > 1 ? (idx + 1) : '');
+  $('srcCam').classList.toggle('on', s.kind === 'camera');
+  $('srcFile').classList.toggle('on', s.kind === 'image' || s.kind === 'video');
+  $('srcSample').classList.toggle('on', s.kind === 'sample');
+}
+function releaseSource(s) {
+  if (s.kind === 'video' && s.video) s.video.pause();
+  s.video = null; s.img = null;
+  const wasCam = s.kind === 'camera';
+  s.kind = 'none';
+  if (wasCam && camStream && !nodes.some(x => x.type === 'src' && x.kind === 'camera')) {
+    for (const t of camStream.getTracks()) t.stop();
+    camStream = null;
   }
-  source = { kind: 'none', video: null, img: null, dirty: true };
 }
-async function useCamera() {
+async function useCameraFor(s) {
   try {
-    const stream = await navigator.mediaDevices.getUserMedia(
-        { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
-    stopVideoSrc();
+    if (!camStream || !camStream.active) {
+      camStream = await navigator.mediaDevices.getUserMedia(
+          { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    }
+    releaseSource(s);
     const video = document.createElement('video');
-    video.srcObject = stream; video.muted = true;
+    video.srcObject = camStream; video.muted = true;
     await video.play();
-    source = { kind: 'camera', video, img: null, dirty: true };
-    setSrcButtons();
+    s.kind = 'camera'; s.video = video; s.dirty = true;
+    renderGraph();
+    updateSrcUI();
+    saveHash();
     return true;
   } catch (e) {
     say('カメラを使えません (' + (e.name || e) + ') — サンプル映像でどうぞ', true);
     return false;
   }
 }
-function useSample() {
-  stopVideoSrc();
-  source = { kind: 'sample', video: null, img: null, dirty: true };
-  setSrcButtons();
-}
-$('srcCam').addEventListener('click', useCamera);
-$('srcSample').addEventListener('click', useSample);
+$('srcCam').addEventListener('click', () => { const s = selectedSrc(); if (s) useCameraFor(s); });
+$('srcSample').addEventListener('click', () => {
+  const s = selectedSrc();
+  if (!s) return;
+  releaseSource(s);
+  s.kind = 'sample'; s.dirty = true;
+  renderGraph(); updateSrcUI(); saveHash();
+});
 $('srcFile').addEventListener('click', () => $('filePick').click());
 $('filePick').addEventListener('change', async e => {
   const f = e.target.files[0];
   if (!f) return;
   const url = URL.createObjectURL(f);
+  const s = selectedSrc();
+  if (!s) return;
   try {
     if (f.type.startsWith('video/')) {
-      stopVideoSrc();
       const video = document.createElement('video');
       video.src = url; video.muted = true; video.loop = true;
       await video.play();
-      source = { kind: 'video', video, img: null, dirty: true };
+      releaseSource(s);
+      s.kind = 'video'; s.video = video; s.dirty = true;
     } else {
       const img = new Image();
       img.src = url;
       await img.decode();
-      stopVideoSrc();
-      source = { kind: 'image', video: null, img, dirty: true };
+      releaseSource(s);
+      s.kind = 'image'; s.img = img; s.dirty = true;
     }
-    setSrcButtons();
+    renderGraph(); updateSrcUI(); saveHash();
   } catch (err) { say('読み込めません: ' + err.message, true); }
   e.target.value = '';
 });
-// drag & drop an image/video anywhere
 window.addEventListener('dragover', e => e.preventDefault());
 window.addEventListener('drop', e => {
   e.preventDefault();
@@ -1297,10 +1902,8 @@ window.addEventListener('drop', e => {
   $('filePick').dispatchEvent(new Event('change'));
 });
 
-// procedural sample: drifting dunes under a slow sky — gradients for the
-// color filters, ridges and glyphs for the line filters.
-function drawSample(t) {
-  const w = CAM_W, h = CAM_H, g = grabCtx;
+// procedural sample: drifting dunes under a slow sky
+function drawSample(g, w, h, t) {
   const sky = g.createLinearGradient(0, 0, 0, h * 0.62);
   const hue = 210 + 40 * Math.sin(t * 0.11);
   sky.addColorStop(0, `hsl(${hue}, 65%, 16%)`);
@@ -1308,7 +1911,6 @@ function drawSample(t) {
   sky.addColorStop(1, `hsl(${(hue + 130) % 360}, 75%, 60%)`);
   g.fillStyle = sky;
   g.fillRect(0, 0, w, h);
-  // sun with halo
   const sx = w * (0.5 + 0.28 * Math.sin(t * 0.07)), sy = h * 0.4;
   const halo = g.createRadialGradient(sx, sy, 10, sx, sy, 190);
   halo.addColorStop(0, 'rgba(255,240,200,0.95)');
@@ -1318,7 +1920,6 @@ function drawSample(t) {
   g.fillRect(sx - 190, sy - 190, 380, 380);
   g.fillStyle = '#fff7e0';
   g.beginPath(); g.arc(sx, sy, 46, 0, 7); g.fill();
-  // dune ridges
   for (let i = 0; i < 4; ++i) {
     const base = h * (0.5 + 0.13 * i);
     g.fillStyle = `hsl(${(hue + 160 + i * 14) % 360}, ${46 - i * 6}%, ${38 - i * 8}%)`;
@@ -1332,7 +1933,6 @@ function drawSample(t) {
     g.closePath();
     g.fill();
   }
-  // drifting orbs for bokeh/edge filters
   for (let i = 0; i < 6; ++i) {
     const ox = ((i * 227 + t * (18 + i * 7)) % (w + 120)) - 60;
     const oy = h * (0.16 + 0.1 * ((i * 137) % 5)) + 12 * Math.sin(t + i * 1.7);
@@ -1344,50 +1944,69 @@ function drawSample(t) {
   g.fillText('fluent_scene', 40, h - 42);
 }
 
-function feedFrame(t) {
-  if (source.kind === 'camera' || source.kind === 'video') {
-    const v = source.video;
-    if (!v || v.readyState < 2) return;
-    if (grab.width !== (v.videoWidth || CAM_W)) {
-      grab.width = CAM_W = v.videoWidth || CAM_W;
-      grab.height = CAM_H = v.videoHeight || CAM_H;
-    }
-    grabCtx.drawImage(v, 0, 0, CAM_W, CAM_H);
-  } else if (source.kind === 'image') {
-    if (!source.dirty) return;                  // static: commit once
-    if (grab.width !== 1280) { grab.width = CAM_W = 1280; grab.height = CAM_H = 720; }
-    const img = source.img;
-    const s = Math.max(CAM_W / img.width, CAM_H / img.height);
-    grabCtx.fillStyle = '#000';
-    grabCtx.fillRect(0, 0, CAM_W, CAM_H);
-    grabCtx.drawImage(img, (CAM_W - img.width * s) / 2, (CAM_H - img.height * s) / 2,
-                      img.width * s, img.height * s);
-    source.dirty = false;
-  } else if (source.kind === 'sample') {
-    if (grab.width !== 1280) { grab.width = CAM_W = 1280; grab.height = CAM_H = 720; }
-    drawSample(t);
-  } else return;
-  const data = grabCtx.getImageData(0, 0, CAM_W, CAM_H).data;
-  const ptr = fs.imageBuffer(inst, 'camera', CAM_W, CAM_H);
-  mod.HEAPU8.set(data, ptr);
-  fs.commitImage(inst, 'camera', CAM_W, CAM_H);
+function feedSources(t) {
+  const srcs = nodes.filter(n => n.type === 'src');
+  srcs.forEach((s, i) => {
+    const g = s.gctx, grab = s.grab;
+    if (s.kind === 'camera' || s.kind === 'video') {
+      const v = s.video;
+      if (!v || v.readyState < 2) return;
+      const vw = v.videoWidth || STAGE_W, vh = v.videoHeight || STAGE_H;
+      if (grab.width !== vw) { grab.width = vw; grab.height = vh; }
+      g.drawImage(v, 0, 0, vw, vh);
+    } else if (s.kind === 'image') {
+      if (!s.dirty) return;
+      if (grab.width !== STAGE_W) { grab.width = STAGE_W; grab.height = STAGE_H; }
+      const img = s.img;
+      const sc = Math.max(STAGE_W / img.width, STAGE_H / img.height);
+      g.fillStyle = '#000';
+      g.fillRect(0, 0, STAGE_W, STAGE_H);
+      g.drawImage(img, (STAGE_W - img.width * sc) / 2, (STAGE_H - img.height * sc) / 2,
+                  img.width * sc, img.height * sc);
+      s.dirty = false;
+    } else if (s.kind === 'sample') {
+      if (grab.width !== STAGE_W) { grab.width = STAGE_W; grab.height = STAGE_H; }
+      drawSample(g, STAGE_W, STAGE_H, t + i * 13.7);
+    } else return;
+    const data = g.getImageData(0, 0, grab.width, grab.height).data;
+    const ptr = fs.imageBuffer(inst, 'in' + i, grab.width, grab.height);
+    mod.HEAPU8.set(data, ptr);
+    fs.commitImage(inst, 'in' + i, grab.width, grab.height);
+  });
 }
 
 // ---- boot ------------------------------------------------------------------
-if (loadHash()) {
-  selected = 0;
-} else {
-  chain = [makeNode('ntsc', { noise: 0.12 }), makeNode('crt')];
-  selected = 0;
+if (!loadHash()) {
+  const src = addNode('src', 40, 140, { kind: 'camera' });
+  const f1 = addNode('filter', 240, 140, { name: 'ntsc', params: { noise: 0.12 } });
+  const f2 = addNode('filter', 440, 140, { name: 'crt' });
+  const out = addNode('out', 660, 140);
+  connect(src.id, 0, f1.id);
+  connect(f1.id, 0, f2.id);
+  connect(f2.id, 0, out.id);
+  selId = f1.id;
 }
-renderChain();
-renderParams();
-pushChain(0);
+if (nodes.some(n => n.type === 'person')) loadSegmenter();
+rebuildScene();
+renderGraph();
+renderInspector();
+updateSrcUI();
+updateHint();
 updateBar();
-// sample rolls immediately; the webcam (the default input) takes over the
-// moment permission lands, so the page is never black while the prompt is up.
-useSample();
-useCamera();
+// camera sources start on the sample so nothing is black while the
+// permission prompt is up; the webcam takes over the moment it lands.
+for (const s of nodes.filter(n => n.type === 'src' && n.kind === 'camera')) {
+  s.kind = 'sample';
+  useCameraFor(s);
+}
+// testing hook (headless CI drives the graph through this)
+window.__studio = {
+  addFilterNode, addNode, connect, removeNode, applyGraph, compile,
+  get nodes() { return nodes; }, get edges() { return edges; },
+  get branches() { return branches; },
+  select(id) { selId = id; renderGraph(); renderInspector(); },
+  yaml: sceneYaml,
+};
 
 // ---- render loop -----------------------------------------------------------
 let last = performance.now(), frames = 0, fpsShown = 0;
@@ -1404,9 +2023,16 @@ setInterval(() => {
 }, 1000);
 
 function updateBar() {
-  const names = chain.filter(n => n.on).map(n => n.name);
-  bar.textContent = (names.length ? '右=' + names.join(' → ') : 'チェーンなし (原画)') +
-      ' — 映像はタブの外に出ません';
+  if (!branches.length) {
+    bar.textContent = '出力に何もつながっていません — ●を線でつないでください';
+    return;
+  }
+  const parts = branches.map((br, i) => {
+    const names = br.filters.filter(n => n.on).map(n => n.name).join('→');
+    const tag = br.person ? (br.personPort === 0 ? '人物' : '背景') : '枝' + (i + 1);
+    return `${tag}:${names || 'そのまま'}`;
+  });
+  bar.textContent = parts.join(' | ') + ' — 映像はタブの外に出ません';
 }
 
 function tick() {
@@ -1415,8 +2041,9 @@ function tick() {
   last = now;
   const t = simNow();
 
-  feedFrame(t);
-  if (anim.checked && animated()) pushChain(t);
+  feedSources(t);
+  updateMask(now);
+  if (anim.checked && animatedGraph()) pushChains(t);
 
   if (gpu) {
     if (fs.gStatus() !== 1) {
@@ -1434,7 +2061,8 @@ function tick() {
     }
   }
   ++frames;
-  pill.textContent = `${fpsShown} fps · ${gpu ? 'webgpu' : 'cpu'} · ${canvas.width}×${canvas.height}`;
+  pill.textContent = `${fpsShown} fps · ${gpu ? 'webgpu' : 'cpu'} · ${canvas.width}×${canvas.height}` +
+      (branches.length > 1 ? ` · ${branches.length}枝` : '');
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
