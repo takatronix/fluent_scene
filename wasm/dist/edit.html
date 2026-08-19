@@ -195,6 +195,7 @@
      was unreadable and pushed everything below the fold) ---- */
   #dockMain { display: flex; gap: 12px; flex: 1; min-height: 0; align-items: stretch; }
   #dockMain #graph { flex: 1; min-width: 0; height: auto; min-height: 220px; }
+  #insp[hidden] { display: none !important; }
   #insp { width: 234px; min-width: 220px; flex: none; display: flex; flex-direction: column; gap: 8px;
           min-height: 0; overflow-y: auto; overflow-x: hidden; padding-left: 12px;
           border-left: 1px solid var(--line); scrollbar-width: thin;
@@ -1534,7 +1535,7 @@ $('zoomIn').addEventListener('click', () => setZoom(graphZoom * 1.15));
 $('zoomOut').addEventListener('click', () => setZoom(graphZoom / 1.15));
 $('zoomPct').addEventListener('click', () => setZoom(1));
 $('graph').addEventListener('wheel', e => {
-  if (!e.ctrlKey && !e.metaKey) return;        // 素のホイールはスクロールのまま
+  // 素のホイール=ズーム (ノードエディタ標準)。パンは背景ドラッグで
   e.preventDefault();
   setZoom(graphZoom * (e.deltaY < 0 ? 1.1 : 0.9), e.clientX, e.clientY);
 }, { passive: false });
@@ -1569,11 +1570,30 @@ $('tbTidy').addEventListener('click', () => {
 
 $('graph').addEventListener('pointerdown', e => {
   if (e.target.closest('.gnode') || e.target.closest('.port')) return;
-  selId = null;
-  renderGraph();
-  renderInspector();
-  updateSrcUI();
-  updateHint();
+  // 背景ドラッグ=パン、動かなければクリック=選択解除
+  const g = $('graph');
+  const sx = e.clientX, sy = e.clientY;
+  const sl = g.scrollLeft, st = g.scrollTop;
+  let panned = false;
+  const onMove = ev => {
+    const dx = ev.clientX - sx, dy = ev.clientY - sy;
+    if (!panned && Math.hypot(dx, dy) > 4) { panned = true; g.style.cursor = 'grabbing'; }
+    if (panned) { g.scrollLeft = sl - dx; g.scrollTop = st - dy; }
+  };
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    g.style.cursor = '';
+    if (!panned) {
+      selId = null;
+      renderGraph();
+      renderInspector();
+      updateSrcUI();
+      updateHint();
+    }
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
 });
 window.addEventListener('keydown', e => {
   if (e.key === 'Delete' && selId && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
@@ -1687,7 +1707,7 @@ $('tbReset').addEventListener('click', () => {
   keep.x = 40; keep.y = 140;
   out.x = 420; out.y = 140;
   connect(keep.id, 0, out.id);
-  selId = keep.id;
+  selId = null;
   applyGraph(true);
   say('まっさらにしました — 原画が出ています');
 });
@@ -1751,15 +1771,12 @@ const paramsBox = $('params'), inspHead = $('inspHead');
 function renderInspector() {
   paramsBox.replaceChildren();
   const n = nodeById(selId);
+  const insp = $('insp');
   if (!n) {
-    inspHead.hidden = false;
-    $('paramReset').hidden = true;
-    $('paramRand').hidden = true;
-    inspHead.querySelector('.pname').textContent = '👆 ノードをタップ';
-    inspHead.querySelector('.psum').textContent =
-        'グラフのノードを選ぶと、ここにそのノードのパラメータUIが出ます';
+    if (insp) insp.hidden = true;   // 未選択時はパネルごと消してグラフを全幅に
     return;
   }
+  if (insp) insp.hidden = false;
   const m = nodeMeta(n);
   inspHead.hidden = false;
   $('paramReset').hidden = n.type !== 'filter';
@@ -2000,8 +2017,7 @@ function undo() {
     s2.kind = 'sample';
     useCameraFor(s2);
   }
-  const backSrc = nodes.find(n => n.type === 'src');
-  selId = backSrc ? backSrc.id : null;
+  selId = null;
   applyGraph(true);
   say('ひとつ戻しました');
 }
@@ -3514,14 +3530,9 @@ if (!loadHash()) {
   connect(src.id, 0, f1.id);
   connect(f1.id, 0, f2.id);
   connect(f2.id, 0, out.id);
-  selId = src.id;                     // 入力から始まる — 最初の+フィルタが自然に入る
 }
 if (nodes.some(n => n.type === 'person')) loadSegmenter();
 if (nodes.some(n => n.type === 'hands')) loadHands();
-if (!selId) {
-  const first = nodes.find(n => n.type === 'src') || nodes.find(n => n.type !== 'out');
-  if (first) selId = first.id;
-}
 rebuildScene();
 snapshot();
 renderGraph();
