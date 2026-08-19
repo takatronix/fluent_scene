@@ -148,6 +148,10 @@
           text-align: left; padding: 7px 10px; font-size: 12.5px; width: 100%; }
   #toolbar #moreMenu button:hover { background: rgba(255, 255, 255, 0.07);
           transform: none; border: none; }
+  #buildStamp { margin-top: 4px; padding: 6px 10px 2px; border-top: 1px solid var(--line);
+          font: 10px ui-monospace, monospace; color: var(--faint); cursor: pointer;
+          white-space: nowrap; }
+  #buildStamp:hover { color: var(--cyan); }
   #toolbar button { background: rgba(255,255,255,0.035); color: var(--ink);
           border: 1px solid var(--line); border-radius: 999px; padding: 5px 13px;
           font-size: 12.5px; cursor: pointer; transition: 0.15s; }
@@ -532,6 +536,7 @@
           <button id="btnShare" title="共有リンクをコピー">🔗 共有リンク</button>
           <button id="btnSnap" title="PNGスナップ">📸 スナップ</button>
           <button id="btnRes" title="アップした画像の管理">📚 リソース</button>
+          <div id="buildStamp" title="このページの版 — クリックで最新を取り直します (グラフは保持)"></div>
         </div>
       </span>
       <button id="dockClose" title="しまう (✏️編集で再表示)">✕</button>
@@ -2287,6 +2292,20 @@ function setZoom(z, cx, cy) {
   g.scrollTop = gy * z - ay;
   $('zoomPct').textContent = Math.round(z * 100) + '%';
 }
+// ページの版を⋯に刻む — 開きっぱなしのタブが古いコードのままだと
+// 「直したのに動かない」に化けるため。クリックでキャッシュを迂回して取り直す
+// (グラフは #g= に入っているので保持される)
+(() => {
+  const st = $('buildStamp');
+  const d = new Date(document.lastModified);
+  const p2 = n => String(n).padStart(2, '0');
+  st.textContent = Number.isFinite(d.getTime())
+      ? `版 ${d.getMonth() + 1}/${d.getDate()} ${p2(d.getHours())}:${p2(d.getMinutes())} · 最新に更新`
+      : '最新に更新';
+  st.addEventListener('click', () => {
+    location.replace(location.pathname + '?v=' + Date.now() + location.hash);
+  });
+})();
 $('tbMore').addEventListener('click', e => {
   e.stopPropagation();
   $('moreMenu').hidden = !$('moreMenu').hidden;
