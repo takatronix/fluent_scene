@@ -1,0 +1,1442 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fluent scene — filter studio</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #eef0ff; --dim: #a6a3c2; --faint: #625d7e;
+    --bg: #06050b; --glass: rgba(16, 14, 30, 0.6); --line: rgba(255, 255, 255, 0.07);
+    --cyan: #7ee8fa; --violet: #c86ef0; --amber: #ffb35c; --coral: #ff7a6e;
+    --blue: #6ea8ff; --magenta: #ff6ec7;
+    --grad: linear-gradient(115deg, var(--cyan), var(--violet) 55%, var(--amber));
+  }
+  * { box-sizing: border-box; }
+  html { height: 100%; }
+  body { margin: 0; min-height: 100%; display: flex; flex-direction: column;
+         align-items: center; padding: 22px clamp(10px, 2vw, 26px) 20px;
+         background: var(--bg); color: var(--ink); overflow-x: hidden;
+         font: 14px/1.55 -apple-system, "Hiragino Sans", "Noto Sans CJK JP", system-ui, sans-serif; }
+  /* aurora backdrop — three slow drifting blobs behind everything */
+  #aurora { position: fixed; inset: -20%; z-index: -1; filter: blur(90px) saturate(1.2);
+            opacity: 0.5; pointer-events: none; }
+  #aurora i { position: absolute; border-radius: 50%; }
+  #aurora i:nth-child(1) { width: 44vw; height: 44vw; left: -6%; top: -12%;
+            background: radial-gradient(circle, rgba(126,232,250,0.5), transparent 70%);
+            animation: drift1 26s ease-in-out infinite alternate; }
+  #aurora i:nth-child(2) { width: 40vw; height: 40vw; right: -8%; top: 4%;
+            background: radial-gradient(circle, rgba(200,110,240,0.45), transparent 70%);
+            animation: drift2 31s ease-in-out infinite alternate; }
+  #aurora i:nth-child(3) { width: 36vw; height: 36vw; left: 28%; bottom: -18%;
+            background: radial-gradient(circle, rgba(255,179,92,0.28), transparent 70%);
+            animation: drift1 37s ease-in-out infinite alternate-reverse; }
+  @keyframes drift1 { to { transform: translate(9vw, 7vh) scale(1.15); } }
+  @keyframes drift2 { to { transform: translate(-8vw, 9vh) scale(0.9); } }
+
+  header { display: flex; align-items: center; gap: 16px; width: min(97vw, 1340px);
+           margin-bottom: 14px; }
+  header h1 { margin: 0; font: 800 clamp(20px, 2.6vw, 27px)/1 ui-monospace, monospace;
+              letter-spacing: 0.04em; background: var(--grad);
+              -webkit-background-clip: text; background-clip: text; color: transparent;
+              filter: drop-shadow(0 0 22px rgba(160, 140, 250, 0.35)); }
+  header .tag { font: 700 9.5px/1 ui-monospace, monospace; letter-spacing: 0.16em;
+              color: #0c0a14; background: var(--grad); padding: 4px 9px;
+              border-radius: 999px; transform: translateY(-6px); }
+  header small { color: var(--faint); font-size: 12px; }
+  header .links { margin-left: auto; display: flex; gap: 16px; }
+  header a { color: var(--dim); font-size: 12px; text-decoration: none; transition: 0.15s; }
+  header a:hover { color: var(--ink); }
+
+  /* ---- preview ---- */
+  #frame { position: relative; width: min(97vw, calc(54vh * 16 / 9), 1340px); }
+  #frame::before { content: ''; position: absolute; inset: -1px; border-radius: 21px;
+       background: var(--grad); opacity: 0.35; z-index: 0;
+       -webkit-mask: linear-gradient(#fff 0 0) content-box exclude, linear-gradient(#fff 0 0);
+       mask: linear-gradient(#fff 0 0) content-box exclude, linear-gradient(#fff 0 0);
+       padding: 1px; }
+  #v { position: relative; z-index: 1; display: block; width: 100%; aspect-ratio: 16 / 9;
+       background: #000; border-radius: 20px;
+       box-shadow: 0 34px 110px rgba(0, 0, 0, 0.7), 0 0 90px rgba(120, 100, 220, 0.18);
+       touch-action: none; user-select: none; cursor: ew-resize; }
+  #pill { position: absolute; top: 14px; right: 14px; z-index: 3;
+          font: 11px ui-monospace, monospace; color: var(--dim);
+          background: rgba(0, 0, 0, 0.55); border: 1px solid var(--line);
+          padding: 4px 11px; border-radius: 999px; backdrop-filter: blur(8px); }
+  #srcBtns { position: absolute; top: 14px; left: 14px; z-index: 3; display: flex; gap: 6px; }
+  #srcBtns button { font-size: 13px; color: var(--dim); background: rgba(0, 0, 0, 0.55);
+          border: 1px solid var(--line); padding: 5px 12px; border-radius: 999px;
+          cursor: pointer; backdrop-filter: blur(8px); transition: 0.15s; }
+  #srcBtns button:hover { color: var(--ink); transform: translateY(-1px); }
+  #srcBtns button.on { color: #0c0a14; background: var(--grad); border-color: transparent;
+          font-weight: 700; box-shadow: 0 0 16px rgba(160, 140, 250, 0.4); }
+  #hint { position: absolute; left: 14px; bottom: 14px;
+          z-index: 3; font-size: 11px; color: rgba(255, 255, 255, 0.55);
+          background: rgba(0, 0, 0, 0.4); padding: 3px 14px; border-radius: 999px;
+          pointer-events: none; white-space: nowrap; backdrop-filter: blur(6px); }
+
+  /* ---- AI command bar — floats over the preview's bottom edge ---- */
+  #aibar { position: relative; z-index: 4; display: flex; gap: 8px; align-items: center;
+           width: min(93vw, 760px); margin-top: -24px; padding: 8px 10px 8px 16px;
+           border-radius: 999px; background: rgba(13, 11, 25, 0.85);
+           border: 1px solid var(--line); backdrop-filter: blur(18px);
+           box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255,255,255,0.02) inset;
+           transition: box-shadow 0.3s; }
+  #aibar:focus-within { box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6),
+           0 0 34px rgba(140, 130, 250, 0.28); }
+  #aibar.busy { animation: busyGlow 1.1s ease-in-out infinite alternate; }
+  @keyframes busyGlow { from { box-shadow: 0 18px 60px rgba(0,0,0,0.6), 0 0 22px rgba(126,232,250,0.25); }
+                        to { box-shadow: 0 18px 60px rgba(0,0,0,0.6), 0 0 44px rgba(200,110,240,0.5); } }
+  #aibar .spark { font-size: 17px; flex: none; filter: drop-shadow(0 0 8px rgba(126,232,250,0.8)); }
+  #aibar.busy .spark { animation: sparkle 0.7s ease-in-out infinite alternate; }
+  @keyframes sparkle { from { transform: scale(0.85) rotate(-8deg); } to { transform: scale(1.25) rotate(10deg); } }
+  #aiText { flex: 1; min-width: 40px; background: none; color: var(--ink); border: none;
+            font-size: 14px; outline: none; }
+  #aiText::placeholder { color: var(--faint); }
+  #aiGo { flex: none; border: none; border-radius: 999px; padding: 9px 20px;
+          font-size: 13.5px; font-weight: 800; cursor: pointer; color: #0c0a14;
+          background: var(--grad); letter-spacing: 0.04em;
+          box-shadow: 0 0 20px rgba(160, 140, 250, 0.45); transition: 0.15s; }
+  #aiGo:hover { transform: scale(1.05); }
+  #aiGo:disabled { opacity: 0.55; cursor: wait; transform: none; }
+  #aibar .mini { flex: none; background: none; color: var(--dim); border: 1px solid var(--line);
+          border-radius: 999px; width: 34px; height: 34px; font-size: 14px; cursor: pointer;
+          transition: 0.15s; }
+  #aibar .mini:hover { color: var(--ink); border-color: rgba(255,255,255,0.25);
+          transform: translateY(-1px) rotate(15deg); }
+  #aiSay { min-height: 18px; font-size: 12.5px; color: var(--dim); margin-top: 7px;
+           text-align: center; padding: 0 12px; }
+  #aiSay b { color: var(--cyan); font-weight: 600; }
+  #aiSay.err { color: #ff8f8f; }
+
+  /* ---- chain dock ---- */
+  #dock { width: min(97vw, 1340px); margin-top: 10px; padding: 14px 16px 12px;
+          border-radius: 20px; background: var(--glass); border: 1px solid var(--line);
+          backdrop-filter: blur(20px); display: flex; flex-direction: column; gap: 10px;
+          box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45); }
+  #chain { display: flex; gap: 0; align-items: stretch; overflow-x: auto;
+           padding: 8px 2px 10px; scrollbar-width: thin; scrollbar-color: #322c50 transparent; }
+  .endcap { flex: none; display: flex; flex-direction: column; justify-content: center;
+            align-items: center; gap: 1px; font: 10px ui-monospace, monospace;
+            letter-spacing: 0.18em; color: var(--faint);
+            background: rgba(255, 255, 255, 0.025); border: 1px dashed rgba(255, 255, 255, 0.12);
+            border-radius: 13px; padding: 8px 13px; white-space: nowrap; }
+  .endcap span { font-size: 16px; letter-spacing: 0; }
+  .wire { flex: none; width: 30px; align-self: center; height: 2px; position: relative;
+          border-radius: 2px; overflow: visible;
+          background: linear-gradient(90deg, rgba(126,232,250,0.7), rgba(200,110,240,0.7));
+          background-size: 12px 100%; animation: flow 0.8s linear infinite; }
+  @keyframes flow { from { background-position: 0 0; } to { background-position: 12px 0; } }
+  .wire::after { content: ''; position: absolute; right: -2px; top: -3.5px;
+          border: 4.5px solid transparent; border-left: 6px solid rgba(200, 110, 240, 0.9); }
+  .node { flex: none; display: flex; flex-direction: column; gap: 1px; min-width: 118px;
+          background: rgba(22, 19, 38, 0.9); border: 1px solid var(--line);
+          border-left: 3px solid var(--ac, var(--violet)); border-radius: 13px;
+          padding: 8px 12px 7px; cursor: grab; position: relative; touch-action: none;
+          transition: border-color 0.13s, box-shadow 0.2s, transform 0.15s; }
+  .node:hover { transform: translateY(-2px);
+          box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5); }
+  .node.sel { border-color: var(--ac, var(--violet)); border-left-width: 3px;
+          box-shadow: 0 0 0 1px var(--ac, var(--violet)), 0 0 24px color-mix(in srgb, var(--ac, var(--violet)) 45%, transparent); }
+  .node.off { border-left-color: var(--faint); }
+  .node.off .jname, .node.off .emoji { opacity: 0.3; filter: grayscale(1); }
+  .node.off .ename { opacity: 0.4; text-decoration: line-through; }
+  .node.dragging { opacity: 0.25; }
+  .node.pop { animation: pop 0.42s cubic-bezier(0.24, 1.6, 0.4, 1); }
+  @keyframes pop { 0% { transform: scale(0.2) translateX(-30px); opacity: 0; }
+                   65% { transform: scale(1.1); opacity: 1; } 100% { transform: none; } }
+  .node .emoji { position: absolute; left: 10px; top: 8px; font-size: 17px; }
+  .node .jname { font-size: 12.5px; font-weight: 700; white-space: nowrap;
+          padding: 0 34px 0 24px; }
+  .node .ename { font: 9.5px ui-monospace, monospace; color: var(--faint);
+          white-space: nowrap; padding-left: 24px; }
+  .node .pw { position: absolute; top: 7px; right: 25px; width: 13px; height: 13px;
+          border-radius: 50%; border: 1px solid var(--faint); background: transparent;
+          cursor: pointer; padding: 0; transition: 0.15s; }
+  .node:not(.off) .pw { background: var(--ac, var(--cyan)); border-color: transparent;
+          box-shadow: 0 0 9px var(--ac, var(--cyan)); }
+  .node .rm { position: absolute; top: 3px; right: 4px; background: none; border: none;
+          color: var(--faint); font-size: 13px; cursor: pointer; padding: 2px; line-height: 1; }
+  .node .rm:hover { color: #ff8a8a; }
+  #addNode { flex: none; align-self: center; width: 38px; height: 38px; border-radius: 50%;
+          border: 1px dashed rgba(255, 255, 255, 0.25); background: transparent;
+          color: var(--cyan); font-size: 19px; cursor: pointer; transition: 0.18s; }
+  #addNode:hover { background: rgba(126, 232, 250, 0.1); transform: scale(1.12) rotate(90deg);
+          border-color: var(--cyan); box-shadow: 0 0 18px rgba(126, 232, 250, 0.3); }
+  #ghost { position: fixed; z-index: 50; pointer-events: none; opacity: 0.92;
+           transform: translate(-50%, -50%) rotate(-3deg); box-shadow: 0 20px 50px rgba(0,0,0,0.7); }
+
+  /* ---- params ---- */
+  #paramHead { display: flex; align-items: baseline; gap: 10px; }
+  #paramHead .pname { font: 700 13px ui-monospace, monospace; color: var(--cyan); }
+  #paramHead .psum { font-size: 11px; color: var(--faint); flex: 1; overflow: hidden;
+          text-overflow: ellipsis; white-space: nowrap; }
+  #paramHead button { background: none; border: 1px solid var(--line); color: var(--dim);
+          border-radius: 999px; font-size: 11px; padding: 3px 11px; cursor: pointer; }
+  #paramHead button:hover { color: var(--ink); border-color: rgba(255,255,255,0.25); }
+  #controls { display: flex; gap: 10px 22px; flex-wrap: wrap; align-items: flex-end; }
+  #controls label.slider { display: flex; flex-direction: column; gap: 3px;
+          font: 11px ui-monospace, monospace; color: var(--dim); }
+  #controls .row { display: flex; align-items: center; gap: 8px; }
+  #controls output { font: 11px ui-monospace, monospace; color: var(--cyan);
+          min-width: 44px; text-align: right; }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 150px; height: 4px;
+          border-radius: 2px; background: #2b2547; outline: none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
+          width: 15px; height: 15px; border-radius: 50%; background: var(--grad);
+          box-shadow: 0 0 12px rgba(140, 170, 250, 0.6); cursor: pointer; border: none; }
+  input[type=range]::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%;
+          background: linear-gradient(120deg, var(--cyan), var(--violet)); border: none; cursor: pointer; }
+  #tail { display: flex; gap: 14px; align-items: center; margin-left: auto; }
+  #tail label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
+  input[type=checkbox] { accent-color: var(--violet); }
+
+  /* ---- presets + share ---- */
+  #presets { display: flex; gap: 7px; align-items: center; overflow-x: auto; padding: 2px 0 6px;
+             scrollbar-width: thin; scrollbar-color: #322c50 transparent; }
+  .preset { flex: none; background: rgba(255, 255, 255, 0.035); color: var(--ink);
+            border: 1px solid var(--line); border-radius: 999px;
+            padding: 6px 14px; font-size: 12.5px; cursor: pointer; transition: 0.15s; }
+  .preset:hover { border-color: rgba(255, 255, 255, 0.3); transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4); background: rgba(255, 255, 255, 0.07); }
+  #share { display: flex; gap: 7px; flex: none; }
+  #share button { background: none; color: var(--dim); border: 1px solid var(--line);
+          border-radius: 999px; padding: 6px 13px; font-size: 11.5px; cursor: pointer;
+          font-family: ui-monospace, monospace; transition: 0.15s; white-space: nowrap; }
+  #share button:hover { color: var(--ink); border-color: rgba(255,255,255,0.25); }
+
+  #bar { font: 11px ui-monospace, monospace; color: var(--faint); text-align: center;
+         margin-top: 10px; }
+
+  /* ---- overlays (palette / settings) ---- */
+  .overlay { position: fixed; inset: 0; z-index: 40; display: none;
+             background: rgba(3, 2, 8, 0.72); backdrop-filter: blur(10px);
+             align-items: center; justify-content: center; padding: 20px; }
+  .overlay.open { display: flex; }
+  .panel { width: min(94vw, 780px); max-height: 84vh; overflow-y: auto;
+           background: rgba(17, 14, 30, 0.97); border: 1px solid rgba(255, 255, 255, 0.12);
+           border-radius: 20px; padding: 20px 22px;
+           box-shadow: 0 50px 140px rgba(0, 0, 0, 0.85);
+           scrollbar-width: thin; scrollbar-color: #322c50 transparent;
+           animation: panelIn 0.22s cubic-bezier(0.2, 1.4, 0.4, 1); }
+  @keyframes panelIn { from { transform: scale(0.92) translateY(16px); opacity: 0; } }
+  .panel h3 { margin: 0 0 12px; font: 800 16px ui-monospace, monospace;
+           background: var(--grad); -webkit-background-clip: text; background-clip: text;
+           color: transparent; }
+  .panel .close { float: right; background: none; border: none; color: var(--faint);
+           font-size: 18px; cursor: pointer; }
+  .panel .close:hover { color: var(--ink); }
+  #palSearch { width: 100%; background: rgba(255, 255, 255, 0.04); color: var(--ink);
+           border: 1px solid var(--line); border-radius: 12px; padding: 9px 14px;
+           font-size: 13.5px; outline: none; margin-bottom: 14px; }
+  #palSearch:focus { border-color: rgba(160, 140, 250, 0.5); }
+  .palcat { margin-bottom: 12px; }
+  .palcat h4 { margin: 0 0 6px; font: 10px ui-monospace, monospace; letter-spacing: 0.22em; }
+  .palgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 7px; }
+  .palitem { display: flex; gap: 10px; align-items: center; text-align: left;
+           background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line);
+           border-radius: 12px; padding: 8px 12px; cursor: pointer; transition: 0.13s;
+           color: var(--ink); }
+  .palitem:hover { border-color: var(--ac, var(--violet)); background: rgba(255,255,255,0.06);
+           transform: translateY(-1px); }
+  .palitem:disabled { opacity: 0.3; cursor: default; transform: none; }
+  .palitem .pe { font-size: 19px; flex: none; }
+  .palitem .t { font-size: 12.5px; font-weight: 700; }
+  .palitem .t small { font: 9.5px ui-monospace, monospace; color: var(--faint); font-weight: 400; }
+  .palitem .d { font-size: 10.5px; color: var(--dim); }
+
+  #aiCfg label { display: flex; flex-direction: column; gap: 4px; font-size: 12px;
+           color: var(--dim); margin-bottom: 10px; }
+  #aiCfg input[type=text], #aiCfg input[type=password] { background: rgba(255,255,255,0.04);
+           color: var(--ink); border: 1px solid var(--line); border-radius: 10px;
+           padding: 8px 11px; font: 12.5px ui-monospace, monospace; outline: none; }
+  #aiCfg input:focus { border-color: rgba(160, 140, 250, 0.5); }
+  #aiCfg .radios { display: flex; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+  #aiCfg .radios label { flex-direction: row; align-items: center; gap: 6px; margin: 0;
+           font-size: 13px; color: var(--ink); cursor: pointer; }
+  #aiCfg input[type=radio] { accent-color: var(--violet); }
+  #aiCfg .keynote { display: flex; gap: 8px; align-items: flex-start; font-size: 11.5px;
+           color: var(--dim); background: rgba(126, 232, 250, 0.06);
+           border: 1px solid rgba(126, 232, 250, 0.18); border-radius: 12px;
+           padding: 10px 12px; margin: 4px 0 14px; line-height: 1.6; }
+  #aiCfg .save { border: none; border-radius: 999px; padding: 9px 22px; font-size: 13px;
+           font-weight: 800; cursor: pointer; color: #0c0a14; background: var(--grad);
+           box-shadow: 0 0 20px rgba(160, 140, 250, 0.4); }
+  .cfgset[hidden] { display: none; }
+</style>
+<div id="aurora"><i></i><i></i><i></i></div>
+<header>
+  <h1>FILTER STUDIO</h1>
+  <span class="tag">AI</span>
+  <small>つないで、ゆらして、AIに描かせる — 47フィルタ · wasm</small>
+  <span class="links">
+    <a href="./filters.html">filter lab</a>
+    <a href="./index.html">← demos</a>
+  </span>
+</header>
+<div id="frame">
+  <canvas id="v" width="1280" height="720"></canvas>
+  <div id="srcBtns">
+    <button id="srcCam" title="Webカメラ">📷 カメラ</button>
+    <button id="srcFile" title="画像・動画を開く">🖼 ファイル</button>
+    <button id="srcSample" title="サンプル映像">✨ サンプル</button>
+    <input id="filePick" type="file" accept="image/*,video/*" hidden>
+  </div>
+  <div id="pill">loading…</div>
+  <div id="hint">ドラッグで境界移動 · 左=原画</div>
+</div>
+<div id="aibar">
+  <span class="spark">✨</span>
+  <input id="aiText" placeholder="どんな見た目にしたい?">
+  <button id="aiGo">生成</button>
+  <button id="aiDice" class="mini" title="おまかせ">🎲</button>
+  <button id="aiGear" class="mini" title="AI設定">⚙</button>
+</div>
+<div id="aiSay"></div>
+<div id="dock">
+  <div id="chain"></div>
+  <div id="paramHead" hidden>
+    <span class="pname"></span><span class="psum"></span>
+    <button id="paramReset">リセット</button>
+  </div>
+  <div id="controls">
+    <span id="params" style="display:contents"></span>
+    <span id="tail">
+      <span id="share">
+        <button id="btnShare">🔗 共有</button>
+        <button id="btnYaml">📋 YAML</button>
+        <button id="btnSnap">📸 スナップ</button>
+      </span>
+      <label>⏱ <input id="speed" type="range" min="0" max="2" step="0.05" value="0.6"
+                     style="width:90px"><output id="speedOut">0.60</output></label>
+      <label><input id="anim" type="checkbox" checked> アニメ</label>
+    </span>
+  </div>
+  <div id="presets">
+    <span id="presetBtns" style="display:contents"></span>
+  </div>
+</div>
+<div id="bar">loading wasm…</div>
+
+<div id="palOverlay" class="overlay">
+  <div class="panel">
+    <button class="close" data-close="palOverlay">✕</button>
+    <h3>フィルタを追加</h3>
+    <input id="palSearch" placeholder="検索… (名前・日本語OK)">
+    <div id="palBody"></div>
+  </div>
+</div>
+
+<div id="cfgOverlay" class="overlay">
+  <div class="panel" id="aiCfg">
+    <button class="close" data-close="cfgOverlay">✕</button>
+    <h3>AI設定</h3>
+    <div class="radios">
+      <label><input type="radio" name="prov" value="builtin"> 内蔵コンポーザ (オフライン)</label>
+      <label><input type="radio" name="prov" value="claude"> Claude API</label>
+      <label><input type="radio" name="prov" value="openai"> OpenAI互換 (Ollama / LM Studio)</label>
+    </div>
+    <div class="cfgset" data-prov="claude">
+      <label>APIキー 🔒 <input type="password" id="cfgClaudeKey" placeholder="sk-ant-…"></label>
+      <label>モデル <input type="text" id="cfgClaudeModel" value="claude-opus-5"></label>
+    </div>
+    <div class="cfgset" data-prov="openai">
+      <label>Base URL <input type="text" id="cfgOaiBase" placeholder="http://localhost:11434/v1"></label>
+      <label>モデル <input type="text" id="cfgOaiModel" placeholder="qwen3:8b など"></label>
+      <label>APIキー 🔒 (不要なら空欄) <input type="password" id="cfgOaiKey"></label>
+    </div>
+    <div class="keynote"><span>🔒</span><span><b>APIキーはこの端末のブラウザ (localStorage) にだけ保存されます。</b>サーバーには送られず、選んだAPIの呼び出し以外には使われません。キーを入れればその場でLLM生成が使えます。<br>内蔵コンポーザはネット接続なし・設定なしでキーワードからチェーンを組みます — まずはそのままどうぞ。</span></div>
+    <button class="save" id="cfgSave">保存</button>
+  </div>
+</div>
+<a href="https://x.com/takatronix" target="_blank" rel="noopener" style="position:fixed;right:12px;bottom:10px;z-index:9;font:11px ui-monospace,monospace;color:rgba(255,255,255,0.6);text-decoration:none;background:rgba(0,0,0,0.35);padding:4px 10px;border-radius:999px;backdrop-filter:blur(4px)">fluent_scene · by <b style="color:rgba(255,255,255,0.85)">@takatronix</b></a>
+<script type="module">
+// Filter studio — the filter lab grown into an editor: the chain is a row of
+// nodes you add, reorder, toggle and tune, and an AI (built-in offline
+// composer, or your own Claude / OpenAI-compatible endpoint — the key lives
+// only in localStorage) writes chains from natural language, connecting the
+// nodes one by one while the preview updates live. Everything runs in this
+// tab: the catalog and every slider come from fs_filters_json() (single
+// source: filters_def.h), the chain is pushed with fs_layer_clear_filters +
+// fs_layer_set_filter in order, and the wipe compares against the input.
+import createFluentScene from './fluent_scene.mjs';
+
+const SCENE = `
+schema: fluent.scene/v1alpha2
+stage: { size: [1280, 720] }
+inputs:
+  camera: { type: image.rgba8, update: per_frame }
+params:
+  wipe_win: { type: vec2, default: [0, 360], runtime_mutable: true,
+              animate: { duration: 0.1, ease: ease_out } }
+  wipe_inv: { type: vec2, default: [1280, 360], runtime_mutable: true,
+              animate: { duration: 0.1, ease: ease_out } }
+  divider: { type: vec2, default: [640, 360], runtime_mutable: true,
+             animate: { duration: 0.1, ease: ease_out } }
+layers:
+  - id: after
+    content: { image: { source: $inputs.camera, fit: cover } }
+  - id: before_win
+    bounds: [0, 0, 1280, 720]
+    masks_to_bounds: true
+    position: $params.wipe_win
+    sublayers:
+      - bounds: [0, 0, 1280, 720]
+        position: $params.wipe_inv
+        content: { image: { source: $inputs.camera, fit: cover } }
+  - id: divider_line
+    position: $params.divider
+    content: { rect: { size: [3, 720], color: [1, 1, 1, 0.55] } }
+`;
+
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const bar = $('bar'), pill = $('pill'), aiSay = $('aiSay');
+let canvas = $('v');
+let ctx = null;
+
+const mod = await createFluentScene();
+const fs = {
+  create: mod.cwrap('fs_create', 'number', ['number']),
+  error: mod.cwrap('fs_error', 'string', []),
+  stageW: mod.cwrap('fs_stage_width', 'number', ['number']),
+  imageBuffer: mod.cwrap('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
+  commitImage: mod.cwrap('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
+  render: mod.cwrap('fs_render', 'number', ['number', 'number', 'number', 'number']),
+  renderW: mod.cwrap('fs_render_width', 'number', ['number']),
+  renderH: mod.cwrap('fs_render_height', 'number', ['number']),
+  renderStride: mod.cwrap('fs_render_stride', 'number', ['number']),
+  setParamVec2: mod.cwrap('fs_set_param_vec2', 'number', ['number', 'string', 'number', 'number']),
+  setFilter: mod.cwrap('fs_layer_set_filter', 'number',
+      ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
+  clearFilters: mod.cwrap('fs_layer_clear_filters', 'number', ['number', 'string']),
+  setFilterImage: mod.cwrap('fs_layer_set_filter_image', 'number',
+      ['number', 'string', 'string', 'string', 'number', 'number']),
+  filtersJson: mod.cwrap('fs_filters_json', 'string', []),
+};
+
+const yamlPtr = mod.stringToNewUTF8(SCENE);
+const inst = fs.create(yamlPtr);
+if (!inst) { bar.textContent = 'scene rejected:\n' + fs.error(); throw new Error(fs.error()); }
+const stageW = fs.stageW(inst);
+
+// ---- catalog ---------------------------------------------------------------
+const HIDDEN = new Set(['lut', 'face', 'opacity']);
+const CATALOG = JSON.parse(fs.filtersJson()).filter(f => !HIDDEN.has(f.name));
+const SPEC = Object.fromEntries(CATALOG.map(f => [f.name, f]));
+const MAX_CHAIN = 6;
+
+// Japanese identity for the palette and node cards (name → [label, blurb, emoji]).
+const JA = {
+  grayscale: ['モノクロ', '輝度だけ残す', '🌑'], sepia: ['セピア', '古写真の褐色', '🟤'],
+  invert: ['ネガ反転', '色を反転', '🔃'], hue: ['色相回転', '色相環をずらす', '🌈'],
+  exposure: ['露出', 'EVで明るく/暗く', '☀️'], white_balance: ['ホワイトバランス', '色温度と色被り', '🌡'],
+  levels: ['レベル補正', '入力範囲とガンマ', '📊'], threshold: ['2値化', '白か黒か', '◼️'],
+  posterize: ['ポスタリゼーション', '階調を減らす', '🎏'], solarize: ['ソラリゼーション', '明部だけ反転', '🌗'],
+  rgb: ['RGBゲイン', 'チャンネル別に増減', '🎚'], haze: ['かすみ', '霞を足す/取る', '🌁'],
+  color_transform: ['色調補正', '明るさ/コントラスト/彩度', '🎛'], vignette: ['ビネット', '周辺減光', '🕶'],
+  blur: ['ぼかし', 'ガウシアン', '🌫'], bilateral: ['バイラテラル', 'エッジを守るノイズ除去', '🧴'],
+  median: ['メディアン', 'ゴマ塩ノイズ除去', '🧂'], beauty: ['美肌', '磨皮+美白', '✨'],
+  sharpen: ['シャープ', '輪郭強調', '🔪'], emboss: ['エンボス', '彫金風レリーフ', '🪙'],
+  edge_sobel: ['エッジ検出', 'Sobel輪郭', '⚡'], sketch: ['スケッチ', '鉛筆線画', '✏️'],
+  toon: ['トゥーン', '減色+輪郭線', '🗯'], pixelate: ['モザイク', '荒いブロック', '🧊'],
+  swirl: ['渦巻き', '画面をねじる', '🌀'], motion_blur: ['モーションブラー', '流し撮り', '💨'],
+  zoom_blur: ['ズームブラー', '放射状の勢い', '💥'], bokeh: ['レンズボケ', '絞り形ハイライト', '🔭'],
+  oilpaint: ['油絵', 'Kuwahara筆致', '🎨'], anime: ['アニメ', 'セル塗り+インク線', '🌸'],
+  watercolor: ['水彩', 'にじみと紙目', '💧'], sumie: ['水墨画', '生きた墨のにじみ', '🖌'],
+  impressionist: ['印象派', 'ゴッホの渦筆致', '🖼'], stainedglass: ['ステンドグラス', '鉛線とガラス片', '⛪'],
+  pixelart: ['ドット絵', '減色+ディザ', '🕹'], inkline: ['インクライン', '首尾一貫した描線', '🖋'],
+  ntsc: ['アナログ放送', '色にじみ+ノイズ', '📼'], crt: ['ブラウン管', '走査線+曲面', '📺'],
+  halftone: ['網点', '印刷ドット', '🔘'], ripple: ['波紋', '水の屈折', '💦'],
+  lsd: ['トリップ', 'サイケデリア', '👁'], fractal: ['フラクタル', '無限飛行', '🌌'],
+  notebook: ['ノート鉛筆', '方眼紙に鉛筆', '📓'], wobble: ['手描き揺れ', 'コマ撮りの震え', '〰️'],
+};
+const jaLabel = n => (JA[n] || [n])[0];
+const jaEmoji = n => (JA[n] || ['', '', '🔧'])[2] || '🔧';
+
+const CAT_COLOR = { PAINT: 'var(--violet)', ART: 'var(--amber)', ANALOG: 'var(--coral)',
+                    LENS: 'var(--blue)', TRIP: 'var(--magenta)', COLOR: 'var(--cyan)' };
+const CATS = [
+  ['PAINT', ['impressionist', 'anime', 'inkline', 'watercolor', 'sumie', 'oilpaint',
+             'stainedglass', 'pixelart', 'notebook', 'wobble']],
+  ['ART', ['sketch', 'toon', 'halftone', 'emboss', 'edge_sobel', 'posterize', 'solarize', 'pixelate']],
+  ['ANALOG', ['ntsc', 'crt']],
+  ['LENS', ['bokeh', 'blur', 'bilateral', 'median', 'motion_blur', 'zoom_blur', 'sharpen']],
+  ['TRIP', ['lsd', 'fractal', 'swirl', 'ripple']],
+  ['COLOR', ['grayscale', 'sepia', 'invert', 'hue', 'exposure', 'white_balance', 'levels',
+             'threshold', 'rgb', 'haze', 'color_transform', 'vignette', 'beauty']],
+];
+const CAT_OF = {};
+for (const [label, names] of CATS) for (const n of names) CAT_OF[n] = label;
+const accentOf = n => CAT_COLOR[CAT_OF[n]] || 'var(--violet)';
+
+function rangeFor(p) {
+  const byName = {
+    blades: [0, 9, 1], rotation: [0, 360, 1], angle: [0, 360, 1],
+    levels: [0, 64, 1], mask: [0, 2, 1], scale: [0.05, 1, 0.01],
+    curvature: [0, 0.4, 0.01], converge: [0, 3, 0.05], blend: [0, 1, 0.01],
+    trip: [0, 1.5, 0.01], geometry: [-1.5, 1.5, 0.01],
+  };
+  if (byName[p.name]) return byName[p.name];
+  if (p.unit === 'length') return [0, Math.max(30, p.def * 3), 0.5];
+  if (p.unit === 'coord_x' || p.unit === 'coord_y') return [-320, 320, 1];
+  if (p.def < 0) return [-Math.max(1, -p.def * 2.5), Math.max(1, -p.def * 2.5), 0.01];
+  return [0, Math.max(1, p.def * 2.5), 0.01];
+}
+const timeIndex = s => s.params.findIndex(p => p.name === 'time');
+const clampToRange = (p, v) => {
+  const [lo, hi] = rangeFor(p);
+  return Math.min(hi, Math.max(lo, Number(v) || 0));
+};
+
+// ---- chain state -----------------------------------------------------------
+// chain: [{ name, on, vals: [per-param values, filters_def order] }]
+let chain = [];
+let selected = -1;
+
+function makeNode(name, overrides = {}) {
+  const s = SPEC[name];
+  return { name, on: true,
+           vals: s.params.map(p => overrides[p.name] !== undefined
+               ? clampToRange(p, overrides[p.name]) : p.def) };
+}
+const animated = () => chain.some(n => n.on && timeIndex(SPEC[n.name]) >= 0);
+
+// The filter clock — dt accumulated through the ⏱ multiplier, so changing
+// speed re-paces without teleporting `time`.
+const speed = $('speed'), speedOut = $('speedOut'), anim = $('anim');
+speed.addEventListener('input', () => { speedOut.textContent = Number(speed.value).toFixed(2); });
+let simT = 0, simLast = performance.now();
+function simNow() {
+  const now = performance.now();
+  simT += (now - simLast) / 1000 * Number(speed.value);
+  simLast = now;
+  return simT;
+}
+
+// washi paper for sumie, through the generic filter-image parameter.
+let paperReady = false;
+(async () => {
+  try {
+    const img = new Image();
+    img.src = './washi.jpg';
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = c.height = 1024;
+    const cx = c.getContext('2d');
+    cx.drawImage(img, 0, 0, 1024, 1024);
+    const d = cx.getImageData(0, 0, 1024, 1024).data;
+    const ptr = fs.imageBuffer(inst, 'paper', 1024, 1024);
+    mod.HEAPU8.set(d, ptr);
+    paperReady = true;
+    pushChain(simT);
+  } catch (e) { console.error('washi load failed:', e); }
+})();
+
+function pushChain(t) {
+  fs.clearFilters(inst, 'after');
+  for (const node of chain) {
+    if (!node.on) continue;
+    const v = node.vals.slice();
+    const ti = timeIndex(SPEC[node.name]);
+    if (ti >= 0) v[ti] = anim.checked ? t : 0;
+    fs.setFilter(inst, 'after', node.name, v[0] || 0, v[1] || 0, v[2] || 0, v[3] || 0, v[4] || 0);
+  }
+  if (paperReady && chain.some(n => n.on && n.name === 'sumie')) {
+    fs.setFilterImage(inst, 'after', 'sumie', 'paper', 1024, 1024);
+  }
+}
+
+// ---- chain persistence (URL hash) ------------------------------------------
+function saveHash() {
+  const packed = chain.map(n => {
+    const o = { n: n.name };
+    if (!n.on) o.x = 1;
+    const s = SPEC[n.name], v = {};
+    s.params.forEach((p, i) => {
+      if (p.name !== 'time' && Math.abs(n.vals[i] - p.def) > 1e-6) v[p.name] = +n.vals[i].toFixed(3);
+    });
+    if (Object.keys(v).length) o.v = v;
+    return o;
+  });
+  history.replaceState(null, '',
+      packed.length ? '#c=' + encodeURIComponent(JSON.stringify(packed)) : location.pathname);
+}
+function loadHash() {
+  const m = location.hash.match(/#c=(.+)/);
+  if (!m) return false;
+  try {
+    const packed = JSON.parse(decodeURIComponent(m[1]));
+    const out = [];
+    for (const o of packed) {
+      if (!SPEC[o.n] || out.some(n => n.name === o.n) || out.length >= MAX_CHAIN) continue;
+      const node = makeNode(o.n, o.v || {});
+      if (o.x) node.on = false;
+      out.push(node);
+    }
+    if (!out.length) return false;
+    chain = out;
+    return true;
+  } catch { return false; }
+}
+
+// ---- chain strip UI --------------------------------------------------------
+const chainBox = $('chain');
+let dragIdx = null;
+let justAdded = -1;                 // index that gets the pop-in animation
+
+function renderChain() {
+  chainBox.replaceChildren();
+  const inCap = document.createElement('div');
+  inCap.className = 'endcap';
+  inCap.innerHTML = '<span>🎥</span>入力';
+  chainBox.append(inCap, wire());
+  chain.forEach((node, i) => {
+    const card = document.createElement('div');
+    card.className = 'node' + (i === selected ? ' sel' : '') + (node.on ? '' : ' off') +
+        (i === dragIdx ? ' dragging' : '') + (i === justAdded ? ' pop' : '');
+    card.style.setProperty('--ac', accentOf(node.name));
+    card.dataset.i = i;
+    const em = document.createElement('div');
+    em.className = 'emoji';
+    em.textContent = jaEmoji(node.name);
+    const j = document.createElement('div');
+    j.className = 'jname';
+    j.textContent = jaLabel(node.name);
+    const e = document.createElement('div');
+    e.className = 'ename';
+    e.textContent = node.name;
+    const pw = document.createElement('button');
+    pw.className = 'pw';
+    pw.title = node.on ? 'オフにする' : 'オンにする';
+    pw.addEventListener('click', ev => {
+      ev.stopPropagation();
+      node.on = !node.on;
+      applyChain();
+    });
+    const rm = document.createElement('button');
+    rm.className = 'rm';
+    rm.textContent = '×';
+    rm.title = '削除';
+    rm.addEventListener('click', ev => {
+      ev.stopPropagation();
+      chain.splice(i, 1);
+      if (selected >= chain.length) selected = chain.length - 1;
+      applyChain();
+    });
+    card.append(em, j, e, pw, rm);
+    hookNodePointer(card);
+    chainBox.append(card, wire());
+  });
+  justAdded = -1;
+  const add = document.createElement('button');
+  add.id = 'addNode';
+  add.textContent = '+';
+  add.title = 'フィルタを追加';
+  add.disabled = chain.length >= MAX_CHAIN;
+  add.addEventListener('click', openPalette);
+  const outCap = document.createElement('div');
+  outCap.className = 'endcap';
+  outCap.innerHTML = '<span>🖼</span>出力';
+  chainBox.append(add, wire(), outCap);
+}
+function wire() {
+  const w = document.createElement('div');
+  w.className = 'wire';
+  return w;
+}
+
+// click = select; drag > 8px = reorder with a ghost following the pointer.
+function hookNodePointer(card) {
+  card.addEventListener('pointerdown', e => {
+    if (e.target.closest('button')) return;
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const myIdx = () => Number(card.dataset.i);
+    let ghost = null;
+    const onMove = ev => {
+      if (!ghost && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 8) {
+        dragIdx = myIdx();
+        ghost = card.cloneNode(true);
+        ghost.id = 'ghost';
+        ghost.style.width = card.offsetWidth + 'px';
+        ghost.style.setProperty('--ac', accentOf(chain[dragIdx].name));
+        document.body.append(ghost);
+        renderChain();
+      }
+      if (!ghost) return;
+      ghost.style.left = ev.clientX + 'px';
+      ghost.style.top = ev.clientY + 'px';
+      // insertion index from card midpoints
+      const cards = [...chainBox.querySelectorAll('.node')];
+      let target = cards.length - 1;
+      for (let k = 0; k < cards.length; ++k) {
+        const r = cards[k].getBoundingClientRect();
+        if (ev.clientX < r.left + r.width / 2) { target = k - (k > dragIdx ? 1 : 0); break; }
+        if (k === cards.length - 1) target = cards.length - 1;
+      }
+      target = Math.max(0, Math.min(chain.length - 1, target));
+      if (target !== dragIdx) {
+        const [moved] = chain.splice(dragIdx, 1);
+        chain.splice(target, 0, moved);
+        if (selected === dragIdx) selected = target;
+        else if (selected > dragIdx && selected <= target) --selected;
+        else if (selected < dragIdx && selected >= target) ++selected;
+        dragIdx = target;
+        renderChain();
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (ghost) {
+        ghost.remove();
+        dragIdx = null;
+        applyChain();
+      } else {
+        selected = myIdx();
+        renderChain();
+        renderParams();
+      }
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  });
+}
+
+window.addEventListener('keydown', e => {
+  if (e.key === 'Delete' && selected >= 0 && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
+    chain.splice(selected, 1);
+    if (selected >= chain.length) selected = chain.length - 1;
+    applyChain();
+  }
+});
+
+// ---- param sliders ---------------------------------------------------------
+const paramsBox = $('params'), paramHead = $('paramHead');
+
+function renderParams() {
+  paramsBox.replaceChildren();
+  if (selected < 0 || !chain[selected]) { paramHead.hidden = true; return; }
+  const node = chain[selected];
+  const s = SPEC[node.name];
+  paramHead.hidden = false;
+  paramHead.querySelector('.pname').textContent =
+      jaEmoji(node.name) + ' ' + jaLabel(node.name) + ' · ' + node.name;
+  paramHead.querySelector('.psum').textContent = s.summary;
+  s.params.forEach((p, i) => {
+    if (p.name === 'time') return;              // the clock drives this one
+    const [lo, hi, step] = rangeFor(p);
+    const label = document.createElement('label');
+    label.className = 'slider';
+    const row = document.createElement('div');
+    row.className = 'row';
+    const input = document.createElement('input');
+    const out = document.createElement('output');
+    input.type = 'range'; input.min = lo; input.max = hi; input.step = step;
+    input.value = node.vals[i];
+    out.textContent = Number(node.vals[i]).toFixed(step >= 1 ? 0 : 2);
+    input.addEventListener('input', () => {
+      node.vals[i] = Number(input.value);
+      out.textContent = Number(input.value).toFixed(step >= 1 ? 0 : 2);
+      pushChain(simT);
+      saveHash();
+    });
+    row.append(input, out);
+    label.append(p.name, row);
+    paramsBox.append(label);
+  });
+}
+$('paramReset').addEventListener('click', () => {
+  const node = chain[selected];
+  if (!node) return;
+  node.vals = SPEC[node.name].params.map(p => p.def);
+  pushChain(simT);
+  saveHash();
+  renderParams();
+});
+
+function applyChain() {
+  if (selected >= chain.length) selected = chain.length - 1;
+  renderChain();
+  renderParams();
+  pushChain(simT);
+  saveHash();
+  updateBar();
+}
+
+// AI/preset apply: the nodes snap in one by one while the preview updates —
+// watching the chain assemble is half the fun.
+let applySeq = 0;
+async function setChainAnimated(spec, comment) {
+  const seq = ++applySeq;
+  chain = [];
+  selected = -1;
+  applyChain();
+  say(comment);
+  for (const [name, over] of spec) {
+    if (!SPEC[name] || chain.some(n => n.name === name) || chain.length >= MAX_CHAIN) continue;
+    if (chain.length) await sleep(230);
+    if (seq !== applySeq) return;               // superseded by a newer apply
+    chain.push(makeNode(name, over || {}));
+    selected = justAdded = chain.length - 1;
+    applyChain();
+  }
+}
+function say(text, isErr = false) {
+  aiSay.classList.toggle('err', isErr);
+  aiSay.replaceChildren();
+  if (!text) return;
+  const b = document.createElement('b');
+  b.textContent = '✦ ';
+  aiSay.append(b, text);
+}
+
+// ---- palette ---------------------------------------------------------------
+const palOverlay = $('palOverlay'), palBody = $('palBody'), palSearch = $('palSearch');
+for (const b of document.querySelectorAll('[data-close]')) {
+  b.addEventListener('click', () => $(b.dataset.close).classList.remove('open'));
+}
+for (const ov of document.querySelectorAll('.overlay')) {
+  ov.addEventListener('click', e => { if (e.target === ov) ov.classList.remove('open'); });
+}
+function openPalette() {
+  palSearch.value = '';
+  buildPalette('');
+  palOverlay.classList.add('open');
+  palSearch.focus();
+}
+palSearch.addEventListener('input', () => buildPalette(palSearch.value.trim().toLowerCase()));
+function buildPalette(q) {
+  palBody.replaceChildren();
+  for (const [label, names] of CATS) {
+    const items = names.filter(n => SPEC[n]).filter(n => !q ||
+        n.includes(q) || jaLabel(n).includes(q) || (JA[n] || ['', ''])[1].includes(q));
+    if (!items.length) continue;
+    const cat = document.createElement('div');
+    cat.className = 'palcat';
+    const h = document.createElement('h4');
+    h.textContent = label;
+    h.style.color = CAT_COLOR[label];
+    const grid = document.createElement('div');
+    grid.className = 'palgrid';
+    for (const n of items) {
+      const btn = document.createElement('button');
+      btn.className = 'palitem';
+      btn.style.setProperty('--ac', CAT_COLOR[label]);
+      btn.disabled = chain.some(x => x.name === n);
+      const pe = document.createElement('span');
+      pe.className = 'pe';
+      pe.textContent = jaEmoji(n);
+      const tx = document.createElement('div');
+      const t = document.createElement('div');
+      t.className = 't';
+      t.textContent = jaLabel(n) + ' ';
+      const sm = document.createElement('small');
+      sm.textContent = n;
+      t.append(sm);
+      const d = document.createElement('div');
+      d.className = 'd';
+      d.textContent = btn.disabled ? '追加済み' : (JA[n] || ['', ''])[1];
+      tx.append(t, d);
+      btn.append(pe, tx);
+      btn.addEventListener('click', () => {
+        chain.push(makeNode(n));
+        selected = justAdded = chain.length - 1;
+        palOverlay.classList.remove('open');
+        applyChain();
+      });
+      grid.append(btn);
+    }
+    cat.append(h, grid);
+    palBody.append(cat);
+  }
+}
+
+// ---- presets ---------------------------------------------------------------
+const PRESETS = [
+  ['📼 VHSの夜', [['ntsc', { noise: 0.15 }], ['crt', {}]]],
+  ['🎬 シネマ', [['color_transform', { contrast: 1.15, saturation: 0.85 }], ['vignette', { start: 0.3 }]]],
+  ['🌸 アニメ', [['anime', { lines: 0 }], ['inkline', {}]]],
+  ['🖌 水墨画', [['sumie', {}]]],
+  ['🖼 ゴッホ', [['impressionist', {}]]],
+  ['💧 水彩', [['watercolor', {}]]],
+  ['✏️ ラクガキ帳', [['notebook', {}], ['wobble', {}]]],
+  ['🕹 レトロゲーム', [['pixelart', {}], ['crt', { curvature: 0.08 }]]],
+  ['👻 ホラー', [['grayscale', {}], ['vignette', { start: 0.15, end: 0.75 }], ['ntsc', { noise: 0.3, artifacts: 0.9 }]]],
+  ['🫧 ドリーミー', [['bilateral', { radius: 6 }], ['exposure', { stops: 0.35 }], ['vignette', {}]]],
+  ['⛪ 大聖堂', [['stainedglass', {}]]],
+  ['👁 トリップ', [['lsd', {}]]],
+];
+for (const [label, spec] of PRESETS) {
+  const b = document.createElement('button');
+  b.className = 'preset';
+  b.textContent = label;
+  b.addEventListener('click', () => setChainAnimated(spec, ''));
+  $('presetBtns').append(b);
+}
+
+// ---- built-in composer (offline "AI") --------------------------------------
+// keyword recipes: matched fragments concatenate, tone→art→finish ordered.
+const RECIPES = [
+  [/夕焼|夕暮|サンセット|sunset|ノスタルジ|黄昏/, [['white_balance', { temperature: 0.55 }], ['color_transform', { saturation: 1.1 }], ['vignette', {}]], '夕暮れの空気は色温度とビネットで'],
+  [/昔|レトロ|フィルム|昭和|vhs|ビデオ|テープ|古いカメラ|古びた/, [['ntsc', { noise: 0.15 }], ['crt', {}]], 'アナログ信号を通してブラウン管へ'],
+  [/映画|シネマ|cinema|劇場/, [['color_transform', { contrast: 1.15, saturation: 0.85 }], ['vignette', { start: 0.3 }]], 'コントラスト高め・彩度控えめのシネマルック'],
+  [/アニメ|anime|セル画?/, [['anime', { lines: 0 }], ['inkline', {}]], 'セル塗り+首尾一貫のインク線'],
+  [/漫画|マンガ|コミック/, [['sketch', {}], ['halftone', { spacing: 6 }]], '線画に網点を重ねて誌面風に'],
+  [/水墨|墨絵?|和風|禅|書道/, [['sumie', {}]], '墨が紙の中でにじみ続けます'],
+  [/印象派|ゴッホ|gogh|モネ/, [['impressionist', {}]], '渦を巻く長い筆致で'],
+  [/油絵|絵画|油彩/, [['oilpaint', { radius: 7, levels: 20 }], ['median', {}]], 'Kuwaharaの筆致にニス仕上げ'],
+  [/水彩/, [['watercolor', {}]], '顔料のにじみと紙目'],
+  [/ステンドグラス|教会|ガラス/, [['stainedglass', {}]], '鉛線とガラス片の透過光'],
+  [/ゲーム|ドット|8.?bit|ファミコン|レトロゲー/, [['pixelart', {}], ['crt', { curvature: 0.08 }]], 'ドット絵をブラウン管に映して'],
+  [/夢|ドリーミー|ふわふわ|やわらか|ソフト/, [['bilateral', { radius: 6 }], ['exposure', { stops: 0.35 }], ['vignette', {}]], 'にじむ光のソフトフォーカス'],
+  [/ホラー|怖|恐怖|不気味|心霊/, [['grayscale', {}], ['vignette', { start: 0.15, end: 0.75 }], ['ntsc', { noise: 0.3, artifacts: 0.9 }]], '色を奪い、闇とノイズを足しました'],
+  [/サイバー|ネオン|cyber|近未来|sf/, [['color_transform', { contrast: 1.2, saturation: 1.3 }], ['hue', { angle: 300 }], ['crt', { curvature: 0.05, scan: 0.4 }]], '色相を回してネオンの街へ'],
+  [/白黒|モノクロ|グレー/, [['grayscale', {}], ['levels', { gamma: 0.9 }]], '銀塩のトーンで'],
+  [/鉛筆|スケッチ|デッサン/, [['sketch', {}]], '鉛筆の線だけ残しました'],
+  [/ノート|落書き|ラクガキ/, [['notebook', {}], ['wobble', {}]], '方眼紙の落書きが震えます'],
+  [/トリップ|サイケ|幻覚|万華鏡/, [['lsd', {}]], '呼吸する幾何学模様'],
+  [/フラクタル|宇宙|異次元/, [['fractal', { blend: 0.55 }]], 'フラクタルの中を飛びます'],
+  [/寒|冬|冷た|雪/, [['white_balance', { temperature: -0.4 }], ['exposure', { stops: 0.15 }]], '色温度を下げて冬の光に'],
+  [/暖|夏|あたたか|南国/, [['white_balance', { temperature: 0.4 }], ['color_transform', { saturation: 1.15 }]], '暖色に寄せて夏の色に'],
+  [/美肌|盛|きれい|かわいく/, [['beauty', {}]], '磨皮と美白をひとさじ'],
+  [/ポップ|pop|ウォーホル|アンディ/, [['posterize', { levels: 4 }], ['color_transform', { saturation: 1.5 }]], '減色とビビッドでポップアートに'],
+  [/古写真|アンティーク|大正|明治/, [['sepia', {}], ['vignette', {}], ['ntsc', { noise: 0.08 }]], 'セピアに時間の傷を少し'],
+  [/絵本|パステル/, [['watercolor', { edge: 0.5 }], ['exposure', { stops: 0.25 }]], '淡い水彩で絵本のページに'],
+];
+// direct filter-name / JA-label mention also works ("sumieとcrt" etc.)
+function composeBuiltin(text) {
+  const t = text.toLowerCase();
+  const frags = [];
+  const comments = [];
+  for (const [re, spec, comment] of RECIPES) {
+    if (re.test(t)) { frags.push(...spec); comments.push(comment); }
+  }
+  for (const f of CATALOG) {
+    if (t.includes(f.name) || (JA[f.name] && t.includes(JA[f.name][0].toLowerCase()))) {
+      if (!frags.some(([n]) => n === f.name)) frags.push([f.name, {}]);
+    }
+  }
+  if (!frags.length) return null;
+  // intensity modifiers scale the numeric overrides
+  let k = 1;
+  if (/強|激し|めっちゃ|超|ガッツリ|strong/.test(t)) k = 1.4;
+  if (/弱|ほんのり|少し|軽く|うっすら|subtle/.test(t)) k = 0.6;
+  const scaled = frags.map(([n, o]) => [n, k === 1 ? o :
+      Object.fromEntries(Object.entries(o).map(([pn, pv]) => [pn, pv * k]))]);
+  // tone first, style mid, finish last
+  const FINISH = new Set(['vignette', 'crt', 'ntsc', 'halftone', 'wobble', 'median']);
+  const TONE = new Set(['grayscale', 'sepia', 'white_balance', 'exposure', 'levels',
+                        'color_transform', 'rgb', 'hue', 'bilateral', 'beauty']);
+  scaled.sort((a, b) => (TONE.has(a[0]) ? 0 : FINISH.has(a[0]) ? 2 : 1) -
+                        (TONE.has(b[0]) ? 0 : FINISH.has(b[0]) ? 2 : 1));
+  // last match wins: later recipes are the more specific ones
+  return { chain: scaled, comment: comments[comments.length - 1] || 'こんな組み合わせにしてみました' };
+}
+function composeRandom() {
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+  const art = pick(['impressionist', 'anime', 'watercolor', 'sumie', 'oilpaint', 'stainedglass',
+                    'pixelart', 'notebook', 'sketch', 'toon', 'lsd', 'halftone', 'bokeh']);
+  const spec = [[art, {}]];
+  if (Math.random() < 0.5) spec.unshift(pick(
+      [['white_balance', { temperature: 0.35 }], ['exposure', { stops: 0.25 }],
+       ['color_transform', { saturation: 1.25 }], ['hue', { angle: 40 }]]));
+  if (Math.random() < 0.5) spec.push(pick(
+      [['vignette', {}], ['crt', { curvature: 0.08 }], ['wobble', { amount: 3 }]]));
+  return { chain: spec, comment: 'おまかせ: ' + spec.map(([n]) => jaLabel(n)).join(' → ') };
+}
+
+// ---- AI providers ----------------------------------------------------------
+// The key never leaves this machine except toward the API the user picked:
+// it is kept in localStorage only, and sent only in that provider's auth
+// header. Built-in composer = zero setup, zero network.
+const CFG_KEY = 'fs_studio_ai';
+let aiCfg = { prov: 'builtin', claudeKey: '', claudeModel: 'claude-opus-5',
+              oaiBase: 'http://localhost:11434/v1', oaiModel: '', oaiKey: '' };
+try { Object.assign(aiCfg, JSON.parse(localStorage.getItem(CFG_KEY) || '{}')); } catch {}
+
+function catalogPrompt() {
+  return CATALOG.map(f => {
+    const ps = f.params.filter(p => p.name !== 'time').map(p => {
+      const [lo, hi] = rangeFor(p);
+      return `${p.name}=${p.def} (${lo}..${hi})`;
+    }).join(', ');
+    return `- ${f.name}: ${f.summary}${ps ? ` | params: ${ps}` : ''}`;
+  }).join('\n');
+}
+const SYS_PROMPT = () => `あなたは映像フィルタチェーンの設計者です。ユーザーの求める見た目を、以下のフィルタカタログから1〜5個を順に適用するチェーンとして設計してください。
+
+カタログ (name: 説明 | params: 名前=デフォルト (範囲)):
+${catalogPrompt()}
+
+規則:
+- JSONのみを出力: {"comment": "一言(日本語・20字以内)", "chain": [{"name": "...", "params": {"param": 値}}]}
+- 同じフィルタは1回まで。順序は 色調補正 → アート化 → 仕上げ(vignette/crt/ntsc等)。
+- デフォルトで良いパラメータは省略。値は範囲内で。
+- ntscの後にcrt、oilpaintの後にmedianは好相性。`;
+
+async function askClaude(text) {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': aiCfg.claudeKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: aiCfg.claudeModel || 'claude-opus-5',
+      max_tokens: 1500,
+      system: SYS_PROMPT(),
+      messages: [{ role: 'user', content: text }],
+    }),
+  });
+  if (!r.ok) throw new Error(`Claude API ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  if (data.stop_reason === 'refusal') throw new Error('モデルが生成を辞退しました');
+  const block = (data.content || []).find(b => b.type === 'text');
+  if (!block) throw new Error('テキスト応答がありません');
+  return block.text;
+}
+async function askOpenAI(text) {
+  const base = aiCfg.oaiBase.replace(/\/$/, '');
+  const headers = { 'content-type': 'application/json' };
+  if (aiCfg.oaiKey) headers.authorization = 'Bearer ' + aiCfg.oaiKey;
+  const r = await fetch(base + '/chat/completions', {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      model: aiCfg.oaiModel,
+      messages: [{ role: 'system', content: SYS_PROMPT() }, { role: 'user', content: text }],
+    }),
+  });
+  if (!r.ok) throw new Error(`API ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  const out = data.choices?.[0]?.message?.content;
+  if (!out) throw new Error('応答が空です');
+  return out;
+}
+function parseAiJson(text) {
+  const a = text.indexOf('{'), b = text.lastIndexOf('}');
+  if (a < 0 || b <= a) throw new Error('JSONが見つかりません');
+  const obj = JSON.parse(text.slice(a, b + 1));
+  if (!Array.isArray(obj.chain)) throw new Error('chain がありません');
+  const spec = [];
+  for (const it of obj.chain) {
+    const name = String(it.name || '');
+    if (!SPEC[name] || spec.some(([n]) => n === name)) continue;
+    spec.push([name, it.params && typeof it.params === 'object' ? it.params : {}]);
+  }
+  if (!spec.length) throw new Error('有効なフィルタがありません');
+  return { chain: spec, comment: typeof obj.comment === 'string' ? obj.comment : '' };
+}
+
+const aiText = $('aiText'), aiGo = $('aiGo'), aibar = $('aibar');
+async function generate() {
+  const text = aiText.value.trim();
+  if (!text) { setChainAnimated(...unpack(composeRandom())); return; }
+  aiGo.disabled = true;
+  aibar.classList.add('busy');
+  try {
+    if (aiCfg.prov === 'claude' && aiCfg.claudeKey) {
+      say('Claudeが考えています…');
+      setChainAnimated(...unpack(parseAiJson(await askClaude(text))));
+    } else if (aiCfg.prov === 'openai' && aiCfg.oaiBase && aiCfg.oaiModel) {
+      say('AIが考えています…');
+      setChainAnimated(...unpack(parseAiJson(await askOpenAI(text))));
+    } else {
+      const r = composeBuiltin(text);
+      if (r) setChainAnimated(...unpack(r));
+      else {
+        const rnd = composeRandom();
+        rnd.comment = 'うまく読み取れなかったので、おまかせで: ' +
+            rnd.chain.map(([n]) => jaLabel(n)).join(' → ') + ' (⚙からLLM接続もできます)';
+        setChainAnimated(...unpack(rnd));
+      }
+    }
+  } catch (e) {
+    console.error('ai generate failed:', e);
+    say('生成に失敗: ' + e.message, true);
+  } finally {
+    aiGo.disabled = false;
+    aibar.classList.remove('busy');
+  }
+}
+const unpack = r => [r.chain, r.comment];
+aiGo.addEventListener('click', generate);
+aiText.addEventListener('keydown', e => { if (e.key === 'Enter') generate(); });
+$('aiDice').addEventListener('click', () => setChainAnimated(...unpack(composeRandom())));
+
+// rotating placeholder ideas
+const IDEAS = ['昔のカメラみたいな映像', '夕暮れのフィルム風', 'ホラー映画っぽく',
+               'ゴッホの絵みたいに', '水墨画にして', 'サイバーパンクな街',
+               'レトロゲームの画面', 'ふわふわの夢の中', '雨の日の絵本'];
+let ideaIdx = 0;
+setInterval(() => {
+  if (document.activeElement === aiText || aiText.value) return;
+  ideaIdx = (ideaIdx + 1) % IDEAS.length;
+  aiText.placeholder = '例:「' + IDEAS[ideaIdx] + '」';
+}, 3600);
+
+// ---- AI settings modal -----------------------------------------------------
+const cfgOverlay = $('cfgOverlay');
+$('aiGear').addEventListener('click', () => {
+  document.querySelector(`input[name=prov][value=${aiCfg.prov}]`).checked = true;
+  $('cfgClaudeKey').value = aiCfg.claudeKey;
+  $('cfgClaudeModel').value = aiCfg.claudeModel;
+  $('cfgOaiBase').value = aiCfg.oaiBase;
+  $('cfgOaiModel').value = aiCfg.oaiModel;
+  $('cfgOaiKey').value = aiCfg.oaiKey;
+  syncCfgVis();
+  cfgOverlay.classList.add('open');
+});
+for (const r of document.querySelectorAll('input[name=prov]')) {
+  r.addEventListener('change', syncCfgVis);
+}
+function syncCfgVis() {
+  const v = document.querySelector('input[name=prov]:checked').value;
+  for (const s of document.querySelectorAll('.cfgset')) s.hidden = s.dataset.prov !== v;
+}
+$('cfgSave').addEventListener('click', () => {
+  aiCfg = {
+    prov: document.querySelector('input[name=prov]:checked').value,
+    claudeKey: $('cfgClaudeKey').value.trim(),
+    claudeModel: $('cfgClaudeModel').value.trim() || 'claude-opus-5',
+    oaiBase: $('cfgOaiBase').value.trim(),
+    oaiModel: $('cfgOaiModel').value.trim(),
+    oaiKey: $('cfgOaiKey').value.trim(),
+  };
+  localStorage.setItem(CFG_KEY, JSON.stringify(aiCfg));
+  cfgOverlay.classList.remove('open');
+  say(aiCfg.prov === 'builtin' ? '内蔵コンポーザを使います (オフライン)'
+      : aiCfg.prov === 'claude' ? 'Claude APIを使います (キーはこの端末にのみ保存)'
+      : 'OpenAI互換APIを使います (キーはこの端末にのみ保存)');
+});
+
+// ---- share / export --------------------------------------------------------
+async function copyText(t, btn, okLabel) {
+  try {
+    await navigator.clipboard.writeText(t);
+    const old = btn.textContent;
+    btn.textContent = okLabel;
+    setTimeout(() => { btn.textContent = old; }, 1200);
+  } catch (e) { say('コピーできません: ' + e.message, true); }
+}
+$('btnShare').addEventListener('click', e =>
+    copyText(location.href, e.currentTarget, '✅ コピー済'));
+$('btnYaml').addEventListener('click', e => {
+  const lines = chain.filter(n => n.on).map(n => {
+    const s = SPEC[n.name];
+    const ps = s.params.map((p, i) => p.name === 'time' ? null : `${p.name}: ${+n.vals[i].toFixed(3)}`)
+        .filter(Boolean).join(', ');
+    return `  - { ${n.name}: { ${ps} } }`;
+  });
+  copyText('filters:\n' + (lines.length ? lines.join('\n') : '  []'), e.currentTarget, '✅ YAML');
+});
+$('btnSnap').addEventListener('click', () => {
+  canvas.toBlob(b => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b);
+    a.download = 'fluent_scene_' +
+        (chain.filter(n => n.on).map(n => n.name).join('-') || 'original') + '.png';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }, 'image/png');
+});
+
+// ---- backend: WebGPU when available, CPU otherwise -------------------------
+let gpu = false;
+try {
+  if (navigator.gpu) {
+    const gInit = mod.cwrap('fs_webgpu_init', null, ['string']);
+    const gStatus = mod.cwrap('fs_webgpu_status', 'number', []);
+    const gError = mod.cwrap('fs_webgpu_error', 'string', []);
+    fs.gRender = mod.cwrap('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']);
+    gInit('#v');
+    bar.textContent = 'waiting for WebGPU device…';
+    gpu = await new Promise(resolve => {
+      const t0 = performance.now();
+      (function poll() {
+        const s = gStatus();
+        if (s === 1) return resolve(true);
+        if (s === -1) { console.error('studio: WebGPU init failed:', gError()); return resolve(false); }
+        if (performance.now() - t0 > 5000) { console.error('studio: WebGPU init timeout'); return resolve(false); }
+        requestAnimationFrame(poll);
+      })();
+    });
+  }
+} catch (e) {
+  console.error('studio: WebGPU unavailable, using CPU renderer:', e);
+  gpu = false;
+}
+if (!gpu) {
+  if (navigator.gpu) {
+    // a failed WebGPU attempt may have claimed the canvas — a claimed
+    // canvas returns null from getContext('2d'), so start from a fresh node
+    const fresh = canvas.cloneNode(false);
+    fresh.width = 1280; fresh.height = 720;
+    canvas.replaceWith(fresh);
+    canvas = fresh;
+  }
+  ctx = canvas.getContext('2d');
+}
+fs.gStatus = gpu ? mod.cwrap('fs_webgpu_status', 'number', []) : () => -1;
+
+function fallbackToCpu(why) {
+  if (!gpu) return;
+  gpu = false;
+  console.error('studio: falling back to CPU renderer:', why);
+  const fresh = canvas.cloneNode(false);
+  fresh.width = 1280; fresh.height = 720;
+  canvas.replaceWith(fresh);
+  canvas = fresh;
+  hookWipe(canvas);
+  ctx = canvas.getContext('2d');
+}
+
+// ---- wipe ------------------------------------------------------------------
+function setWipe(s) {
+  s = Math.max(0, Math.min(stageW, s));
+  fs.setParamVec2(inst, 'wipe_win', s - 640, 360);
+  fs.setParamVec2(inst, 'wipe_inv', 1920 - s, 360);
+  fs.setParamVec2(inst, 'divider', s, 360);
+}
+let dragging = false;
+function hookWipe(el) {
+  el.addEventListener('pointerdown', e => {
+    dragging = true; el.setPointerCapture(e.pointerId);
+    const r = el.getBoundingClientRect();
+    setWipe((e.clientX - r.left) / r.width * stageW);
+    e.preventDefault();
+  });
+  el.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const r = el.getBoundingClientRect();
+    setWipe((e.clientX - r.left) / r.width * stageW);
+  });
+  el.addEventListener('pointerup', () => { dragging = false; });
+}
+hookWipe(canvas);
+
+// ---- input sources ---------------------------------------------------------
+// webcam by default; picked image / picked video / procedural sample keep
+// the studio playable with no camera and no upload.
+let CAM_W = 1280, CAM_H = 720;
+const grab = document.createElement('canvas');
+grab.width = CAM_W; grab.height = CAM_H;
+const grabCtx = grab.getContext('2d', { willReadFrequently: true });
+let source = { kind: 'none', video: null, img: null, dirty: true };
+
+function setSrcButtons() {
+  $('srcCam').classList.toggle('on', source.kind === 'camera');
+  $('srcFile').classList.toggle('on', source.kind === 'image' || source.kind === 'video');
+  $('srcSample').classList.toggle('on', source.kind === 'sample');
+}
+function stopVideoSrc() {
+  if (source.video) {
+    if (source.video.srcObject) for (const t of source.video.srcObject.getTracks()) t.stop();
+    source.video.pause();
+  }
+  source = { kind: 'none', video: null, img: null, dirty: true };
+}
+async function useCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(
+        { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    stopVideoSrc();
+    const video = document.createElement('video');
+    video.srcObject = stream; video.muted = true;
+    await video.play();
+    source = { kind: 'camera', video, img: null, dirty: true };
+    setSrcButtons();
+    return true;
+  } catch (e) {
+    say('カメラを使えません (' + (e.name || e) + ') — サンプル映像でどうぞ', true);
+    return false;
+  }
+}
+function useSample() {
+  stopVideoSrc();
+  source = { kind: 'sample', video: null, img: null, dirty: true };
+  setSrcButtons();
+}
+$('srcCam').addEventListener('click', useCamera);
+$('srcSample').addEventListener('click', useSample);
+$('srcFile').addEventListener('click', () => $('filePick').click());
+$('filePick').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  try {
+    if (f.type.startsWith('video/')) {
+      stopVideoSrc();
+      const video = document.createElement('video');
+      video.src = url; video.muted = true; video.loop = true;
+      await video.play();
+      source = { kind: 'video', video, img: null, dirty: true };
+    } else {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      stopVideoSrc();
+      source = { kind: 'image', video: null, img, dirty: true };
+    }
+    setSrcButtons();
+  } catch (err) { say('読み込めません: ' + err.message, true); }
+  e.target.value = '';
+});
+// drag & drop an image/video anywhere
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => {
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if (!f) return;
+  const dt = new DataTransfer();
+  dt.items.add(f);
+  $('filePick').files = dt.files;
+  $('filePick').dispatchEvent(new Event('change'));
+});
+
+// procedural sample: drifting dunes under a slow sky — gradients for the
+// color filters, ridges and glyphs for the line filters.
+function drawSample(t) {
+  const w = CAM_W, h = CAM_H, g = grabCtx;
+  const sky = g.createLinearGradient(0, 0, 0, h * 0.62);
+  const hue = 210 + 40 * Math.sin(t * 0.11);
+  sky.addColorStop(0, `hsl(${hue}, 65%, 16%)`);
+  sky.addColorStop(0.7, `hsl(${(hue + 90) % 360}, 60%, 42%)`);
+  sky.addColorStop(1, `hsl(${(hue + 130) % 360}, 75%, 60%)`);
+  g.fillStyle = sky;
+  g.fillRect(0, 0, w, h);
+  // sun with halo
+  const sx = w * (0.5 + 0.28 * Math.sin(t * 0.07)), sy = h * 0.4;
+  const halo = g.createRadialGradient(sx, sy, 10, sx, sy, 190);
+  halo.addColorStop(0, 'rgba(255,240,200,0.95)');
+  halo.addColorStop(0.25, 'rgba(255,190,120,0.5)');
+  halo.addColorStop(1, 'rgba(255,190,120,0)');
+  g.fillStyle = halo;
+  g.fillRect(sx - 190, sy - 190, 380, 380);
+  g.fillStyle = '#fff7e0';
+  g.beginPath(); g.arc(sx, sy, 46, 0, 7); g.fill();
+  // dune ridges
+  for (let i = 0; i < 4; ++i) {
+    const base = h * (0.5 + 0.13 * i);
+    g.fillStyle = `hsl(${(hue + 160 + i * 14) % 360}, ${46 - i * 6}%, ${38 - i * 8}%)`;
+    g.beginPath();
+    g.moveTo(0, h);
+    for (let x = 0; x <= w; x += 16) {
+      g.lineTo(x, base + 34 * Math.sin(x * 0.004 + t * (0.25 + i * 0.1) + i * 2.1)
+                     + 16 * Math.sin(x * 0.011 - t * 0.18 + i));
+    }
+    g.lineTo(w, h);
+    g.closePath();
+    g.fill();
+  }
+  // drifting orbs for bokeh/edge filters
+  for (let i = 0; i < 6; ++i) {
+    const ox = ((i * 227 + t * (18 + i * 7)) % (w + 120)) - 60;
+    const oy = h * (0.16 + 0.1 * ((i * 137) % 5)) + 12 * Math.sin(t + i * 1.7);
+    g.fillStyle = `hsla(${(hue + i * 47) % 360}, 80%, 75%, 0.8)`;
+    g.beginPath(); g.arc(ox, oy, 7 + (i % 3) * 5, 0, 7); g.fill();
+  }
+  g.fillStyle = 'rgba(255,255,255,0.85)';
+  g.font = '700 44px ui-monospace, monospace';
+  g.fillText('fluent_scene', 40, h - 42);
+}
+
+function feedFrame(t) {
+  if (source.kind === 'camera' || source.kind === 'video') {
+    const v = source.video;
+    if (!v || v.readyState < 2) return;
+    if (grab.width !== (v.videoWidth || CAM_W)) {
+      grab.width = CAM_W = v.videoWidth || CAM_W;
+      grab.height = CAM_H = v.videoHeight || CAM_H;
+    }
+    grabCtx.drawImage(v, 0, 0, CAM_W, CAM_H);
+  } else if (source.kind === 'image') {
+    if (!source.dirty) return;                  // static: commit once
+    if (grab.width !== 1280) { grab.width = CAM_W = 1280; grab.height = CAM_H = 720; }
+    const img = source.img;
+    const s = Math.max(CAM_W / img.width, CAM_H / img.height);
+    grabCtx.fillStyle = '#000';
+    grabCtx.fillRect(0, 0, CAM_W, CAM_H);
+    grabCtx.drawImage(img, (CAM_W - img.width * s) / 2, (CAM_H - img.height * s) / 2,
+                      img.width * s, img.height * s);
+    source.dirty = false;
+  } else if (source.kind === 'sample') {
+    if (grab.width !== 1280) { grab.width = CAM_W = 1280; grab.height = CAM_H = 720; }
+    drawSample(t);
+  } else return;
+  const data = grabCtx.getImageData(0, 0, CAM_W, CAM_H).data;
+  const ptr = fs.imageBuffer(inst, 'camera', CAM_W, CAM_H);
+  mod.HEAPU8.set(data, ptr);
+  fs.commitImage(inst, 'camera', CAM_W, CAM_H);
+}
+
+// ---- boot ------------------------------------------------------------------
+if (loadHash()) {
+  selected = 0;
+} else {
+  chain = [makeNode('ntsc', { noise: 0.12 }), makeNode('crt')];
+  selected = 0;
+}
+renderChain();
+renderParams();
+pushChain(0);
+updateBar();
+// sample rolls immediately; the webcam (the default input) takes over the
+// moment permission lands, so the page is never black while the prompt is up.
+useSample();
+useCamera();
+
+// ---- render loop -----------------------------------------------------------
+let last = performance.now(), frames = 0, fpsShown = 0;
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+if (gpu && DPR > 1) { canvas.width = 1280 * DPR; canvas.height = 720 * DPR; }
+const LADDER = [[1280, 720], [1024, 576], [854, 480], [640, 360]];
+let rung = 0;
+setInterval(() => {
+  fpsShown = frames; frames = 0;
+  if (gpu) return;
+  if (fpsShown > 0 && fpsShown < 24 && rung < LADDER.length - 1) ++rung;
+  const [w, h] = LADDER[rung];
+  if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
+}, 1000);
+
+function updateBar() {
+  const names = chain.filter(n => n.on).map(n => n.name);
+  bar.textContent = (names.length ? '右=' + names.join(' → ') : 'チェーンなし (原画)') +
+      ' — 映像はタブの外に出ません';
+}
+
+function tick() {
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+  const t = simNow();
+
+  feedFrame(t);
+  if (anim.checked && animated()) pushChain(t);
+
+  if (gpu) {
+    if (fs.gStatus() !== 1) {
+      fallbackToCpu('device left ready state');
+    } else if (!fs.gRender(inst, dt, canvas.width, canvas.height)) {
+      fallbackToCpu('fs_render_webgpu failed');
+    }
+  }
+  if (!gpu) {
+    const px = fs.render(inst, dt, canvas.width, canvas.height);
+    const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
+    if (w === canvas.width && stride === w * 4) {
+      const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
+      ctx.putImageData(new ImageData(view, w, h), 0, 0);
+    }
+  }
+  ++frames;
+  pill.textContent = `${fpsShown} fps · ${gpu ? 'webgpu' : 'cpu'} · ${canvas.width}×${canvas.height}`;
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</html>

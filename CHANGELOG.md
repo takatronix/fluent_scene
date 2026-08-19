@@ -1,6 +1,23 @@
 # Changelog
 
-## 0.13.1 — 2026-08-19 (inkline: 首尾一貫線 ETF/FDoG)
+## 0.13.2 — 2026-08-19 (filter studio: GUIフィルタエディタ + AI生成)
+
+- **wasm/edit.html — filter studio**: フィルタチェーンをノード列として
+  GUI編集するデモページ。追加パレット (カテゴリ色 + 日本語ラベル + 検索)、
+  ドラッグ並べ替え、ノード単位の on/off、選択ノードのスライダは
+  `fs_filters_json()` から自動生成 (カタログと恒久同期)。
+  チェーンは `fs_layer_clear_filters` + `fs_layer_set_filter` を順に積む
+  ランタイム経路のみ — エンジン変更なし
+- **AI生成**: 自然言語→チェーン。3プロバイダ切替 — 内蔵オフライン
+  コンポーザ (キーワードレシピ25種 + 強弱修飾 + tone→art→finish 整列)、
+  Claude API 直叩き、OpenAI互換 (Ollama / LM Studio)。APIキーは
+  **localStorage のみ**に保存と明記。生成チェーンはノードが1個ずつ
+  ポップインしながらリアルタイムに繋がる
+- 入力: Webカメラ (既定・許可待ちの間は手続き生成サンプルが先に回る) /
+  画像・動画ファイル (D&D対応) / サンプル。ワイプ比較・WebGPU→CPU
+  フォールバック・解像度ラダーは filter lab と同一機構
+- 共有リンク (チェーンをURLハッシュに直列化)・Scene YAML コピー・
+  PNGスナップ。index.html にカード追加、README 両言語のデモ表更新
 
 - **inkline** (`FS_INKLINE=47`): Kang 2007 の Coherent Line Drawing。
   エッジ接線流 (ETF) を P1 永続フィールドに持ち**1フレーム=1平滑反復**
