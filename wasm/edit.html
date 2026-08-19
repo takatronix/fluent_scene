@@ -1062,25 +1062,29 @@ inputs:
   return y;
 }
 
-let paperData = null, paperUploaded = false;
-function ensurePaper() {
-  if (!paperData || paperUploaded) return;
-  const ptr = fs.imageBuffer(inst, 'paper', 1024, 1024);
-  mod.HEAPU8.set(paperData, ptr);
-  paperUploaded = true;
+// 紙テクスチャ: sumie=和紙 / watercolor=冷圧紙 (filters.htmlと同じ出し分け)
+// [src, input名, RGBAデータ, このinstへアップロード済みか]
+const papers = { sumie: ['./washi.jpg', 'paper', null, false],
+                 watercolor: ['./wcpaper.jpg', 'wcpaper', null, false] };
+function ensurePaper(k) {
+  const pp = papers[k];
+  if (!pp || !pp[2] || pp[3]) return;
+  const ptr = fs.imageBuffer(inst, pp[1], 1024, 1024);
+  mod.HEAPU8.set(pp[2], ptr);
+  pp[3] = true;
 }
-(async () => {
+for (const k of Object.keys(papers)) (async () => {
   try {
     const img = new Image();
-    img.src = './washi.jpg';
+    img.src = papers[k][0];
     await img.decode();
     const c = document.createElement('canvas');
     c.width = c.height = 1024;
     const cx = c.getContext('2d');
     cx.drawImage(img, 0, 0, 1024, 1024);
-    paperData = cx.getImageData(0, 0, 1024, 1024).data;
+    papers[k][2] = cx.getImageData(0, 0, 1024, 1024).data;
     pushChains(simT);
-  } catch (e) { console.error('washi load failed:', e); }
+  } catch (e) { console.error(k + ' paper load failed:', e); }
 })();
 
 // ---- LUT color grades: 512×512 GPUImage-layout atlases (dist/luts) ---------
@@ -1129,7 +1133,7 @@ function rebuildScene() {
   if (!next) { console.error('scene rejected:', fs.error()); return false; }
   if (inst) fs.destroy(inst);
   inst = next;
-  paperUploaded = false;
+  for (const k of Object.keys(papers)) papers[k][3] = false;
   lutUploaded.clear();
   maskReady = false;                    // mask buffers live per instance
   maskHReady = false;
@@ -1156,9 +1160,11 @@ function pushChains(t) {
       if (ti >= 0) v[ti] = anim.checked ? t : 0;
       fs.setFilter(inst, u.id, node.name, v[0] || 0, v[1] || 0, v[2] || 0, v[3] || 0, v[4] || 0);
     }
-    if (u.deco.filters.some(n => n.on && n.name === 'sumie')) {
-      ensurePaper();
-      if (paperUploaded) fs.setFilterImage(inst, u.id, 'sumie', 'paper', 1024, 1024);
+    for (const k of Object.keys(papers)) {
+      if (u.deco.filters.some(n => n.on && n.name === k)) {
+        ensurePaper(k);
+        if (papers[k][3]) fs.setFilterImage(inst, u.id, k, papers[k][1], 1024, 1024);
+      }
     }
     const lutNode = u.deco.filters.find(n => n.on && n.name === 'lut' && n.lut);
     if (lutNode && ensureLutImg(lutNode.lut)) {
@@ -1917,6 +1923,7 @@ const dock = $('dock');
 let fsWasOn = false;
 function setTheater(on) {
   document.body.classList.toggle('theater', on);
+  try { localStorage.setItem('fs_theater', on ? '1' : '0'); } catch {}
   $('btnFull').textContent = on ? '🗗' : '⛶';
   $('btnFull').title = on ? '全画面をやめる' : '全画面モード';
   if (on) {
@@ -4409,9 +4416,9 @@ renderInspector();
 updateSrcUI();
 updateHint();
 updateBar();
-// theater by default — the video owns the screen, the dock floats
-// (「画面スクロール必須なのなんとかならんか」). ⛶で従来レイアウトに戻せる
-setTheater(true);
+// 通常ビューがデフォルト (オーナー指示: 初回=通常)。シアターは⛶トグルのみ、
+// 選んだ状態はlocalStorageに記憶して次回再現
+setTheater(localStorage.getItem('fs_theater') === '1');
 if (COARSE) dock.hidden = true;              // スマホは✏️編集で開く
 if (dockView !== 'graph') setDockView(dockView);
 // camera sources start on the sample so nothing is black while the
