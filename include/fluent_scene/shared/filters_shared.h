@@ -892,92 +892,169 @@ vec3 fs_watercolor(vec2 uv, float wash_px, float edge, float grain,
     return clamp(c, 0.0, 1.0);
 }
 
-// Sumi-e ink wash. Tone is the story: luma is bent through an ink curve and
-// softly quantized into a few washes (the classical graded strokes), then
-// smeared along the local edge tangent — the brush travels along contours,
-// not across them (Way 2002's wash/contour split; the stroke-space dry
-// brush after Strassmann 1986's bristle idea; the bleed is a one-shot ring
-// approximation of the cellular ink-diffusion models). XDoG contours with
-// pressure wobble draw the bones. Warm washi paper with fiber noise carries
-// it; `chroma` washes a little of the source color back in (tansai).
-vec3 fs_sumie(vec2 uv, float ink, float bleed_px, float dry, float outline,
-              float chroma) {
+// ---- sumi-e, the living kind -----------------------------------------------
+// v2 (owner-directed): Chinese ink painting, dynamic — washi paper, BOLD
+// emphasized contours, and bleed that genuinely MOVES. The nijimi is no
+// longer painted with noise: the filter owns a persistent per-layer field
+// (persistent_buffers P1 — sumie is its first customer) holding floating
+// ink / water / settled ink, and every rendered frame deposits pigment
+// from the picture's bold edges and dark masses, diffuses it through the
+// paper's fibers (water runs fast, ink rides the water), evaporates the
+// water and settles the pigment where it dries. This is the cellular
+// ink-diffusion lineage (Zhang 1999) reduced to one 8-neighbor gather per
+// frame; the fiber field wanders slowly with the field's own age, so the
+// bleed never quite stops breathing. State advances once per rendered
+// frame — call-count driven, so goldens stay byte-reproducible.
+//
+// State layout (raw RGBA32F): x = floating ink, y = water, z = settled
+// ink, w = age. The flow/shade bodies compile only for backends that
+// define FS_SAMPLE_STATE (nearest reads — CPU/GPU parity needs no
+// filtering on a data field).
+
+// Bold two-scale contour mass: thick Chinese outlines, not hairlines.
+float fs_sumie_edge2(vec2 uv, float d1, float d2) {
+    float e = 0.0;
+    for (int k = 0; k < 2; ++k) {
+        float d = k == 0 ? d1 : d2;
+        float gx = fs_luma(FS_SAMPLE(uv + FS_TEXEL * vec2(d, 0.0)))
+                 - fs_luma(FS_SAMPLE(uv - FS_TEXEL * vec2(d, 0.0)));
+        float gy = fs_luma(FS_SAMPLE(uv + FS_TEXEL * vec2(0.0, d)))
+                 - fs_luma(FS_SAMPLE(uv - FS_TEXEL * vec2(0.0, d)));
+        e += length(vec2(gx, gy)) * (k == 0 ? 1.0 : 0.8);
+    }
+    return smoothstep(0.05, 0.28, e);
+}
+
+float fs_sumie_edge(vec2 uv, float u) { return fs_sumie_edge2(uv, 2.2 * u, 4.5 * u); }
+
+#ifdef FS_SAMPLE_STATE
+
+// One diffusion tick of the ink/water field. The dynamics are RELAXATION,
+// not accumulation: the picture defines a target density (bold coarse
+// contours + dark masses), the brush deposits only the DIFFERENCE between
+// target and what is already on the paper, and ink transfers between the
+// floating and settled pools conservatively — so the drawing converges
+// instead of silting up to black, and when the scene moves the delta
+// redraws it. A wandering re-wetting churn keeps lifting a little settled
+// ink back into the water, which is why the bleed never stops breathing.
+vec4 fs_sumie_flow(vec2 uv, float ink, float bleed_px, float dry,
+                   float outline, float chroma) {
     float res_y = 1.0 / FS_TEXEL.y;
     float u = max(res_y / 400.0, 0.25);
     vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
-    // slight hand wobble keeps ruled edges out of an ink painting
-    vec2 wn = fs_art_vnoise2(px * (0.06 / u)) - vec2(0.5, 0.5);
-    vec2 wuv = uv + FS_TEXEL * (wn * (3.0 * u));
-    // local flow: the brush runs along the edge tangent. The gradient is
-    // taken COARSE and blended toward one master stroke direction where the
-    // picture is flat — a per-pixel tangent in texture turns every noise
-    // below into per-pixel speckle (ask the first draft).
+    vec4 st = FS_SAMPLE_STATE(uv);
+    float age = st.w + 0.016;
+    // target density: COARSE contours only (micro-texture must not flood
+    // the paper — only shapes that survive a wide brush deserve ink) plus
+    // the dark masses of the picture (the splashed-ink pomo side).
+    float edge = fs_sumie_edge2(uv, 4.5 * u, 9.0 * u);
+    float dexp = 2.6 - 0.9 * clamp(ink, 0.0, 2.0);
+    float mass = pow(clamp(1.0 - fs_luma(FS_SAMPLE(uv)), 0.0, 1.0), dexp);
+    mass = smoothstep(0.45, 0.8, mass);
+    float target = clamp(edge * (0.55 + 0.9 * clamp(outline, 0.0, 2.0))
+                         + mass * 0.95, 0.0, 1.1)
+                 * (0.4 + 0.6 * clamp(ink, 0.0, 2.0));
+    // the buffer's rim is not a contour: the layer's own cut edge meets
+    // the transparent padding there and reads as a huge false gradient, so
+    // everything the coarse probes can touch from it stays dry
+    float bd = min(min(uv.x, 1.0 - uv.x) / FS_TEXEL.x,
+                   min(uv.y, 1.0 - uv.y) / FS_TEXEL.y);
+    target = target * smoothstep(10.0 * u, 24.0 * u, bd);
+    // diffusion gather: 8 neighbors, weights bent along the paper fibers.
+    // The fiber angle drifts with the field's age — the living bleed.
+    float step_px = clamp(bleed_px * 0.35, 0.6, 4.0);
+    float fa = (fs_lsd_vnoise(px * (0.05 / u) + vec2(age * 0.11, 7.7)) - 0.5)
+             * 6.28318531;
+    vec2 fdir = vec2(cos(fa), sin(fa));
+    float mob = 0.0;
+    float wat = 0.0;
+    float wsum = 0.0;
+    for (int i = 0; i < 8; ++i) {
+        float a = 0.785398163 * float(i);
+        vec2 dirv = vec2(cos(a), sin(a));
+        vec4 n = FS_SAMPLE_STATE(uv + FS_TEXEL * (dirv * step_px));
+        float al = dot(dirv, fdir);
+        float w = 1.0 + 0.85 * al * al;
+        mob += n.x * w;
+        wat += n.y * w;
+        wsum += w;
+    }
+    mob = mob / wsum;
+    wat = wat / wsum;
+    // water spreads on its own; ink only walks where the paper is wet
+    float wetness = clamp(st.y, 0.0, 1.0);
+    float mobile = mix(st.x, mob, 0.30 + 0.45 * wetness);
+    float water = mix(st.y, wat, 0.65);
+    // the brush loads toward the target, never past it
+    float have = st.x + st.z;
+    float dep = clamp(target - have, 0.0, 1.0) * 0.22;
+    mobile = mobile + dep;
+    water = water * 0.962 + dep * 1.9;
+    // re-wetting churn: a wandering patch of moisture lifts settled ink
+    // back afloat (conservative transfer — this is the perpetual motion)
+    float churn = smoothstep(0.6, 0.95,
+                             fs_lsd_vnoise(px * (0.035 / u)
+                                           + vec2(age * 0.23, -age * 0.17)));
+    float back = st.z * 0.06 * churn;
+    mobile = mobile + back;
+    // drying settles the pigment; over-inked spots (the scene got lighter
+    // under them) erode so a live picture redraws instead of ghosting
+    float fixr = 0.045 + 0.11 * (1.0 - clamp(water, 0.0, 1.0));
+    float sett = (st.z - back + mobile * fixr) * 0.997;
+    sett = sett - clamp(have - target, 0.0, 1.0) * 0.03;
+    mobile = mobile * (1.0 - fixr);
+    return vec4(clamp(mobile, 0.0, 1.5), clamp(water, 0.0, 2.0),
+                clamp(sett, 0.0, 1.2), age);
+}
+
+// Puts the field on paper: settled ink is the body of the drawing, the
+// floating ink its breathing halo, and the bold contour stays crisp on
+// top of its own bleed (kasure breaks it where the brush ran dry).
+vec3 fs_sumie_shade(vec2 uv, float ink, float bleed_px, float dry,
+                    float outline, float chroma) {
+    float res_y = 1.0 / FS_TEXEL.y;
+    float u = max(res_y / 400.0, 0.25);
+    vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
+    vec4 st = FS_SAMPLE_STATE(uv);
+    float dens = clamp(st.z * 1.05 + st.x * 0.42, 0.0, 1.15);
+    // the crisp bone over the bleed
     float fe = 3.2 * u;
-    float ggx = fs_luma(FS_SAMPLE(wuv + FS_TEXEL * vec2(fe, 0.0)))
-              - fs_luma(FS_SAMPLE(wuv - FS_TEXEL * vec2(fe, 0.0)));
-    float ggy = fs_luma(FS_SAMPLE(wuv + FS_TEXEL * vec2(0.0, fe)))
-              - fs_luma(FS_SAMPLE(wuv - FS_TEXEL * vec2(0.0, fe)));
+    float ggx = fs_luma(FS_SAMPLE(uv + FS_TEXEL * vec2(fe, 0.0)))
+              - fs_luma(FS_SAMPLE(uv - FS_TEXEL * vec2(fe, 0.0)));
+    float ggy = fs_luma(FS_SAMPLE(uv + FS_TEXEL * vec2(0.0, fe)))
+              - fs_luma(FS_SAMPLE(uv - FS_TEXEL * vec2(0.0, fe)));
     float gm = length(vec2(ggx, ggy));
     float coh = smoothstep(0.02, 0.09, gm);
     vec2 tang = gm > 1e-4 ? vec2(ggy, -ggx) / gm : vec2(0.94, 0.34);
     tang = tang * coh + vec2(0.94, 0.34) * (1.0 - coh);
     tang = tang / max(length(tang), 1e-4);
-    // smear the ink along the tangent: anisotropic 5-tap gather
-    vec3 mean = FS_SAMPLE(wuv) * 0.28;
-    for (int i = 0; i < 4; ++i) {
-        float o = (float(i) - 1.5) * (2.9 * u);
-        mean += FS_SAMPLE(wuv + FS_TEXEL * (tang * o)) * 0.18;
-    }
-    // ink tone curve: the exponent sits on DENSITY, so mid-tones thin out
-    // toward reserved paper (sumi-e lives on its whites) while true darks
-    // keep their ink; `ink` lowers the exponent and the whole picture
-    // wets. Then soft-quantized into four washes.
-    float dexp = 2.6 - 0.9 * clamp(ink, 0.0, 2.0);
-    float dens0 = pow(clamp(1.0 - fs_luma(mean), 0.0, 1.0), dexp);
-    float band = dens0 * 4.0 - floor(dens0 * 4.0);
-    float soft = clamp((band - 0.5) * 2.6, -0.5, 0.5);
-    float dq = clamp((floor(dens0 * 4.0) + 0.5 + soft) * 0.25, 0.0, 1.0);
-    float dens = mix(dens0, dq, 0.75);   // washes, not a poster
-    // kasure: the brush runs dry in mid-density sweeps — stroke-space
-    // noise, long along the travel, fine across it
+    float press = 0.55 + 0.7 * fs_lsd_vnoise(px * (0.07 / u) + vec2(99.1, 3.3));
+    float bones = fs_sumie_edge(uv, u) * clamp(outline, 0.0, 2.0) * press;
     float s_along = dot(px, tang);
     float s_cross = dot(px, vec2(tang.y, -tang.x));
     float kn = fs_lsd_vnoise(vec2(s_along * (0.10 / u), s_cross * (0.55 / u)));
-    float midmask = 4.0 * dens * (1.0 - dens);
-    dens = dens * (1.0 - clamp(dry, 0.0, 1.5) * 0.42 * midmask
-                         * smoothstep(0.5, 0.95, kn) * smoothstep(0.15, 0.35, dens));
-    // nijimi: dark cores bleed a soft halo into the paper. AVERAGED over
-    // the ring — a max here reads as speckle wherever one tap lands dark
-    float rb = max(bleed_px, 0.5);
-    float halo = 0.0;
-    for (int i = 0; i < 8; ++i) {
-        float a = 0.785398163 * float(i) + 0.6;
-        float rr = rb * (0.85 + 0.3 * fs_lsd_vnoise(px * (0.09 / u)
-                                                    + vec2(float(i) * 13.7, 5.1)));
-        float ln = fs_luma(FS_SAMPLE(wuv + FS_TEXEL * (vec2(cos(a), sin(a)) * rr)));
-        halo += clamp(pow(clamp(1.0 - ln, 0.0, 1.0), dexp) - 0.45, 0.0, 1.0);
-    }
-    dens = max(dens, halo * 0.125 * 0.9);
-    // highlights snap clean to paper — a wash never leaves a gray film,
-    // and sumi-e lives on its reserved whites
-    dens = dens * smoothstep(0.06, 0.16, dens);
-    // contours: pressure-wobbled ink lines
-    float press = 0.55 + 0.7 * fs_lsd_vnoise(px * (0.07 / u) + vec2(99.1, 3.3));
-    float bones = fs_art_ink_line(wuv, 1.9 * u, clamp(outline, 0.0, 2.0) * press);
-    dens = max(dens, bones * 0.9);
-    // washi with fibers; sumi is a warm blue-black, never pure black
-    float fib = fs_lsd_vnoise(vec2(px.x * (0.10 / u), px.y * (0.5 / u))
-                              + vec2(17.0, 231.0));
-    vec3 paper = vec3(0.965, 0.945, 0.895) * (0.965 + 0.07 * (fib - 0.5));
-    vec3 c = mix(paper, vec3(0.09, 0.088, 0.10), clamp(dens, 0.0, 1.0));
-    // tansai: a light color wash over the ink drawing
+    bones = bones * (1.0 - clamp(dry, 0.0, 1.5) * 0.6 * smoothstep(0.45, 0.9, kn));
+    dens = max(dens, clamp(bones, 0.0, 1.0) * 0.92);
+    // paper reserve: highlights snap clean
+    dens = dens * smoothstep(0.04, 0.12, dens);
+    // washi: two-scale fibers + slow mottling (procedural placeholder —
+    // a real paper scan lands through the image parameter next)
+    float f1 = fs_lsd_vnoise(vec2(px.x * (0.09 / u), px.y * (0.45 / u))
+                             + vec2(17.0, 231.0));
+    float f2 = fs_lsd_vnoise(px * (0.018 / u) + vec2(91.0, 43.0));
+    vec3 paper = vec3(0.958, 0.936, 0.885)
+               * (0.96 + 0.06 * (f1 - 0.5) + 0.05 * (f2 - 0.5));
+    vec3 c = mix(paper, vec3(0.085, 0.085, 0.10), clamp(dens, 0.0, 1.0));
+    // tansai: a light color wash under the ink
     float ch = clamp(chroma, 0.0, 1.0);
     if (ch > 0.001) {
-        vec3 tinted = mean * (1.0 - dens * 0.75) * paper;
-        c = mix(c, tinted, ch);
+        vec3 srcc = FS_SAMPLE(uv);
+        c = mix(c, srcc * (1.0 - dens * 0.75) * paper, ch);
     }
     return clamp(c, 0.0, 1.0);
 }
+
+#endif  // FS_SAMPLE_STATE
 
 // Impressionist brush dabs, single pass. Litwinowicz 1997 lays short
 // strokes along the local edge tangent and clips them at strong edges;
@@ -1842,12 +1919,27 @@ vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p
     else if (mode == FS_CRT)             c = fs_crt(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_ANIME)           c = fs_anime(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_WATERCOLOR)      c = fs_watercolor(uv, p0, p1, p2, p3, p4);
-    else if (mode == FS_SUMIE)           c = fs_sumie(uv, p0, p1, p2, p3, p4);
+#ifdef FS_SAMPLE_STATE
+    else if (mode == FS_SUMIE)           c = fs_sumie_shade(uv, p0, p1, p2, p3, p4);
+#endif
     else if (mode == FS_IMPRESSIONIST)   c = fs_impressionist(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_STAINEDGLASS)    c = fs_stainedglass(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_PIXELART)        c = fs_pixelart(uv, p0, p1, p2, p3);
     return vec4(clamp(c, 0.0, 1.0), alpha);
 }
+
+#ifdef FS_SAMPLE_STATE
+// State-pass dispatch (persistent_buffers P1): for stateful modes the
+// renderer runs this into the layer's ping-pong state buffer (RAW rgba,
+// no alpha shaping), swaps, then runs fs_apply as usual.
+vec4 fs_apply_state(int mode, vec2 uv, float p0, float p1, float p2, float p3,
+                    float p4) {
+    if (mode == FS_SUMIE) {
+        return fs_sumie_flow(uv, p0, p1, p2, p3, p4);
+    }
+    return FS_SAMPLE_STATE(uv);
+}
+#endif  // FS_SAMPLE_STATE
 
 #endif  // FS_SAMPLE
 

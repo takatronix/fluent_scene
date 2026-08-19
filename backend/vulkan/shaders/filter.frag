@@ -22,6 +22,12 @@ layout(set = 0, binding = 2) uniform texture2D lut_tex_t;
 layout(set = 0, binding = 3) uniform sampler lut_tex_s;
 #define FS_SAMPLE_LUT(uv) (textureLod(sampler2D(lut_tex_t, lut_tex_s), uv, 0.0).rgb)
 
+// Bindings 4/5: the persistent state field of a stateful filter
+// (persistent_buffers P1). texSet self-binds the source when a filter has
+// no state, so the set is always complete; only stateful bodies read it.
+layout(set = 0, binding = 4) uniform texture2D state_tex_t;
+layout(set = 0, binding = 5) uniform sampler state_tex_s;
+
 layout(location = 0) in vec2 v_uv;
 layout(location = 0) out vec4 o_color;
 
@@ -37,6 +43,16 @@ vec3 fs_sample_straight(vec2 uv) {
 
 #define FS_SAMPLE(uv) fs_sample_straight(uv)
 #define FS_TEXEL (vec2(1.0) / vec2(textureSize(src_tex, 0)))
+
+// State reads are RAW data at exact texels (the CPU reference's index math:
+// int truncation + clamp). No filtering — nothing for backends to round
+// differently on.
+vec4 fs_sample_state_raw(vec2 uv) {
+    ivec2 sz = textureSize(sampler2D(state_tex_t, state_tex_s), 0);
+    ivec2 p = clamp(ivec2(uv * vec2(sz)), ivec2(0), sz - 1);
+    return texelFetch(sampler2D(state_tex_t, state_tex_s), p, 0);
+}
+#define FS_SAMPLE_STATE(uv) fs_sample_state_raw(uv)
 #include "fluent_scene/shared/filters_shared.h"
 
 void main() {

@@ -96,7 +96,8 @@ if(Vulkan_FOUND AND FS_GLSLC)
   file(MAKE_DIRECTORY ${FS_SHADER_GEN})
   set(FS_SHADER_INCS "")
   foreach(FS_SHADER quad.vert fullscreen.vert shape_mask.frag glyph_mask.frag
-          mask_composite.frag shape_color.frag image.frag filter.frag blur.frag
+          mask_composite.frag shape_color.frag image.frag filter.frag
+          filter_state.frag blur.frag
           composite.frag unpremul.frag)
     set(FS_SHADER_INC ${FS_SHADER_GEN}/${FS_SHADER}.inc)
     add_custom_command(

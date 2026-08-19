@@ -177,6 +177,16 @@ struct WebGPURenderer::Impl {
         uint64_t frame_used = 0;
     };
     std::map<const void*, ContentTex> image_cache;
+    // A stateful filter's persistent ping-pong field, keyed by (layer
+    // identity, filter mode); swept with NO grace period — the key is the
+    // layer's address, and a reused address must cold-start, not inherit a
+    // stranger's field (persistent_buffers P1).
+    struct FilterState {
+        Tex ping;
+        Tex pong;
+        uint64_t frame_used = 0;
+    };
+    std::map<std::pair<const void*, int>, FilterState> state_cache;
     Tex atlas_tex;
     uint64_t atlas_uploaded_revision = 0;
     uint64_t frame_counter = 0;
@@ -204,6 +214,7 @@ struct WebGPURenderer::Impl {
     WGPURenderPipeline pipe_image[4] = {};
     WGPURenderPipeline pipe_composite[4] = {};
     WGPURenderPipeline pipe_filter = nullptr;
+    WGPURenderPipeline pipe_filter_state = nullptr;
     WGPURenderPipeline pipe_blur = nullptr;
     WGPURenderPipeline pipe_unpremul = nullptr;  // rgba8unorm
     WGPURenderPipeline pipe_present = nullptr;   // surface format
@@ -382,24 +393,31 @@ struct WebGPURenderer::Impl {
         sampler_linear = makeSampler(WGPUFilterMode_Linear);
 
         {
-            // Bindings 2/3 carry a filter's image parameter (`lut` grade);
-            // shaders that never declare them just leave them unread, and
-            // texGroup self-binds the source there when no image is given.
-            WGPUBindGroupLayoutEntry entries[4] = {
+            // Bindings 2/3 carry a filter's image parameter (`lut` grade),
+            // bindings 4/5 a stateful filter's persistent field (rgba32f is
+            // not filterable in core WebGPU, so 4 is unfilterable-float and
+            // 5 a non-filtering sampler — state reads are textureLoad
+            // anyway); shaders that never declare them just leave them
+            // unread, and texGroup self-binds the source when not given.
+            WGPUBindGroupLayoutEntry entries[6] = {
+                WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT, WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT,
                 WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT, WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT,
                 WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT, WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT};
-            for (uint32_t i = 0; i < 4; ++i) {
+            for (uint32_t i = 0; i < 6; ++i) {
                 entries[i].binding = i;
                 entries[i].visibility = WGPUShaderStage_Fragment;
                 if (i % 2 == 0) {
-                    entries[i].texture.sampleType = WGPUTextureSampleType_Float;
+                    entries[i].texture.sampleType = i == 4
+                                                        ? WGPUTextureSampleType_UnfilterableFloat
+                                                        : WGPUTextureSampleType_Float;
                     entries[i].texture.viewDimension = WGPUTextureViewDimension_2D;
                 } else {
-                    entries[i].sampler.type = WGPUSamplerBindingType_Filtering;
+                    entries[i].sampler.type = i == 5 ? WGPUSamplerBindingType_NonFiltering
+                                                     : WGPUSamplerBindingType_Filtering;
                 }
             }
             WGPUBindGroupLayoutDescriptor ld = {};
-            ld.entryCount = 4;
+            ld.entryCount = 6;
             ld.entries = entries;
             bgl_tex = wgpuDeviceCreateBindGroupLayout(device, &ld);
         }
@@ -531,6 +549,7 @@ struct WebGPURenderer::Impl {
         WGPUShaderModule shape_color = makeModule(kShapeColorFragWgsl);
         WGPUShaderModule image = makeModule(kImageFragWgsl);
         WGPUShaderModule filter = makeModule(kFilterFragWgsl);
+        WGPUShaderModule filter_state = makeModule(kFilterStateFragWgsl);
         WGPUShaderModule blur = makeModule(kBlurFragWgsl);
         WGPUShaderModule composite = makeModule(kCompositeFragWgsl);
         WGPUShaderModule unpremul = makeModule(kUnpremulFragWgsl);
@@ -556,6 +575,8 @@ struct WebGPURenderer::Impl {
                 makePipeline(quad, composite, layout_tex, kColor, &blends[b], true);
         }
         pipe_filter = makePipeline(fullscreen, filter, layout_tex, kColor, nullptr, false);
+        pipe_filter_state = makePipeline(fullscreen, filter_state, layout_tex,
+                                         WGPUTextureFormat_RGBA32Float, nullptr, false);
         pipe_blur = makePipeline(fullscreen, blur, layout_tex, kColor, nullptr, false);
         pipe_unpremul = makePipeline(fullscreen, unpremul, layout_tex,
                                      WGPUTextureFormat_RGBA8Unorm, nullptr, false);
@@ -565,8 +586,8 @@ struct WebGPURenderer::Impl {
         }
 
         for (WGPUShaderModule m : {quad, fullscreen, shape_mask, glyph_mask, mask_comp,
-                                   shape_color, image, filter, blur, composite, unpremul,
-                                   present}) {
+                                   shape_color, image, filter, filter_state, blur, composite,
+                                   unpremul, present}) {
             wgpuShaderModuleRelease(m);
         }
     }
@@ -577,6 +598,10 @@ struct WebGPURenderer::Impl {
         }
         for (auto& [_, tex] : image_cache) {
             destroyTex(tex.tex);
+        }
+        for (auto& [_, st] : state_cache) {
+            destroyTex(st.ping);
+            destroyTex(st.pong);
         }
         destroyTex(atlas_tex);
         destroyTex(canvas);
@@ -610,6 +635,7 @@ struct WebGPURenderer::Impl {
             releasePipe(pipe_composite[b]);
         }
         releasePipe(pipe_filter);
+        releasePipe(pipe_filter_state);
         releasePipe(pipe_blur);
         releasePipe(pipe_unpremul);
         releasePipe(pipe_present);
@@ -697,14 +723,20 @@ struct WebGPURenderer::Impl {
 
     WGPUBindGroup texGroup(WGPUTextureView tex_view, WGPUSampler sampler,
                            WGPUTextureView image_param_view = nullptr,
-                           WGPUSampler image_param_sampler = nullptr) {
-        // Bindings 2/3 carry a filter's image parameter; without one the
-        // source self-binds so the group is always complete.
+                           WGPUSampler image_param_sampler = nullptr,
+                           WGPUTextureView state_view = nullptr) {
+        // Bindings 2/3 carry a filter's image parameter, 4/5 a stateful
+        // filter's field; without one the source self-binds so the group
+        // is always complete.
         if (image_param_view == nullptr) {
             image_param_view = tex_view;
             image_param_sampler = sampler;
         }
-        WGPUBindGroupEntry entries[4] = {WGPU_BIND_GROUP_ENTRY_INIT, WGPU_BIND_GROUP_ENTRY_INIT,
+        if (state_view == nullptr) {
+            state_view = tex_view;
+        }
+        WGPUBindGroupEntry entries[6] = {WGPU_BIND_GROUP_ENTRY_INIT, WGPU_BIND_GROUP_ENTRY_INIT,
+                                         WGPU_BIND_GROUP_ENTRY_INIT, WGPU_BIND_GROUP_ENTRY_INIT,
                                          WGPU_BIND_GROUP_ENTRY_INIT, WGPU_BIND_GROUP_ENTRY_INIT};
         entries[0].binding = 0;
         entries[0].textureView = tex_view;
@@ -714,9 +746,13 @@ struct WebGPURenderer::Impl {
         entries[2].textureView = image_param_view;
         entries[3].binding = 3;
         entries[3].sampler = image_param_sampler;
+        entries[4].binding = 4;
+        entries[4].textureView = state_view;
+        entries[5].binding = 5;
+        entries[5].sampler = sampler_nearest;
         WGPUBindGroupDescriptor bd = {};
         bd.layout = bgl_tex;
-        bd.entryCount = 4;
+        bd.entryCount = 6;
         bd.entries = entries;
         WGPUBindGroup g = wgpuDeviceCreateBindGroup(device, &bd);
         frame_groups.push_back(g);
@@ -1410,8 +1446,6 @@ struct WebGPURenderer::Impl {
                 lut_view = it->second.tex.view;
             }
             endTarget();
-            Tex* dst = acquireTransient(bw, bh, WGPUTextureFormat_RGBA16Float);
-            ensureTarget(*dst);
             Push push{};
             push.meta[3] = static_cast<float>(f.mode);
             push.pa[0] = values[0];
@@ -1419,8 +1453,43 @@ struct WebGPURenderer::Impl {
             push.pa[2] = values[2];
             push.pa[3] = values[3];
             push.pb[0] = values[4];
+            // Stateful filters (persistent_buffers P1): advance the layer's
+            // field one tick (read ping + source, write pong RAW), swap,
+            // then let the normal pass below read the fresh field.
+            WGPUTextureView state_view = nullptr;
+            const FilterSpec* fspec = findFilterSpec(f.mode);
+            if (fspec != nullptr && fspec->stateful) {
+                FilterState& st = state_cache[{static_cast<const void*>(&layer), f.mode}];
+                if (st.ping.w != bw || st.ping.h != bh) {
+                    if (st.ping.tex != nullptr) {
+                        destroyTex(st.ping);
+                        destroyTex(st.pong);
+                    }
+                    const WGPUTextureUsage usage = static_cast<WGPUTextureUsage>(
+                        WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+                    st.ping = createTex(bw, bh, WGPUTextureFormat_RGBA32Float, usage);
+                    st.pong = createTex(bw, bh, WGPUTextureFormat_RGBA32Float, usage);
+                    // cold start is a documented zero field
+                    ensureTarget(st.ping);
+                    endTarget();
+                    ensureTarget(st.pong);
+                    endTarget();
+                }
+                st.frame_used = frame_counter;
+                ensureTarget(st.pong);
+                drawFullscreen(pipe_filter_state,
+                               texGroup(buf->view, sampler_nearest, lut_view,
+                                        sampler_linear, st.ping.view),
+                               push);
+                endTarget();
+                std::swap(st.ping, st.pong);
+                state_view = st.ping.view;
+            }
+            Tex* dst = acquireTransient(bw, bh, WGPUTextureFormat_RGBA16Float);
+            ensureTarget(*dst);
             drawFullscreen(pipe_filter,
-                           texGroup(buf->view, sampler_nearest, lut_view, sampler_linear),
+                           texGroup(buf->view, sampler_nearest, lut_view, sampler_linear,
+                                    state_view),
                            push);
             buf->in_use = false;
             buf = dst;
@@ -1575,6 +1644,15 @@ struct WebGPURenderer::Impl {
             } else {
                 ++it;
             }
+        for (auto it = state_cache.begin(); it != state_cache.end();) {
+            if (it->second.frame_used + 1 < frame_counter) {
+                destroyTex(it->second.ping);
+                destroyTex(it->second.pong);
+                it = state_cache.erase(it);
+            } else {
+                ++it;
+            }
+        }
         }
 
         // Logical canvas → output mapping (identical to the CPU reference).

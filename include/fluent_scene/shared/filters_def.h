@@ -40,6 +40,15 @@
 #define FS_FILTER_IMG_DEFAULTED
 #endif
 
+// Stateful filters (persistent_buffers P1) carry a per-layer ping-pong
+// state buffer the renderer advances each frame via fs_apply_state before
+// the normal output pass. Includers that don't care see a plain filter.
+#ifndef FS_FILTER_STATEFUL
+#define FS_FILTER_STATEFUL(TypeName, method, MODE, summary) \
+    FS_FILTER(TypeName, method, MODE, summary)
+#define FS_FILTER_STATEFUL_DEFAULTED
+#endif
+
 // ---- color and tone --------------------------------------------------------
 
 FS_FILTER(Grayscale, grayscale, FS_GRAYSCALE, "grayscale (luma)")
@@ -237,9 +246,10 @@ FS_PARAM(3, wobble, 1.0f, Scalar)
 FS_PARAM(4, dilute, 0.35f, Scalar)
 FS_END(Watercolor)
 
-FS_FILTER(Sumie, sumie, FS_SUMIE,
-          "sumi-e ink wash — tone washes, flow-smeared strokes, dry-brush "
-          "kasure, bleed halos and washi paper")
+FS_FILTER_STATEFUL(Sumie, sumie, FS_SUMIE,
+          "living sumi-e — bold contour ink deposited into a persistent "
+          "ink/water field that DIFFUSES through the paper frame to frame "
+          "(Chinese ink painting; the bleed genuinely moves)")
 FS_PARAM(0, ink, 1.0f, Scalar)
 FS_PARAM(1, bleed, 4.0f, Length)
 FS_PARAM(2, dry, 0.6f, Scalar)
@@ -364,4 +374,9 @@ FS_END(Wobble)
 #ifdef FS_FILTER_IMG_DEFAULTED
 #undef FS_FILTER_IMG
 #undef FS_FILTER_IMG_DEFAULTED
+#endif
+
+#ifdef FS_FILTER_STATEFUL_DEFAULTED
+#undef FS_FILTER_STATEFUL
+#undef FS_FILTER_STATEFUL_DEFAULTED
 #endif

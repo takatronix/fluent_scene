@@ -418,6 +418,26 @@ void sceneSumie(Renderer& r) {
     g_max_diff_limit = saved_limit;
 }
 
+// The living sumi-e: 30 diffusion ticks of the persistent ink field
+// (persistent_buffers P1), then compare — the "N renders, then the frame"
+// generalization of byte-reproducibility from the design doc §2.3. The
+// recurrence is contractive (diffusion averages), so cross-backend drift
+// damps rather than compounds; the waiver covers the bleed's soft ramps.
+void sceneSumieLiving(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 300, 280}).filter(Sumie());
+    stage.image(view).frame({320, 10, 150, 130}).filter(Sumie().bleed(9.0f).ink(1.5f));
+    for (int i = 0; i < 29; ++i) {
+        r.render(stage, 0.016f);
+    }
+    const int saved_limit = g_max_diff_limit;
+    g_max_diff_limit = 255;
+    checkScene("sumie_living", r.render(stage, 0.016f));
+    g_max_diff_limit = saved_limit;
+}
+
 // Impressionist wears the covering dab with the best score — a hard argmax
 // like oilpaint's quadrant pick, but a flipped tie here repaints a whole
 // DAB (hundreds of texels), so the ratio guard sits above the default.
@@ -649,6 +669,7 @@ int main(int argc, char** argv) {
     sceneAnime(r);
     sceneWatercolor(r);
     sceneSumie(r);
+    sceneSumieLiving(r);
     sceneImpressionist(r);
     sceneStainedglassPixelart(r);
     sceneTv(r);

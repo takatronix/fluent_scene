@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.12.0 — 2026-08-19 (persistent_buffers P1 + 生きた水墨)
+
+- **persistent_buffers P1 実装** (設計書 status 参照): FS_FILTER_STATEFUL
+  宣言でフィルタがレイヤー毎の永続 ping-pong フィールド (32F固定・
+  nearest契約) を持てる。CPU/Vulkan/WebGPU 3バックエンド配線済み。
+  golden は「N回render→比較」形式を追加 (`sumie_living`, 30 tick,
+  Vulkan max|Δ|=31)
+- **sumie v2 — 生きた水墨** (オーナー指示: 中華風・動的滲み):
+  ノイズ滲みを廃止し、墨/水/定着の実フィールドを毎フレーム拡散。
+  太い粗スケール輪郭+潑墨マッスから**目標濃度への差分注入**、
+  水が先に走り墨は濡れた紙だけを歩き、乾燥で定着、再湿潤チャーンで
+  滲みが呼吸し続ける。ライブ映像ではシーン変化に追従して描き直る。
+  パラメータ外形は不変 (ink/bleed/dry/outline/chroma)
+- filters_tour 等の1回レンダでは1tick分 (骨描+薄いウォッシュ) しか
+  見えない — 様式の本体は連続レンダで立ち上がる (仕様)
+
 ## 0.11.1 — 2026-08-19 (印象派 v2 / wobble 分離 / v2 リサーチ)
 
 オーナーフィードバック起点の改修 (評定と方針: docs/design/art_filters.ja.md §7)。

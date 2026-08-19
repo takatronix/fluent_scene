@@ -44,7 +44,7 @@ if [[ $WEBGPU == 1 ]]; then
   } > "$HDR"
   for s in quad.vert fullscreen.vert shape_mask.frag glyph_mask.frag \
            mask_composite.frag shape_color.frag image.frag filter.frag \
-           blur.frag composite.frag unpremul.frag present.frag; do
+           filter_state.frag blur.frag composite.frag unpremul.frag present.frag; do
     "$GLSLC" -O -DFS_WEBGPU -I include -I "$SHADER_DIR" \
       -o "$GEN/$s.spv" "$SHADER_DIR/$s"
     "$NAGA" "$GEN/$s.spv" "$GEN/$s.wgsl"

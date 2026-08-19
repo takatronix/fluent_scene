@@ -73,6 +73,9 @@ const uint32_t kImageFrag[] =
 const uint32_t kFilterFrag[] =
 #include "filter.frag.inc"
     ;
+const uint32_t kFilterStateFrag[] =
+#include "filter_state.frag.inc"
+    ;
 const uint32_t kBlurFrag[] =
 #include "blur.frag.inc"
     ;
@@ -187,6 +190,15 @@ struct VulkanRenderer::Impl {
         uint64_t frame_used = 0;
     };
     std::map<const void*, ContentTex> image_cache;
+    // A stateful filter's persistent ping-pong field, keyed by (layer
+    // identity, filter mode); swept when its layer stops rendering
+    // (persistent_buffers P1).
+    struct FilterState {
+        Image ping;
+        Image pong;
+        uint64_t frame_used = 0;
+    };
+    std::map<std::pair<const void*, int>, FilterState> state_cache;
     Image atlas_tex;
     uint64_t atlas_uploaded_revision = 0;
     uint64_t frame_counter = 0;
@@ -217,6 +229,7 @@ struct VulkanRenderer::Impl {
     VkPipeline pipe_image[4] = {};
     VkPipeline pipe_composite[4] = {};
     VkPipeline pipe_filter = VK_NULL_HANDLE;
+    VkPipeline pipe_filter_state = VK_NULL_HANDLE;
     VkPipeline pipe_blur = VK_NULL_HANDLE;
     VkPipeline pipe_unpremul = VK_NULL_HANDLE;  // RGBA8
 
@@ -442,11 +455,12 @@ struct VulkanRenderer::Impl {
         {
             // Separated image + sampler (matches the shaders; WebGPU cannot
             // express the combined form, Vulkan is fine with either).
-            // Bindings 2/3 carry a filter's image parameter (`lut` grade);
-            // shaders that never declare them just leave them unread, and
-            // texSet self-binds the source there when no image is given.
-            VkDescriptorSetLayoutBinding bindings[4]{};
-            for (uint32_t i = 0; i < 4; ++i) {
+            // Bindings 2/3 carry a filter's image parameter (`lut` grade),
+            // bindings 4/5 a stateful filter's persistent field; shaders
+            // that never declare them just leave them unread, and texSet
+            // self-binds the source there when nothing is given.
+            VkDescriptorSetLayoutBinding bindings[6]{};
+            for (uint32_t i = 0; i < 6; ++i) {
                 bindings[i].binding = i;
                 bindings[i].descriptorType = (i % 2 == 0) ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
                                                           : VK_DESCRIPTOR_TYPE_SAMPLER;
@@ -455,7 +469,7 @@ struct VulkanRenderer::Impl {
             }
             VkDescriptorSetLayoutCreateInfo li{
                 VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            li.bindingCount = 4;
+            li.bindingCount = 6;
             li.pBindings = bindings;
             vkCheck(vkCreateDescriptorSetLayout(device, &li, nullptr, &set_layout_tex),
                     "vkCreateDescriptorSetLayout");
@@ -628,6 +642,7 @@ struct VulkanRenderer::Impl {
         VkShaderModule shape_color = makeModule(kShapeColorFrag, sizeof kShapeColorFrag);
         VkShaderModule image = makeModule(kImageFrag, sizeof kImageFrag);
         VkShaderModule filter = makeModule(kFilterFrag, sizeof kFilterFrag);
+        VkShaderModule filter_state = makeModule(kFilterStateFrag, sizeof kFilterStateFrag);
         VkShaderModule blur = makeModule(kBlurFrag, sizeof kBlurFrag);
         VkShaderModule composite = makeModule(kCompositeFrag, sizeof kCompositeFrag);
         VkShaderModule unpremul = makeModule(kUnpremulFrag, sizeof kUnpremulFrag);
@@ -645,12 +660,14 @@ struct VulkanRenderer::Impl {
             pipe_composite[b] = makePipeline(quad, composite, layout_tex, kColor, blendState(b));
         }
         pipe_filter = makePipeline(fullscreen, filter, layout_tex, kColor, overwriteState());
+        pipe_filter_state =
+            makePipeline(fullscreen, filter_state, layout_tex, kColor, overwriteState());
         pipe_blur = makePipeline(fullscreen, blur, layout_tex, kColor, overwriteState());
         pipe_unpremul = makePipeline(fullscreen, unpremul, layout_tex, VK_FORMAT_R8G8B8A8_UNORM,
                                      overwriteState());
 
         for (VkShaderModule m : {quad, fullscreen, shape_mask, glyph_mask, mask_comp, shape_color,
-                                 image, filter, blur, composite, unpremul}) {
+                                 image, filter, filter_state, blur, composite, unpremul}) {
             vkDestroyShaderModule(device, m, nullptr);
         }
     }
@@ -669,6 +686,10 @@ struct VulkanRenderer::Impl {
         for (auto& [_, tex] : image_cache) {
             destroyImage(tex.image);
         }
+        for (auto& [_, st] : state_cache) {
+            destroyImage(st.ping);
+            destroyImage(st.pong);
+        }
         destroyImage(atlas_tex);
         destroyImage(canvas);
         destroyImage(out_rgba);
@@ -676,7 +697,7 @@ struct VulkanRenderer::Impl {
         destroyBuffer(staging);
         destroyBuffer(points_ssbo);
         destroyBuffer(dummy_ssbo);
-        for (VkPipeline p : {pipe_mask_shape, pipe_mask_glyph, pipe_filter, pipe_blur,
+        for (VkPipeline p : {pipe_mask_shape, pipe_mask_glyph, pipe_filter, pipe_filter_state, pipe_blur,
                              pipe_unpremul}) {
             if (p) {
                 vkDestroyPipeline(device, p, nullptr);
@@ -786,22 +807,29 @@ struct VulkanRenderer::Impl {
 
     VkDescriptorSet texSet(VkImageView view, VkSampler sampler,
                            VkImageView image_param_view = VK_NULL_HANDLE,
-                           VkSampler image_param_sampler = VK_NULL_HANDLE) {
-        // Bindings 2/3 carry a filter's image parameter; without one the
-        // source self-binds so the set is always complete.
+                           VkSampler image_param_sampler = VK_NULL_HANDLE,
+                           VkImageView state_view = VK_NULL_HANDLE) {
+        // Bindings 2/3 carry a filter's image parameter, 4/5 a stateful
+        // filter's field; without one the source self-binds so the set is
+        // always complete.
         if (image_param_view == VK_NULL_HANDLE) {
             image_param_view = view;
             image_param_sampler = sampler;
         }
+        if (state_view == VK_NULL_HANDLE) {
+            state_view = view;
+        }
         VkDescriptorSet set = allocSet(set_layout_tex);
-        const VkDescriptorImageInfo infos[4] = {
+        const VkDescriptorImageInfo infos[6] = {
             {VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             {sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED},
             {VK_NULL_HANDLE, image_param_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             {image_param_sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED},
+            {VK_NULL_HANDLE, state_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {sampler_nearest, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED},
         };
-        VkWriteDescriptorSet w[4]{};
-        for (uint32_t i = 0; i < 4; ++i) {
+        VkWriteDescriptorSet w[6]{};
+        for (uint32_t i = 0; i < 6; ++i) {
             w[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             w[i].dstSet = set;
             w[i].dstBinding = i;
@@ -810,7 +838,7 @@ struct VulkanRenderer::Impl {
                                                : VK_DESCRIPTOR_TYPE_SAMPLER;
             w[i].pImageInfo = &infos[i];
         }
-        vkUpdateDescriptorSets(device, 4, w, 0, nullptr);
+        vkUpdateDescriptorSets(device, 6, w, 0, nullptr);
         return set;
     }
 
@@ -1520,8 +1548,6 @@ struct VulkanRenderer::Impl {
             }
             endTarget();
             toSampled(*buf);
-            Image* dst = acquireTransient(bw, bh, VK_FORMAT_R32G32B32A32_SFLOAT);
-            ensureTarget(*dst);
             Push push{};
             push.meta[3] = static_cast<float>(f.mode);
             push.pa[0] = values[0];
@@ -1529,8 +1555,45 @@ struct VulkanRenderer::Impl {
             push.pa[2] = values[2];
             push.pa[3] = values[3];
             push.pb[0] = values[4];
+            // Stateful filters (persistent_buffers P1): advance the layer's
+            // field one tick (read ping + source, write pong RAW), swap,
+            // then let the normal pass below read the fresh field.
+            VkImageView state_view = VK_NULL_HANDLE;
+            const FilterSpec* fspec = findFilterSpec(f.mode);
+            if (fspec != nullptr && fspec->stateful) {
+                FilterState& st = state_cache[{static_cast<const void*>(&layer), f.mode}];
+                if (st.ping.w != bw || st.ping.h != bh) {
+                    if (st.ping.image != VK_NULL_HANDLE) {
+                        destroyImage(st.ping);
+                        destroyImage(st.pong);
+                    }
+                    const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT |
+                                                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+                    st.ping = createImage(bw, bh, VK_FORMAT_R32G32B32A32_SFLOAT, usage);
+                    st.pong = createImage(bw, bh, VK_FORMAT_R32G32B32A32_SFLOAT, usage);
+                    // cold start is a documented zero field
+                    ensureTarget(st.ping);
+                    endTarget();
+                    ensureTarget(st.pong);
+                    endTarget();
+                }
+                st.frame_used = frame_counter;
+                toSampled(st.ping);
+                ensureTarget(st.pong);
+                drawFullscreen(pipe_filter_state,
+                               texSet(buf->view, sampler_nearest, lut_view,
+                                      sampler_linear_edge, st.ping.view),
+                               push);
+                endTarget();
+                std::swap(st.ping, st.pong);
+                toSampled(st.ping);
+                state_view = st.ping.view;
+            }
+            Image* dst = acquireTransient(bw, bh, VK_FORMAT_R32G32B32A32_SFLOAT);
+            ensureTarget(*dst);
             drawFullscreen(pipe_filter,
-                           texSet(buf->view, sampler_nearest, lut_view, sampler_linear_edge),
+                           texSet(buf->view, sampler_nearest, lut_view,
+                                  sampler_linear_edge, state_view),
                            push);
             buf->in_use = false;
             buf = dst;
@@ -1699,6 +1762,19 @@ struct VulkanRenderer::Impl {
             if (it->second.frame_used + 60 < frame_counter) {
                 destroyImage(it->second.image);
                 it = image_cache.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        // Same sweep for stateful-filter fields — but with NO grace
+        // period: the key is the Layer's address, and a freed address can
+        // be reused by a brand-new layer, which must cold-start instead of
+        // inheriting a stranger's field.
+        for (auto it = state_cache.begin(); it != state_cache.end();) {
+            if (it->second.frame_used + 1 < frame_counter) {
+                destroyImage(it->second.ping);
+                destroyImage(it->second.pong);
+                it = state_cache.erase(it);
             } else {
                 ++it;
             }

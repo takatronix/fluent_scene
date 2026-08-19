@@ -24,7 +24,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -262,15 +264,32 @@ vec3 filterImageSample(vec2 uv) {
     return top * (1 - ty) + bottom * ty;
 }
 
+// Persistent filter state (persistent_buffers P1): the previous frame's
+// state field. Read NEAREST and raw — it is data, not color, and nearest
+// keeps the three backends bit-honest with no filtering to disagree on.
+thread_local const Buf* g_filter_state = nullptr;
+
+vec4 filterStateSample(vec2 uv) {
+    const Buf& b = *g_filter_state;
+    int x = static_cast<int>(uv.x * b.w);
+    int y = static_cast<int>(uv.y * b.h);
+    x = std::clamp(x, 0, b.w - 1);
+    y = std::clamp(y, 0, b.h - 1);
+    const float* p = b.at(x, y);
+    return {p[0], p[1], p[2], p[3]};
+}
+
 namespace filter_bodies {
 using namespace glsl;
 #define FS_SAMPLE(uv) filterSample(uv)
 #define FS_TEXEL filterTexel()
 #define FS_SAMPLE_LUT(uv) filterImageSample(uv)
+#define FS_SAMPLE_STATE(uv) filterStateSample(uv)
 #include "fluent_scene/shared/filters_shared.h"
 #undef FS_SAMPLE
 #undef FS_TEXEL
 #undef FS_SAMPLE_LUT
+#undef FS_SAMPLE_STATE
 }  // namespace filter_bodies
 
 // Separable gaussian blur on the premultiplied buffer (radius in buffer px).
@@ -321,9 +340,21 @@ void gaussianBlur(Buf& buf, float radius_px) {
     }
 }
 
+// A stateful filter's per-layer ping-pong field (persistent_buffers P1).
+// ping is the read side (last frame); the state pass writes pong, then the
+// pair swaps. Sized to the layer's offscreen buffer; a resize resets to
+// zero (the documented cold start).
+struct FilterStatePair {
+    Buf ping;
+    Buf pong;
+    uint64_t stamp = 0;
+};
+
 // Applies one filter to the buffer. `scale` converts logical units to
 // buffer pixels; `ext` is the local-space rect the buffer covers (§5-3).
-void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext) {
+// `state` is non-null exactly when the filter's spec is stateful.
+void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext,
+                 FilterStatePair* state) {
     float values[5];
     plan::scaleFilterValues(f, scale, ext, static_cast<float>(buf.w),
                             static_cast<float>(buf.h), values);
@@ -347,6 +378,30 @@ void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext) {
     }
     Buf src = buf;  // filters read the unmodified source
     g_filter_src = &src;
+    if (state != nullptr) {
+        // State pass: advance the field one tick (reads last frame's ping
+        // + the source, writes pong RAW), then swap so the output pass
+        // below sees the fresh field.
+        if (state->ping.w != buf.w || state->ping.h != buf.h) {
+            state->ping.reset(buf.w, buf.h);
+            state->pong.reset(buf.w, buf.h);
+        }
+        g_filter_state = &state->ping;
+        for (int y = 0; y < buf.h; ++y) {
+            for (int x = 0; x < buf.w; ++x) {
+                const vec2 uv{(x + 0.5f) / buf.w, (y + 0.5f) / buf.h};
+                const vec4 out = filter_bodies::fs_apply_state(
+                    f.mode, uv, values[0], values[1], values[2], values[3], values[4]);
+                float* d = state->pong.at(x, y);
+                d[0] = out.x;
+                d[1] = out.y;
+                d[2] = out.z;
+                d[3] = out.w;
+            }
+        }
+        std::swap(state->ping, state->pong);
+        g_filter_state = &state->ping;
+    }
     for (int y = 0; y < buf.h; ++y) {
         for (int x = 0; x < buf.w; ++x) {
             const float src_a = src.at(x, y)[3];
@@ -366,6 +421,7 @@ void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext) {
     }
     g_filter_src = nullptr;
     g_filter_image = nullptr;
+    g_filter_state = nullptr;
 }
 
 // Signed distance to a polygon (negative inside, any winding; per-edge math
@@ -404,6 +460,10 @@ struct CpuRenderer::Impl {
     Buf frame;
     std::vector<uint8_t> out_rgba;
     Surface surface;
+    // Stateful-filter fields, keyed by (layer identity, filter mode) and
+    // swept when their layer stops rendering (persistent_buffers P1).
+    std::map<std::pair<const void*, int>, FilterStatePair> filter_states;
+    uint64_t frame_stamp = 0;
 
     // ---- fonts ------------------------------------------------------------
 
@@ -874,7 +934,15 @@ struct CpuRenderer::Impl {
         }
 
         for (const Filter& f : layer.filters()) {
-            applyFilter(buf, f, scale, ext);
+            FilterStatePair* st = nullptr;
+            const FilterSpec* fspec = findFilterSpec(f.mode);
+            if (fspec != nullptr && fspec->stateful) {
+                FilterStatePair& entry =
+                    filter_states[{static_cast<const void*>(&layer), f.mode}];
+                entry.stamp = frame_stamp;
+                st = &entry;
+            }
+            applyFilter(buf, f, scale, ext, st);
         }
 
         const Mat23 inv = m.inverse();
@@ -943,6 +1011,7 @@ struct CpuRenderer::Impl {
         stage.setTextMeasurer([this](const TextContent& c) { return measureText(c); });
         stage.advance(dt);
 
+        ++frame_stamp;
         frame.reset(static_cast<int>(out_w), static_cast<int>(out_h));
 
         // Logical canvas → output mapping (§4: Stage fit policy).
@@ -975,6 +1044,12 @@ struct CpuRenderer::Impl {
         surface.height = out_h;
         surface.strideBytes = static_cast<size_t>(out_w) * 4;
         surface.pixels = out_rgba.data();
+        // Drop state for layers that no longer render (removed, or their
+        // stateful filter cleared) — the doc's ownership rule.
+        for (auto it = filter_states.begin(); it != filter_states.end();) {
+            it = it->second.stamp == frame_stamp ? std::next(it)
+                                                 : filter_states.erase(it);
+        }
         return surface;
     }
 };

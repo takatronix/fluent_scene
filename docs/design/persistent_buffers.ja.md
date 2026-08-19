@@ -1,7 +1,15 @@
 # 永続バッファ付きフィルタ (設計書 draft-1)
 
-status: **draft** — 設計凍結までコード禁止 (品質規範)。オーナーレビュー待ち。
-date: 2026-08-16
+status: **P1 実装済** (2026-08-19) — sumie の「生きた滲み」が初代顧客。
+実装形: FS_FILTER_STATEFUL 宣言 (state 1枚+固定2パス、§2.1 の FS_STATE/
+FS_PASS 一般形は P2 で) + fs_apply_state ディスパッチ + 3バックエンドの
+(layer, mode) キー ping-pong フィールド。画素形式は §5 の提案どおり
+**32F固定** (CPU float / Vulkan RGBA32F / WebGPU rgba32float+textureLoad、
+nearest 契約で丸め差ゼロ)。golden は「N回render→比較」を sumie_living
+(30 tick) で初採用 — Vulkan 実測 max|Δ|=31 (拡散が収縮写像なのでドリフト
+は減衰する)。state キーに猶予期間は置かない (アドレス再利用の相続事故
+防止)。オーナーレビューは 2026-08-19 の対話で実施 (中華風動的水墨の指示)。
+date: 2026-08-16 (P1 追記 08-19)
 
 ## 1. 動機 — 今のフィルタ機構では書けないもの
 

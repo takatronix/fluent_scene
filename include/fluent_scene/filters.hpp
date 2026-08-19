@@ -68,6 +68,11 @@ struct FilterSpec {
     const char* image_param;  ///< YAML name of the image parameter
                               ///< (`source` for `lut`); nullptr when the
                               ///< filter takes no image.
+    bool stateful;         ///< Carries a persistent per-layer state buffer:
+                           ///< the renderer runs fs_apply_state into it
+                           ///< (ping-pong) before the normal output pass
+                           ///< (persistent_buffers P1; `sumie` is the
+                           ///< first customer).
     std::vector<FilterParamSpec> params;  ///< In slot order p0..p4.
 };
 
@@ -133,9 +138,11 @@ namespace detail {
 /// All filters with their names, parameters, defaults, and units, in
 /// filters_def.h order. The single machine-readable catalog.
 inline const std::vector<FilterSpec>& filterTable() {
-#define FS_FILTER(TypeName, method, MODE, summary) {#method, MODE, summary, nullptr, {
+#define FS_FILTER(TypeName, method, MODE, summary) {#method, MODE, summary, nullptr, false, {
 #define FS_FILTER_IMG(TypeName, method, MODE, image_name, summary) \
-    {#method, MODE, summary, #image_name, {
+    {#method, MODE, summary, #image_name, false, {
+#define FS_FILTER_STATEFUL(TypeName, method, MODE, summary) \
+    {#method, MODE, summary, nullptr, true, {
 #define FS_PARAM(slot, name, default_value, unit) {#name, default_value, FilterUnit::unit},
 #define FS_END(TypeName) }},
     static const std::vector<FilterSpec> kTable = {
@@ -143,6 +150,7 @@ inline const std::vector<FilterSpec>& filterTable() {
     };
 #undef FS_FILTER
 #undef FS_FILTER_IMG
+#undef FS_FILTER_STATEFUL
 #undef FS_PARAM
 #undef FS_END
     return kTable;
