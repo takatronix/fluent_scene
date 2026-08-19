@@ -528,7 +528,7 @@
       <button id="shGen" class="save" style="padding:8px 18px">生成</button>
     </div>
     <div id="shKeyHint" style="display:none;gap:8px;align-items:center;font-size:12px;color:var(--dim);background:rgba(126,232,250,0.06);border:1px solid rgba(126,232,250,0.2);border-radius:10px;padding:8px 12px;margin-bottom:10px">
-      <span>🤖 AI生成にはAPIキーが必要です — 内蔵で反応するのは「万華鏡」「波」「色収差」だけ</span>
+      <span id="shKeyHintText">🤖 AI生成にはAPIキーが必要です — 内蔵で反応するのは「万華鏡」「波」「色収差」だけ</span>
       <button id="shCfgOpen" style="flex:none;background:none;border:1px solid var(--line);color:var(--ink);border-radius:999px;padding:5px 12px;font-size:12px;cursor:pointer">⚙ APIキーを設定</button>
     </div>
     <div id="shEdWrap">
@@ -2544,16 +2544,17 @@ setInterval(() => {
 
 // ---- AI settings modal -----------------------------------------------------
 const cfgOverlay = $('cfgOverlay');
-$('aiGear').addEventListener('click', () => {
+function openCfg() {                   // always repopulate — a stale form saved
   document.querySelector(`input[name=prov][value=${aiCfg.prov}]`).checked = true;
-  $('cfgClaudeKey').value = aiCfg.claudeKey;
+  $('cfgClaudeKey').value = aiCfg.claudeKey;      // over would wipe stored keys
   $('cfgClaudeModel').value = aiCfg.claudeModel;
   $('cfgOaiBase').value = aiCfg.oaiBase;
   $('cfgOaiModel').value = aiCfg.oaiModel;
   $('cfgOaiKey').value = aiCfg.oaiKey;
   syncCfgVis();
   cfgOverlay.classList.add('open');
-});
+}
+$('aiGear').addEventListener('click', openCfg);
 for (const r of document.querySelectorAll('input[name=prov]')) {
   r.addEventListener('change', syncCfgVis);
 }
@@ -2567,7 +2568,7 @@ function syncCfgVis() {
   const v = document.querySelector('input[name=prov]:checked').value;
   for (const s of document.querySelectorAll('.cfgset')) s.hidden = s.dataset.prov !== v;
 }
-$('cfgSave').addEventListener('click', () => {
+$('cfgSave').addEventListener('click', async () => {
   aiCfg = {
     prov: document.querySelector('input[name=prov]:checked').value,
     claudeKey: $('cfgClaudeKey').value.trim(),
@@ -2584,11 +2585,32 @@ $('cfgSave').addEventListener('click', () => {
     aiCfg.oaiBase = 'https://api.openai.com/v1';
     fixed = ' · Base URLを https://api.openai.com/v1 に直しました';
   }
+  // model left blank = the old silent killer (LLM never engages, builtin takes
+  // over without a word) — ask the endpoint what it serves and pick for them
+  if (aiCfg.prov === 'openai' && aiCfg.oaiBase && !aiCfg.oaiModel) {
+    try {
+      const h = aiCfg.oaiKey ? { authorization: 'Bearer ' + aiCfg.oaiKey } : {};
+      const r = await fetch(aiCfg.oaiBase.replace(/\/$/, '') + '/models', { headers: h });
+      if (r.ok) {
+        const ids = ((await r.json()).data || []).map(m => m.id);
+        const pick = ids.find(x => /^gpt-5(\.\d+)?(-mini)?$/.test(x)) ||
+                     ids.find(x => x === 'gpt-4o') ||
+                     ids.find(x => /^gpt-/.test(x) &&
+                         !/audio|realtime|image|tts|transcribe|search|embed/.test(x)) ||
+                     ids[0];
+        if (pick) {
+          aiCfg.oaiModel = pick;
+          fixed += ' · モデルを ' + pick + ' に自動設定しました';
+        }
+      }
+    } catch {}
+    if (!aiCfg.oaiModel) fixed += ' · ⚠モデル名が未設定のため生成は動きません';
+  }
   localStorage.setItem(CFG_KEY, JSON.stringify(aiCfg));
   cfgOverlay.classList.remove('open');
   say(aiCfg.prov === 'builtin' ? '内蔵コンポーザを使います (オフライン)'
-      : aiCfg.prov === 'claude' ? 'Claude APIを使います (キーはこの端末にのみ保存)'
-      : 'OpenAI互換APIを使います (キーはこの端末にのみ保存)' + fixed);
+      : (aiCfg.prov === 'claude' ? 'Claude APIを使います (キーはこの端末にのみ保存)'
+      : 'OpenAI互換APIを使います (キーはこの端末にのみ保存)') + fixed);
 });
 
 
@@ -2846,7 +2868,9 @@ function openShaderPanel(target) {
   $('shErr').textContent = '';
   shRenderGutter();
   shDot.className = '';
-  $('shKeyHint').style.display = llmReady() ? 'none' : 'flex';
+  const gap = llmGap();
+  $('shKeyHintText').textContent = '🤖 ' + (gap || '');
+  $('shKeyHint').style.display = gap ? 'flex' : 'none';
   $('shOverlay').classList.add('open');
 }
 function applyShader(quiet = false) {   // quiet = live typing path: no toast/undo spam
@@ -2915,9 +2939,15 @@ $('shCode').addEventListener('keydown', e => {
     ta.dispatchEvent(new Event('input'));
   }
 });
-const llmReady = () => (aiCfg.prov === 'claude' && aiCfg.claudeKey) ||
-                       (aiCfg.prov === 'openai' && aiCfg.oaiBase && aiCfg.oaiModel);
-$('shCfgOpen').addEventListener('click', () => cfgOverlay.classList.add('open'));
+const llmGap = () => {                 // null = LLM ready / else どこを直せば動くか
+  if (aiCfg.prov === 'claude') return aiCfg.claudeKey ? null : 'Claude APIキーが未入力です';
+  if (aiCfg.prov === 'openai') return !aiCfg.oaiBase ? 'OpenAI互換のBase URLが未設定です'
+      : !aiCfg.oaiModel ? 'モデル名が未設定です (例: gpt-4o / qwen3:8b)' : null;
+  return (aiCfg.claudeKey || aiCfg.oaiKey || aiCfg.oaiModel)
+      ? 'プロバイダが「内蔵」のままです — ⚙でClaude / OpenAI互換を選んで保存してください'
+      : 'AI生成にはAPIキーが必要です — 内蔵で反応するのは「万華鏡」「波」「色収差」だけ';
+};
+$('shCfgOpen').addEventListener('click', () => openCfg());
 async function genShader() {
   const text = $('shPrompt').value.trim();
   $('shErr').textContent = '';
@@ -2946,10 +2976,12 @@ async function genShader() {
         $('shCode').value = hit[1];
         shReflect(applyShader());
       } else {
-        // no key + no template match: guide instead of silently applying kaleido
+        // LLM not usable + no template match: say exactly what to fix, don't
+        // silently clobber the editor with the kaleido template
+        const gap = llmGap() || 'AI設定を確認してください';
+        $('shKeyHintText').textContent = '🤖 ' + gap;
         $('shKeyHint').style.display = 'flex';
-        $('shErr').textContent = 'この指示はAI(APIキー)が必要です — ⚙で設定すると何でも書けます。' +
-            '内蔵で反応する言葉は「万華鏡」「波」「色収差」';
+        $('shErr').textContent = gap + ' — ⚙で直せばこの指示のまま生成できます';
       }
     }
     // a fresh AI shader deserves a name — suggest the prompt, save is one tap
