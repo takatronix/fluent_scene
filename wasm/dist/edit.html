@@ -623,6 +623,11 @@
       <input id="shName" placeholder="シェーダ名 (例: うねうね万華鏡)" maxlength="40"
         style="flex:1;background:rgba(255,255,255,0.04);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;outline:none">
       <button id="shSave" class="save" style="padding:8px 16px">💾 保存</button>
+      <button id="shExport" title="ライブラリをJSONファイルに書き出し (バックアップ/別端末への持ち運び)"
+        style="background:none;border:1px solid var(--line);color:var(--dim);border-radius:999px;padding:8px 12px;cursor:pointer;font-size:13px">📤</button>
+      <label title="JSONファイルからライブラリに読み込み (同名は上書き)"
+        style="border:1px solid var(--line);color:var(--dim);border-radius:999px;padding:8px 12px;cursor:pointer;font-size:13px">📥<input
+        type="file" id="shImportFile" accept=".json,application/json" style="display:none"></label>
     </div>
     <div id="shLib" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
     <div style="font-size:11px;color:var(--faint);margin-top:4px">✨は内蔵プリセット(読み込んでAIに「もっと◯◯」と頼める)。保存したシェーダはこの端末に残り、どちらもパレット(+ フィルタ)の「🧪 シェーダ」からノードとして何個でも配線できます</div>
@@ -2226,6 +2231,7 @@ function packGraph() {
       if (n.type === 'person' || n.type === 'hands') o.fe = +n.feather.toFixed(1);
       if (n.type === 'glsl') {
         o.c = n.code.slice(0, 20000);
+        if (n.code.length > 20000) warnLongOnce('n' + n.id, n.name || 'シェーダ');
         if (n.name) o.nm = n.name;
         if (!n.on) o.off = 1;
       }
@@ -2237,11 +2243,22 @@ function packGraph() {
     }),
     e: edges.map(e => [e.from, e.fp, e.to, e.tp || 0]),
   };
+  // 仕上げシェーダも共有リンク/undoに乗せる — リロードで黙って消さない
+  if (postCode) {
+    packed.post = { c: postCode.slice(0, 20000), on: postState.on ? 1 : 0 };
+    if (postCode.length > 20000) warnLongOnce('post', '仕上げシェーダ');
+  }
   return packed;
+}
+const warnedLong = new Set();
+function warnLongOnce(key, label) {
+  if (warnedLong.has(key)) return;
+  warnedLong.add(key);
+  say('「' + label + '」は長すぎて共有リンクには全文が入りません — 📤書き出しで保全してください', true);
 }
 function saveHashNow() {
   const packed = packGraph();
-  const trivial = nodes.length === 2 && !edges.length;
+  const trivial = nodes.length === 2 && !edges.length && !postCode;
   history.replaceState(null, '',
       trivial ? location.pathname : '#g=' + encodeURIComponent(JSON.stringify(packed)));
 }
@@ -2332,6 +2349,20 @@ function unpackGraph(packed) {
       if (!nodes.some(x => x.type === 'src')) addNode('src', 40, 140, { kind: 'camera' });
       for (const [f, fp, t, tp] of packed.e || []) {
         if (idMap[f] && idMap[t]) connect(idMap[f], Number(fp) || 0, idMap[t], Number(tp) || 0);
+      }
+      // 仕上げシェーダの復元 (共有リンク/undo両対応)
+      if (packed.post && typeof packed.post.c === 'string') {
+        postCode = packed.post.c;
+        if (packed.post.on && !buildPost(postCode)) {
+          postState.on = true;
+          postState.c.classList.add('on');
+        } else if (!packed.post.on && postState.on) {
+          postState.on = false;
+          if (postState.c) postState.c.classList.remove('on');
+        }
+      } else if (postState.on) {
+        postState.on = false;
+        if (postState.c) postState.c.classList.remove('on');
       }
       return true;
 }
@@ -3871,6 +3902,8 @@ function applyShader(quiet = false) {   // quiet = live typing path: no toast/un
     postState.on = true;
     postState.c.classList.add('on');
     shSetErr('');
+    if (!quiet) snapshot();             // 仕上げもhash/undoに乗せる (liveはsaveHashのみ)
+    saveHash();
     if (!quiet) say('仕上げシェーダを適用中 (出力ノードから編集できます)');
     return null;
   }
@@ -4046,10 +4079,38 @@ $('shSave').addEventListener('click', () => {
   say('「' + name + '」を保存しました — パレットの🧪マイシェーダからいつでも配線できます');
 });
 $('shName').addEventListener('keydown', e => { if (e.key === 'Enter') $('shSave').click(); });
+$('shExport').addEventListener('click', () => {
+  if (!shaderLib.length) { say('書き出すシェーダがまだありません — まず💾で保存を', true); return; }
+  const blob = new Blob([JSON.stringify({ fs_shader_lib: shaderLib }, null, 1)],
+                        { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'fluent_scene_shaders.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  say('ライブラリ' + shaderLib.length + '件をJSONに書き出しました');
+});
+$('shImportFile').addEventListener('change', async e => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    const j = JSON.parse(await f.text());
+    const arr = Array.isArray(j) ? j : j.fs_shader_lib;
+    if (!Array.isArray(arr)) throw new Error('fs_shader_lib 配列がありません');
+    let n = 0;
+    for (const s of arr) {
+      if (s && typeof s.n === 'string' && typeof s.c === 'string' && !libSave(s.n, s.c)) n++;
+    }
+    say('シェーダを' + n + '件読み込みました (同名は上書き)');
+  } catch (err) { say('読み込めません: ' + (err.message || err), true); }
+});
 $('shOff').addEventListener('click', () => {
   if (shTarget === 'out') {
     postState.on = false;
     if (postState.c) postState.c.classList.remove('on');
+    snapshot();
+    saveHash();
   } else {
     const n = nodeById(shTarget);
     if (n) { n.on = false; applyGraph(true); }
@@ -4071,7 +4132,15 @@ $('btnShare').addEventListener('click', e =>
     copyText(location.href, e.currentTarget, '✅ コピー済'));
 function exportYaml() {
   compile();
-  return sceneYaml(true);
+  let y = sceneYaml(true);
+  // ブラウザ側拡張 (WebGL2) は Scene YAML の仕様外 — 省略せず末尾に注記する
+  const notes = [];
+  units.forEach((u, i) => {
+    if (u.deco && u.deco.glsl) notes.push('# 🧪 レイヤ' + (i + 1) + ' の入力段に GLSLシェーダ「' +
+        (u.deco.glsl.name || 'GLSL') + '」 (ブラウザWebGL2 — この文書の対象外)');
+  });
+  if (postState.on && postCode) notes.push('# 🧪 仕上げシェーダが出力全体にかかっています (ブラウザWebGL2 — この文書の対象外)');
+  return notes.length ? y + '\n' + notes.join('\n') + '\n' : y;
 }
 $('btnSnap').addEventListener('click', () => {
   const target = (postState.on && postState.c) ? postState.c : canvas;
