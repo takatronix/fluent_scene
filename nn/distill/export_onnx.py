@@ -21,9 +21,18 @@ net.eval()
 
 x = torch.rand(1, 3, 384, 512)
 torch.onnx.export(net, x, f'{args.out}.onnx', opset_version=17,
+                  dynamo=False,  # new exporter ignores opset 17 (emits 18) + splits weights to .data
                   input_names=['input'], output_names=['lines'],
                   dynamic_axes={'input': {2: 'h', 3: 'w'},
                                 'lines': {2: 'h', 3: 'w'}})
+
+# newer torch exporters may split weights into <out>.onnx.data — wasm needs
+# a single self-contained file, so inline them back
+import os
+if os.path.exists(f'{args.out}.onnx.data'):
+    m = onnx.load(f'{args.out}.onnx')          # pulls external data into memory
+    onnx.save(m, f'{args.out}.onnx')           # re-save inline
+    os.remove(f'{args.out}.onnx.data')
 
 # verify fp32 onnx vs torch at two sizes
 for hw in [(384, 512), (256, 456)]:

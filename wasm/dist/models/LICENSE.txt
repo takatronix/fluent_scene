@@ -34,3 +34,22 @@ Drawings that Convey Geometry and Semantics", 2022).
 https://github.com/carolineec/informative-drawings — **MIT license**.
 ONNX export via huggingface.co/rocca/informative-drawings-line-art-onnx;
 fp16 variant is the same weights rounded to float16.
+
+---
+
+tiny_lines.onnx / tiny_lines_fp16.onnx — **our own weights, MIT license**
+(same terms as this repository).
+
+A 105k-parameter line net distilled from id_lineart.onnx (Informative
+Drawings, MIT — see above) by nn/distill/train.py on COCO val2017 images:
+the teacher's output is the only training target, so what the weights carry
+is the teacher's style, not the photographs. Because the teacher is MIT,
+these distilled weights are ours to license as MIT — unlike the AnimeGANv3
+models above, they carry no non-commercial restriction.
+
+~40x smaller and ~10x faster than the teacher (512² CPU: 8ms multi-threaded
+/ 84ms single-threaded on a Ryzen desktop, vs 1136ms for the teacher on
+Jetson Thor). The style is a lighter pencil sketch: contours are kept,
+the teacher's fine hatching on flat areas is not. opset 17, dynamic HxW.
+
+Training record: nn/distill/runs/NOTES.md

@@ -29,6 +29,7 @@
     <option value="models/AnimeGANv3_JP_face.onnx" selected>anime face (JP)</option>
     <option value="models/AnimeGANv3_PortraitSketch.onnx">portrait sketch (ink)</option>
     <option value="models/id_lineart.onnx">pencil lines (MIT)</option>
+    <option value="models/tiny_lines.onnx">tiny pencil (ours, MIT)</option>
   </select>
   <select id="res" title="inference size">
     <option value="256">256px (bold)</option>
@@ -118,7 +119,7 @@ async function loadModel(url) {
     } catch (e) { lastErr = e; }
   }
   if (!session) { bar.textContent = 'model load failed: ' + lastErr; throw lastErr; }
-  modelKind = /id_lineart/.test(url) ? 'lines' : 'animegan';
+  modelKind = /id_lineart|tiny_lines/.test(url) ? 'lines' : 'animegan';
 }
 
 // ---- face lock: detect -> square crop -> stylize -> paste back -------------

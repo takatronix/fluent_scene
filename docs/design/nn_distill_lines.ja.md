@@ -75,3 +75,16 @@ out: Conv 24->1 k3, Sigmoid                # 線強度 0..1 (1=紙, 0=墨)
 
 - 同じ生徒構造でインク風(2値太線)を自前後処理 or 自前教師で
 - スタイル可変(太さ条件付け): 条件チャネル追加は v2 で
+
+## 8. 実行追記 (2026-08-20, rtx4090 Claude)
+
+**§4のレシピは1点修正が必要だった**: pixel項 L1+sigmoid は「全画素=紙」の
+局所解に step200 で崩壊し脱出不能 (lr 1/4 でも死亡、飽和で勾配消失)。
+**pixel項を BCE (ロジット直結) に変更**で解決 — `train.py --loss bce` (新既定)。
+sobel項・構造・optimizer・スケジュールは設計どおり、ONNXグラフ不変。
+
+結果: 受け入れ基準3/3合格。fp16 215KB、CPU 512² 8.2ms (4090マシン、1スレ84ms)、
+fp32vs fp16 max|Δ| 0.0011。詳細と検証画像: nn/distill/runs/NOTES.md, runs/v2/。
+
+exporter罠: torch≥2.9 は `dynamo=False` 必須 (opset17指定が無視され18になり、
+重みが .onnx.data に分離されるため)。export_onnx.py 修正済。

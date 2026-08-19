@@ -31,11 +31,12 @@ class TinyLines(nn.Module):
         self.d1 = nn.Sequential(nn.Conv2d(48, 24, 3, 1, 1), a())
         self.out = nn.Conv2d(24, 1, 3, 1, 1)
 
-    def forward(self, x):
+    def forward(self, x, return_logits=False):
         x = self.e2(self.e1(x))
         x = x + self.body(x)
         x = F.interpolate(x, scale_factor=4, mode='bilinear', align_corners=False)
-        return torch.sigmoid(self.out(self.d1(x)))
+        z = self.out(self.d1(x))
+        return z if return_logits else torch.sigmoid(z)
 
 
 def sobel(x):
@@ -83,6 +84,8 @@ def main():
     ap.add_argument('--batch', type=int, default=16)
     ap.add_argument('--crop', type=int, default=384)
     ap.add_argument('--lr', type=float, default=2e-3)
+    ap.add_argument('--loss', choices=['l1', 'bce'], default='bce',
+                    help='pixel term; l1 on sigmoid collapses to all-white (see design doc)')
     ap.add_argument('--out', default='runs/v1')
     ap.add_argument('--teacher', default='id_lineart.onnx')
     args = ap.parse_args()
@@ -110,12 +113,15 @@ def main():
         with torch.no_grad():
             y_t = torch.from_numpy(teacher.run(None, {t_in: x})[0]).to(dev)
         x = torch.from_numpy(x).to(dev)
-        y = net(x)
-        loss = F.l1_loss(y, y_t) + 0.5 * F.l1_loss(sobel(y), sobel(y_t))
+        z = net(x, return_logits=True)
+        y = torch.sigmoid(z)
+        px = (F.binary_cross_entropy_with_logits(z, y_t) if args.loss == 'bce'
+              else F.l1_loss(y, y_t))
+        loss = px + 0.5 * F.l1_loss(sobel(y), sobel(y_t))
         opt.zero_grad(); loss.backward(); opt.step(); sched.step()
         if step % 200 == 0:
             print(f'{step:6d}  loss {loss.item():.4f}  '
-                  f'{(time.time() - t0) / step:.2f}s/step')
+                  f'{(time.time() - t0) / step:.2f}s/step', flush=True)
         if step % 5000 == 0 or step == args.steps:
             with torch.no_grad():
                 y_v = net(torch.from_numpy(val).to(dev)).cpu().numpy()
