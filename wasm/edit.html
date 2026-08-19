@@ -148,6 +148,7 @@
           filter: drop-shadow(0 0 6px rgba(200,110,240,0.8)); }
   #edgeSvg path.temp { fill: none; stroke: rgba(126,232,250,0.8); stroke-width: 2;
           stroke-dasharray: 6 5; }
+  #edgeSvg path.edge.delay { stroke-dasharray: 7 5; opacity: 0.85; }
   #edgeSvg .cutbtn { cursor: pointer; pointer-events: all; }
   #edgeSvg .cutbtn circle { fill: rgba(18, 15, 32, 0.95);
           stroke: rgba(255, 255, 255, 0.22); stroke-width: 1; transition: 0.12s; }
@@ -192,7 +193,7 @@
      was unreadable and pushed everything below the fold) ---- */
   #dockMain { display: flex; gap: 12px; flex: 1; min-height: 0; align-items: stretch; }
   #dockMain #graph { flex: 1; min-width: 0; height: auto; min-height: 220px; }
-  #insp { width: 234px; flex: none; display: flex; flex-direction: column; gap: 8px;
+  #insp { width: 234px; min-width: 220px; flex: none; display: flex; flex-direction: column; gap: 8px;
           min-height: 0; overflow-y: auto; overflow-x: hidden; padding-left: 12px;
           border-left: 1px solid var(--line); scrollbar-width: thin;
           scrollbar-color: #2c2745 transparent; }
@@ -345,6 +346,21 @@
           cursor: pointer; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7); }
   body.theater #dockRestore.show { display: block; }
 
+  /* theater window is frosted glass on desktop — the video stays visible
+     through it (phones keep the solid panel: blur is too expensive there) */
+  @media (hover: hover) and (pointer: fine) {
+    body.theater #dock { background: rgba(13, 11, 24, 0.52);
+        backdrop-filter: blur(16px) saturate(1.15);
+        -webkit-backdrop-filter: blur(16px) saturate(1.15); }
+    body.theater #dock .gnode { background: rgba(22, 19, 38, 0.72); }
+    body.theater #graph { background:
+        radial-gradient(rgba(255,255,255,0.04) 1px, transparent 1.4px) 0 0 / 26px 26px,
+        rgba(0, 0, 0, 0.12); }
+  }
+
+  #inspHead .psum { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical; overflow: hidden; }
+
   /* ---- Safari + mobile ---- */
   #aibar, #dock, #pill, #hint, #srcBtns button { -webkit-backdrop-filter: blur(14px); }
   header { flex-wrap: wrap; row-gap: 6px; }
@@ -389,7 +405,6 @@
     <button id="srcCam" title="Webカメラ">📷 カメラ</button>
     <button id="srcFile" title="画像・動画を開く">🖼 ファイル</button>
     <button id="srcSample" title="サンプル映像">✨ サンプル</button>
-    <button id="srcFb" title="出力を入力に戻す (ビデオフィードバック)">🔁</button>
     <input id="filePick" type="file" accept="image/*,video/*" hidden>
   </div>
   <div id="pill">loading…</div>
@@ -414,7 +429,9 @@
     <button id="tbSrc">+ 入力</button>
     <button id="tbPerson">+ 人物抽出</button>
     <button id="tbHands">+ 手フレーム</button>
-    <button id="tbXform">+ 変形/合成</button>
+    <button id="tbMix">+ ミキサー</button>
+    <button id="tbSplit">+ 分岐</button>
+    <button id="tbXform">+ 変形</button>
     <button id="tbShader" title="AIにシェーダを書かせる最終パス">🧪 シェーダ</button>
     <button id="tbUndo" title="もとに戻す (Ctrl+Z)">↩</button>
     <button id="tbReset" title="グラフを最初から">🧹</button>
@@ -454,9 +471,6 @@
       <span id="params" style="display:contents"></span>
     </div>
   </div>
-  </div>
-  <div id="presets">
-    <span id="presetBtns" style="display:contents"></span>
   </div>
 </div>
 <div id="bar">loading wasm…</div>
@@ -696,6 +710,10 @@ function addNode(type, x, y, extra = {}) {
     Object.assign(n, { name: extra.name, on: true,
         vals: s.params.map(p => extra.params?.[p.name] !== undefined
             ? clampToRange(p, extra.params[p.name]) : p.def) });
+  } else if (type === 'mix') {
+    Object.assign(n, { blend: extra.blend || 'normal', op: extra.op ?? 0.5 });
+  } else if (type === 'split') {
+    // pure fan-out marker — compiles to nothing
   } else if (type === 'glsl') {
     Object.assign(n, { code: extra.code || SHADER_TEMPLATES[1][1], on: true });
   } else if (type === 'person') {
@@ -711,21 +729,16 @@ function addNode(type, x, y, extra = {}) {
   nodes.push(n);
   return n;
 }
-function connect(fromId, fp, toId) {
+function connect(fromId, fp, toId, tp = 0) {
   const from = nodeById(fromId), to = nodeById(toId);
   if (!from || !to || from === to) return false;
   if (to.type === 'src' || from.type === 'out') return false;
-  // cycle guard: can we reach `to` walking upstream from `from`?
-  const seen = new Set();
-  const up = id => {
-    if (seen.has(id)) return false;
-    seen.add(id);
-    return id === toId || edges.filter(e => e.to === id).some(e => up(e.from));
-  };
-  if (up(fromId)) return false;
-  if (to.type !== 'out') edges = edges.filter(e => e.to !== toId);   // single in
-  edges = edges.filter(e => !(e.from === fromId && e.fp === fp && e.to === toId));
-  edges.push({ from: fromId, fp, to: toId });
+  const inCount = nodeMeta(to).ins.length;
+  tp = Math.max(0, Math.min(inCount - 1, tp | 0));
+  // cycles are allowed: a loop wire becomes a 1-frame delay line (feedback)
+  if (to.type !== 'out') edges = edges.filter(e => !(e.to === toId && (e.tp || 0) === tp));
+  edges = edges.filter(e => !(e.from === fromId && e.fp === fp && e.to === toId && (e.tp || 0) === tp));
+  edges.push({ from: fromId, fp, to: toId, tp });
   if (to.type === 'out' && from.type !== 'src') {
     // a styled branch just reached the output — drop the bare passthrough
     // wire from the same source, which visually swallows the filter
@@ -760,50 +773,106 @@ function removeNode(id) {
 }
 
 // ---- compile: graph → layer branches --------------------------------------
+// ---- compile: graph → nested layer units -----------------------------------
+// Every wire into 出力 becomes a top-level unit (stacked back→front); a
+// ミキサー becomes a group unit (A=奥, B=手前 with blend/opacity) and nests
+// recursively; filters/person/hands/変形 collected along a path decorate the
+// unit below them; 分岐 is pure fan-out; a wire that closes a cycle is a
+// 1-frame delay line — its picture is the previous rendered frame (feedback).
+let units = [];
 function compile() {
   const out = outNode();
   branches = [];
+  units = [];
   if (!out) return;
   const srcs = nodes.filter(n => n.type === 'src');
-  for (const first of edges.filter(x => x.to === out.id)) {
-    // walk upstream edge by edge; the edge we exit a person node through
-    // (its fp) says whether this branch is the 人物 (0) or 背景 (1) side
-    const br = { filters: [], person: null, personPort: 0, hands: null, handsPort: 0,
-                 xform: null, glsl: null, src: null, tail: first.from };
-    let e = first, guard = 0;
-    while (guard++ < 40) {
-      const n = nodeById(e.from);
-      if (!n) break;
-      if (n.type === 'src') { br.src = n; break; }
-      if (n.type === 'filter') br.filters.unshift(n);
-      else if (n.type === 'xform') { if (!br.xform) br.xform = n; }
-      else if (n.type === 'person') {
-        if (!br.person) { br.person = n; br.personPort = e.fp; }
-      } else if (n.type === 'hands') {
-        if (!br.hands) { br.hands = n; br.handsPort = e.fp; }
-      } else if (n.type === 'glsl') {
-        if (!br.glsl && n.on) br.glsl = n;
-      }
-      const inn = edges.find(x => x.to === n.id);
-      if (!inn) break;
-      e = inn;
+  let uid = 0;
+  const newDeco = () => ({ filters: [], person: null, personPort: 0,
+                           hands: null, handsPort: 0, xform: null, glsl: null });
+  const inEdge = (n, tp) => edges.find(x => x.to === n.id && (x.tp || 0) === tp) || null;
+  const mk = u => { u.id = 'B' + uid++; units.push(u); return u; };
+
+  function build(edge, stack, deco, depth) {
+    if (!edge || depth > 24 || units.length > 40) return null;
+    const n = nodeById(edge.from);
+    if (!n) return null;
+    if (stack.has(n.id)) {                        // cycle closed → delay tap
+      return mk({ kind: 'image', input: 'inFB', deco, srcNode: null,
+                  delayed: true, children: [] });
     }
-    if (br.src) {
-      br.srcIdx = srcs.indexOf(br.src);
-      branches.push(br);
+    if (n.type === 'src') {
+      return mk({ kind: 'image', input: 'in' + srcs.indexOf(n), deco,
+                  srcNode: n, delayed: false, children: [] });
     }
+    stack.add(n.id);
+    let u = null;
+    if (n.type === 'filter') {
+      deco.filters.unshift(n);
+      u = build(inEdge(n, 0), stack, deco, depth + 1);
+    } else if (n.type === 'xform') {
+      if (!deco.xform) deco.xform = n;
+      u = build(inEdge(n, 0), stack, deco, depth + 1);
+    } else if (n.type === 'person') {
+      if (!deco.person) { deco.person = n; deco.personPort = edge.fp; }
+      u = build(inEdge(n, 0), stack, deco, depth + 1);
+    } else if (n.type === 'hands') {
+      if (!deco.hands) { deco.hands = n; deco.handsPort = edge.fp; }
+      u = build(inEdge(n, 0), stack, deco, depth + 1);
+    } else if (n.type === 'glsl') {
+      if (!deco.glsl && n.on) deco.glsl = n;
+      u = build(inEdge(n, 0), stack, deco, depth + 1);
+    } else if (n.type === 'split') {
+      u = build(inEdge(n, 0), stack, deco, depth + 1);
+    } else if (n.type === 'mix') {
+      const g = { kind: 'group', mixNode: n, deco, children: [],
+                  srcNode: null, delayed: false };
+      const a = build(inEdge(n, 0), stack, newDeco(), depth + 1);
+      const b = build(inEdge(n, 1), stack, newDeco(), depth + 1);
+      if (a) g.children.push({ u: a, blend: 'normal', op: 1 });
+      if (b) g.children.push({ u: b, blend: n.blend, op: n.op });
+      u = g.children.length ? mk(g) : null;
+    }
+    stack.delete(n.id);
+    return u;
   }
-  // stacking order: higher on the graph = further back (stable for ties);
-  // a masked 人物/枠内 branch always composites in front of its full-frame side
+  for (const e of edges.filter(x => x.to === out.id)) {
+    const deco = newDeco();
+    const u = build(e, new Set(), deco, 0);
+    if (!u) continue;
+    u.top = true;
+    const coreId = deco.person ? deco.person.id
+                 : deco.hands ? deco.hands.id
+                 : u.kind === 'group' ? u.mixNode.id
+                 : u.delayed ? null : (u.srcNode ? u.srcNode.id : null);
+    const corePort = deco.person ? deco.personPort
+                   : deco.hands ? deco.handsPort : 0;
+    branches.push({ tail: e.from, unit: u,
+                    filters: deco.filters, person: deco.person, personPort: deco.personPort,
+                    hands: deco.hands, handsPort: deco.handsPort,
+                    xform: deco.xform, glsl: deco.glsl,
+                    src: unitFirstSrc(u), feedback: u.delayed,
+                    coreId, corePort });
+  }
+  // stacking order: higher on the graph = further back; masked 人物/枠内 in front
   const key = br => nodeById(br.tail).y + (br.person && br.personPort === 0 ? 10000 : 0)
                                         + (br.hands && br.handsPort === 0 ? 10000 : 0);
   branches.sort((a, b) => key(a) - key(b));
 }
+function unitFirstSrc(u) {
+  if (u.srcNode) return u.srcNode;
+  for (const c of u.children) {
+    const s2 = unitFirstSrc(c.u);
+    if (s2) return s2;
+  }
+  return null;
+}
+const unitOfXform = n => units.find(u => u.deco && u.deco.xform === n) || null;
+const wipeMode = () => branches.length === 1 && branches[0].unit.kind === 'image' &&
+                       !branches[0].xform && !branches[0].person && !branches[0].hands &&
+                       !branches[0].feedback &&
+                       nodes.filter(n => n.type === 'src').length === 1;
 
-const wipeMode = () => branches.length === 1 && !branches[0].xform && !branches[0].person &&
-                       !branches[0].hands && nodes.filter(n => n.type === 'src').length === 1;
-
-function sceneYaml() {
+function sceneYaml(withFilters = false) {
   const srcs = nodes.filter(n => n.type === 'src');
   let y = `schema: fluent.scene/v1alpha2
 stage: { size: [${STAGE_W}, ${STAGE_H}] }
@@ -811,8 +880,9 @@ inputs:
   paper: { type: image.rgba8 }
   maskP: { type: image.rgba8 }
   maskH: { type: image.rgba8 }
+  inFB: { type: image.rgba8, update: per_frame }
 `;
-  srcs.forEach((s, i) => { y += `  in${i}: { type: image.rgba8, update: per_frame }\n`; });
+  srcs.forEach((s2, i) => { y += `  in${i}: { type: image.rgba8, update: per_frame }\n`; });
   let params = '';
   if (wipeMode()) {
     params += `  wipe_win: { type: vec2, default: [0, 360], runtime_mutable: true,
@@ -823,16 +893,16 @@ inputs:
              animate: { duration: 0.1, ease: ease_out } }
 `;
   }
-  branches.forEach((br, i) => {
-    if (!br.xform) return;
-    const l = br.xform;
-    params += `  p${i}: { type: vec2, default: [${l.pos[0].toFixed(1)}, ${l.pos[1].toFixed(1)}], runtime_mutable: true,
+  for (const u of units) {
+    if (!u.deco || !u.deco.xform) continue;
+    const l = u.deco.xform;
+    params += `  p_${u.id}: { type: vec2, default: [${l.pos[0].toFixed(1)}, ${l.pos[1].toFixed(1)}], runtime_mutable: true,
         animate: { duration: 0.12, ease: ease_out } }
-  r${i}: { type: f32, default: ${l.rot.toFixed(1)}, runtime_mutable: true,
+  r_${u.id}: { type: f32, default: ${l.rot.toFixed(1)}, runtime_mutable: true,
         animate: { duration: 0.12, ease: ease_out } }
-  o${i}: { type: f32, default: ${l.op.toFixed(2)}, runtime_mutable: true }
+  o_${u.id}: { type: f32, default: ${l.op.toFixed(2)}, runtime_mutable: true }
 `;
-  });
+  }
   if (params) y += 'params:\n' + params;
   y += 'layers:\n';
   if (!branches.length) {
@@ -841,29 +911,45 @@ inputs:
 `;
     return y;
   }
-  branches.forEach((br, i) => {
-    if (br.xform) {
-      const l = br.xform;
-      // parked at identity = full-frame mixer: no window chrome
+  const filtersYaml = (u, pad) => {
+    if (!withFilters || !u.deco) return '';
+    const on = u.deco.filters.filter(f => f.on);
+    if (!on.length) return '';
+    const lines = on.map(f => {
+      const sp = SPEC[f.name];
+      const ps = sp.params.map((pp, j) => pp.name === 'time' ? null :
+          `${pp.name}: ${+f.vals[j].toFixed(3)}`).filter(Boolean).join(', ');
+      return `${pad}  - { ${f.name}: { ${ps} } }`;
+    });
+    return `${pad}filters:\n` + lines.join('\n') + '\n';
+  };
+  function emit(u, ind, extra) {
+    const pad = ' '.repeat(ind);
+    let o = `${pad}- id: ${u.id}\n`;
+    const l = u.deco ? u.deco.xform : null;
+    if (l) {
       const win = l.scale < 0.98 || Math.abs(l.rot) > 0.01;
       const sx = l.scale * (l.flipH ? -1 : 1), sy = l.scale * (l.flipV ? -1 : 1);
-      y += `  - id: B${i}
-    bounds: [0, 0, ${STAGE_W}, ${STAGE_H}]
-    position: $params.p${i}
-    rotation: $params.r${i}
-    scale: [${sx.toFixed(3)}, ${sy.toFixed(3)}]
-    opacity: $params.o${i}
-${l.blend !== 'normal' ? `    blend: ${l.blend}\n` : ''}${win ? `    corner_radius: 22
-    masks_to_bounds: true
-    shadow: {}
-` : ''}    content: { image: { source: $inputs.in${br.srcIdx}, fit: cover } }
-`;
-    } else {
-      y += `  - id: B${i}
-    content: { image: { source: $inputs.in${br.srcIdx}, fit: cover } }
-`;
+      o += `${pad}  bounds: [0, 0, ${STAGE_W}, ${STAGE_H}]\n` +
+           `${pad}  position: $params.p_${u.id}\n` +
+           `${pad}  rotation: $params.r_${u.id}\n` +
+           `${pad}  scale: [${sx.toFixed(3)}, ${sy.toFixed(3)}]\n` +
+           `${pad}  opacity: $params.o_${u.id}\n`;
+      if (win) o += `${pad}  corner_radius: 22\n${pad}  masks_to_bounds: true\n${pad}  shadow: {}\n`;
+    } else if (extra && extra.op < 0.999) {
+      o += `${pad}  opacity: ${extra.op.toFixed(2)}\n`;
     }
-  });
+    if (extra && extra.blend && extra.blend !== 'normal') o += `${pad}  blend: ${extra.blend}\n`;
+    o += filtersYaml(u, pad + '  ');
+    if (u.kind === 'image') {
+      o += `${pad}  content: { image: { source: $inputs.${u.input}, fit: cover } }\n`;
+    } else {
+      o += `${pad}  sublayers:\n`;
+      for (const c of u.children) o += emit(c.u, ind + 4, { blend: c.blend, op: c.op });
+    }
+    return o;
+  }
+  for (const br of branches) y += emit(br.unit, 2, null);
   if (wipeMode()) {
     y += `  - id: before_win
     bounds: [0, 0, 1280, 720]
@@ -924,35 +1010,36 @@ function rebuildSoon() {
 
 function pushChains(t) {
   if (!inst) return;
-  branches.forEach((br, i) => {
-    const id = `B${i}`;
-    fs.clearFilters(inst, id);
-    for (const node of br.filters) {
+  for (const u of units) {
+    fs.clearFilters(inst, u.id);
+    if (!u.deco) continue;
+    for (const node of u.deco.filters) {
       if (!node.on) continue;
       const v = node.vals.slice();
       const ti = timeIndex(SPEC[node.name]);
       if (ti >= 0) v[ti] = anim.checked ? t : 0;
-      fs.setFilter(inst, id, node.name, v[0] || 0, v[1] || 0, v[2] || 0, v[3] || 0, v[4] || 0);
+      fs.setFilter(inst, u.id, node.name, v[0] || 0, v[1] || 0, v[2] || 0, v[3] || 0, v[4] || 0);
     }
-    if (br.filters.some(n => n.on && n.name === 'sumie')) {
+    if (u.deco.filters.some(n => n.on && n.name === 'sumie')) {
       ensurePaper();
-      if (paperUploaded) fs.setFilterImage(inst, id, 'sumie', 'paper', 1024, 1024);
+      if (paperUploaded) fs.setFilterImage(inst, u.id, 'sumie', 'paper', 1024, 1024);
     }
-  });
+  }
 }
 function pushMasks() {
   if (!inst) return;
   // one mask per layer (the engine holds a single M1 mask) — a branch that
   // passes through both person and hands keeps the person mask
-  branches.forEach((br, i) => {
-    if (br.person && maskReady) {
-      fs.setMask(inst, `B${i}`, 'maskP', SEG_W, SEG_H,
-                 br.personPort === 0 ? 0 : 1, br.person.feather);
-    } else if (br.hands && maskHReady) {
-      fs.setMask(inst, `B${i}`, 'maskH', SEG_W, SEG_H,
-                 br.handsPort === 0 ? 0 : 1, br.hands.feather);
+  for (const u of units) {
+    if (!u.deco) continue;
+    if (u.deco.person && maskReady) {
+      fs.setMask(inst, u.id, 'maskP', SEG_W, SEG_H,
+                 u.deco.personPort === 0 ? 0 : 1, u.deco.person.feather);
+    } else if (u.deco.hands && maskHReady) {
+      fs.setMask(inst, u.id, 'maskH', SEG_W, SEG_H,
+                 u.deco.handsPort === 0 ? 0 : 1, u.deco.hands.feather);
     }
-  });
+  }
 }
 
 // ---- person segmentation (MediaPipe, loaded on demand) ---------------------
@@ -987,9 +1074,9 @@ async function loadSegmenter() {
 }
 function updateMask(nowMs) {
   const pn = nodes.find(n => n.type === 'person');
-  if (!pn || !segmenter || !branches.some(b => b.person)) return;
-  const br = branches.find(b => b.person);
-  const src = br && br.src;
+  if (!pn || !segmenter) return;
+  const u = units.find(x => x.deco && x.deco.person);
+  const src = u && unitFirstSrc(u);
   if (!src) return;
   segCtx.drawImage(src.grab, 0, 0, SEG_W, SEG_H);
   const res = segmenter.segmentForVideo(segCanvas, nowMs);
@@ -1046,9 +1133,9 @@ async function loadHands() {
 
 function updateHands(nowMs) {
   const hn = nodes.find(n => n.type === 'hands');
-  if (!hn || !hander || !branches.some(b => b.hands)) return;
-  const br = branches.find(b => b.hands);
-  const src = br && br.src;
+  if (!hn || !hander) return;
+  const u = units.find(x => x.deco && x.deco.hands);
+  const src = u && unitFirstSrc(u);
   if (!src || !src.grab.width) return;
   const dt = Math.min((nowMs - handPrevMs) / 1000, 0.1);
   handPrevMs = nowMs;
@@ -1106,31 +1193,39 @@ function writeHandMask(alpha) {
 
 // ---- graph rendering -------------------------------------------------------
 const gInner = $('gInner'), edgeG = $('edgeG'), tempEdge = $('tempEdge');
-const SRC_EMOJI = { camera: '📷', image: '🖼', video: '🎬', sample: '✨', feedback: '🔁' };
+const SRC_EMOJI = { camera: '📷', image: '🖼', video: '🎬', sample: '✨' };
 const animatedGraph = () => branches.some(b =>
     b.filters.some(n => n.on && timeIndex(SPEC[n.name]) >= 0));
 
 function nodeMeta(n) {
   if (n.type === 'src') return { emoji: SRC_EMOJI[n.kind] || '⬛', j: '入力', e: n.kind,
-                                 ac: NODE_ACCENT.src, outs: [''], hasIn: false };
+                                 ac: NODE_ACCENT.src, outs: [''], ins: [] };
+  if (n.type === 'mix') return { emoji: '🎚', j: 'ミキサー', e: n.blend,
+                                 ac: 'var(--cyan)', outs: [''], ins: ['A', 'B'] };
+  if (n.type === 'split') return { emoji: '🔀', j: '分岐', e: 'split',
+                                 ac: 'var(--green)', outs: ['', ''], ins: [''] };
   if (n.type === 'person') return { emoji: '🧍', j: '人物抽出', e: 'segment',
-                                 ac: NODE_ACCENT.person, outs: ['人物', '背景'], hasIn: true };
+                                 ac: NODE_ACCENT.person, outs: ['人物', '背景'], ins: [''] };
   if (n.type === 'glsl') return { emoji: '🧪', j: 'GLSLシェーダ', e: n.on ? 'glsl' : 'off',
-                                 ac: '#b7f07e', outs: [''], hasIn: true };
+                                 ac: '#b7f07e', outs: [''], ins: [''] };
   if (n.type === 'hands') return { emoji: '🖐', j: '手フレーム', e: 'hands',
-                                 ac: NODE_ACCENT.hands, outs: ['枠内', '枠外'], hasIn: true };
+                                 ac: NODE_ACCENT.hands, outs: ['枠内', '枠外'], ins: [''] };
   if (n.type === 'xform') return { emoji: '🎚', j: '変形/合成', e: n.blend,
-                                 ac: NODE_ACCENT.xform, outs: [''], hasIn: true };
+                                 ac: NODE_ACCENT.xform, outs: [''], ins: [''] };
   if (n.type === 'out') return { emoji: '🖼', j: '出力', e: 'stack',
-                                 ac: NODE_ACCENT.out, outs: [], hasIn: true };
+                                 ac: NODE_ACCENT.out, outs: [], ins: [''] };
   return { emoji: jaEmoji(n.name), j: jaLabel(n.name), e: n.name,
-           ac: accentOf(n.name), outs: [''], hasIn: true };
+           ac: accentOf(n.name), outs: [''], ins: [''] };
 }
-const nodeH = n => n.type === 'person' || n.type === 'hands' ? 66 : NODE_H;
+const nodeH = n => n.type === 'person' || n.type === 'hands' ||
+                   n.type === 'mix' || n.type === 'split' ? 66 : NODE_H;
 function portXY(n, isOut, portIdx) {
   const h = nodeH(n);
-  if (!isOut) return [n.x, n.y + h / 2];
   const m = nodeMeta(n);
+  if (!isOut) {
+    const k = Math.max(1, m.ins.length);
+    return [n.x, n.y + h * ((portIdx | 0) + 1) / (k + 1)];
+  }
   const k = m.outs.length;
   return [n.x + NODE_W, n.y + h * (portIdx + 1) / (k + 1)];
 }
@@ -1182,15 +1277,23 @@ function renderGraph() {
       });
       card.append(rm);
     }
-    if (m.hasIn) {
+    m.ins.forEach((label, k) => {
       const p = document.createElement('div');
       p.className = 'port in';
       p.style.setProperty('--ac', m.ac);
-      p.style.top = (nodeH(n) / 2 - 7) + 'px';
+      p.style.top = (nodeH(n) * (k + 1) / (m.ins.length + 1) - 7) + 'px';
       p.dataset.id = n.id;
-      hookInPort(p, n);
+      p.dataset.tp = k;
+      if (label) {
+        const t = document.createElement('span');
+        t.className = 'plabel';
+        t.style.cssText = 'left:18px;right:auto';
+        t.textContent = label;
+        p.append(t);
+      }
+      hookInPort(p, n, k);
       card.append(p);
-    }
+    });
     m.outs.forEach((label, k) => {
       const p = document.createElement('div');
       p.className = 'port out';
@@ -1222,6 +1325,16 @@ function edgePath(x1, y1, x2, y2) {
   const dx = Math.max(40, Math.abs(x2 - x1) * 0.5);
   return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
 }
+function isDelayEdge(e) {
+  const seen = new Set();
+  const up = id => {
+    if (seen.has(id) || seen.size > 60) return false;
+    seen.add(id);
+    return id === e.to ||
+        edges.filter(x => x.to === id && x !== e).some(x => up(x.from));
+  };
+  return up(e.from);
+}
 function drawEdges() {
   edgeG.replaceChildren();
   const SVG = 'http://www.w3.org/2000/svg';
@@ -1229,7 +1342,7 @@ function drawEdges() {
     const from = nodeById(e.from), to = nodeById(e.to);
     if (!from || !to) continue;
     const [x1, y1] = portXY(from, true, e.fp);
-    const [x2, y2] = portXY(to, false, 0);
+    const [x2, y2] = portXY(to, false, e.tp || 0);
     const cut = () => {
       edges = edges.filter(x => x !== e);
       applyGraph(true);
@@ -1241,7 +1354,7 @@ function drawEdges() {
     hit.setAttribute('d', edgePath(x1, y1, x2, y2));
     hit.addEventListener('click', cut);
     const vis = document.createElementNS(SVG, 'path');
-    vis.setAttribute('class', 'edge');
+    vis.setAttribute('class', 'edge' + (isDelayEdge(e) ? ' delay' : ''));
     vis.setAttribute('d', edgePath(x1, y1, x2, y2));
     g.append(hit, vis);
     // an always-visible scissors at the midpoint — cutting must not be a
@@ -1321,7 +1434,8 @@ function startWireDrag(fromId, fp) {
     const inPort = el && el.closest ? el.closest('.port.in') : null;
     const toCard = el && el.closest ? el.closest('.gnode') : null;
     const toId = inPort ? inPort.dataset.id : (toCard ? toCard.dataset.id : null);
-    if (toId && connect(fromId, fp, toId)) applyGraph(true);
+    const tp = inPort ? Number(inPort.dataset.tp) || 0 : 0;
+    if (toId && connect(fromId, fp, toId, tp)) applyGraph(true);
   };
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
@@ -1335,10 +1449,10 @@ function hookOutPort(p) {
 }
 // grabbing a connected in-port unplugs the wire and lets you re-drop it
 // (drop on nothing = cut) — the other way to disconnect is tapping the line
-function hookInPort(p, n) {
+function hookInPort(p, n, tp = 0) {
   p.addEventListener('pointerdown', e => {
     if (n.type === 'out') return;               // out stacks many — tap lines instead
-    const inn = edges.find(x => x.to === n.id);
+    const inn = edges.find(x => x.to === n.id && (x.tp || 0) === tp);
     if (!inn) return;
     e.preventDefault();
     e.stopPropagation();
@@ -1442,6 +1556,20 @@ $('tbXform').addEventListener('click', () => {
   say('変形/合成ノード — 線に挟むと小窓、「全面ミキサー」で画面全体をブレンド合成');
 });
 $('tbUndo').addEventListener('click', undo);
+$('tbMix').addEventListener('click', () => {
+  const [x, y] = freeSpot(560, 300);
+  const n = addNode('mix', x, y);
+  selId = justAddedId = n.id;
+  applyGraph(true);
+  say('ミキサー — A(奥)とB(手前)を1本に合成。Bの不透明度とブレンドで混ぜ具合。分岐と組めばフィードバックも');
+});
+$('tbSplit').addEventListener('click', () => {
+  const [x, y] = freeSpot(560, 380);
+  const n = addNode('split', x, y);
+  selId = justAddedId = n.id;
+  applyGraph(true);
+  say('分岐 — 1入力を2系統へ。片方を出力、片方をミキサーBへ戻すと1フレーム遅延のフィードバック(点線)');
+});
 $('tbReset').addEventListener('click', () => {
   if (!confirm('グラフを最初の状態に戻しますか?')) return;
   const keep = nodes.find(n => n.type === 'src');
@@ -1530,10 +1658,13 @@ function renderInspector() {
   $('paramReset').hidden = n.type !== 'filter';
   $('paramRand').hidden = n.type !== 'filter';
   inspHead.querySelector('.pname').textContent = m.emoji + ' ' + m.j + ' · ' + m.e;
+  inspHead.querySelector('.psum').title = n.type === 'filter' ? SPEC[n.name].summary : '';
   inspHead.querySelector('.psum').textContent =
-      n.type === 'filter' ? SPEC[n.name].summary
+      n.type === 'filter' ? ((JA[n.name] || [])[1] || SPEC[n.name].summary)
       : n.type === 'src' ? 'プレビュー左上のボタンでソース切替'
       : n.type === 'person' ? 'MediaPipeで人物マスク。人物/背景ポートで枝分かれ'
+      : n.type === 'mix' ? 'A(奥)にB(手前)を重ねて1本に。ループ配線は1フレーム遅延(点線)'
+      : n.type === 'split' ? '1入力を2出力へコピー — 分配・フィードバック用'
       : n.type === 'glsl' ? 'この枝の入力にWebGL2でかかる自作シェーダ (β) — AI生成可'
       : n.type === 'hands' ? '両手の親指+人差し指の指フレーム。枠内/枠外ポートで枝分かれ'
       : n.type === 'xform' ? '小窓(ドラッグ移動/ホイール拡縮)か全面ミキサーでブレンド合成'
@@ -1554,6 +1685,23 @@ function renderInspector() {
       pushMasks();
       saveHash();
     }));
+  } else if (n.type === 'mix') {
+    const sel = document.createElement('label');
+    sel.textContent = 'ブレンド (B側)';
+    sel.style.cssText = 'display:flex;flex-direction:column;gap:3px;font:11px ui-monospace,monospace;color:var(--dim)';
+    const bsel = document.createElement('select');
+    for (const [v, l] of [['normal', '通常'], ['add', '加算'], ['screen', 'スクリーン'], ['multiply', '乗算']]) {
+      bsel.add(new Option(l, v));
+    }
+    bsel.value = n.blend;
+    bsel.addEventListener('change', () => { n.blend = bsel.value; applyGraph(true); });
+    sel.append(bsel);
+    paramsBox.append(sel);
+    paramsBox.append(sliderRow('B 不透明度', 0, 1, 0.01, n.op, v => {
+      n.op = v;
+      rebuildSoon();
+      saveHash();
+    }));
   } else if (n.type === 'glsl') {
     const edit = document.createElement('button');
     edit.textContent = '🧪 コードを編集 / AI生成';
@@ -1569,7 +1717,7 @@ function renderInspector() {
     fin.addEventListener('click', () => openShaderPanel('out'));
     paramsBox.append(fin);
   } else if (n.type === 'xform') {
-    const bi = () => branches.findIndex(b => b.xform === n);
+    const upid = () => { const u = unitOfXform(n); return u ? u.id : null; };
     const sel = document.createElement('label');
     sel.textContent = 'ブレンド';
     sel.style.cssText = 'display:flex;flex-direction:column;gap:3px;font:11px ui-monospace,monospace;color:var(--dim)';
@@ -1583,7 +1731,8 @@ function renderInspector() {
     paramsBox.append(sel);
     paramsBox.append(sliderRow('回転', -180, 180, 1, n.rot, v => {
       n.rot = v;
-      if (bi() >= 0) fs.setParamF32(inst, 'r' + bi(), v);
+      const u = upid();
+      if (u) fs.setParamF32(inst, 'r_' + u, v);
       saveHash();
     }));
     paramsBox.append(sliderRow('スケール', 0.1, 1.6, 0.01, n.scale, v => {
@@ -1593,7 +1742,8 @@ function renderInspector() {
     }));
     paramsBox.append(sliderRow('不透明度', 0, 1, 0.01, n.op, v => {
       n.op = v;
-      if (bi() >= 0) fs.setParamF32(inst, 'o' + bi(), v);
+      const u = upid();
+      if (u) fs.setParamF32(inst, 'o_' + u, v);
       saveHash();
     }));
     for (const [key, lbl] of [['flipH', '左右反転'], ['flipV', '上下反転']]) {
@@ -1693,7 +1843,7 @@ function packGraph() {
   const packed = {
     n: nodes.map(n => {
       const o = { i: n.id, t: n.type, x: Math.round(n.x), y: Math.round(n.y) };
-      if (n.type === 'src') o.k = n.kind === 'camera' ? 'cam' : n.kind === 'feedback' ? 'fb' : 'smp';
+      if (n.type === 'src') o.k = n.kind === 'camera' ? 'cam' : 'smp';
       if (n.type === 'filter') {
         o.f = n.name;
         if (!n.on) o.off = 1;
@@ -1708,12 +1858,13 @@ function packGraph() {
         o.c = n.code.slice(0, 20000);
         if (!n.on) o.off = 1;
       }
+      if (n.type === 'mix') o.mx = [n.blend, +n.op.toFixed(2)];
       if (n.type === 'xform') o.xf = [+n.pos[0].toFixed(1), +n.pos[1].toFixed(1),
           +n.rot.toFixed(1), +n.scale.toFixed(3), +n.op.toFixed(2), n.blend,
           n.flipH ? 1 : 0, n.flipV ? 1 : 0];
       return o;
     }),
-    e: edges.map(e => [e.from, e.fp, e.to]),
+    e: edges.map(e => [e.from, e.fp, e.to, e.tp || 0]),
   };
   return packed;
 }
@@ -1772,7 +1923,7 @@ function unpackGraph(packed) {
       for (const o of packed.n || []) {
         let n = null;
         if (o.t === 'src') n = addNode('src', o.x, o.y,
-            { kind: o.k === 'cam' ? 'camera' : o.k === 'fb' ? 'feedback' : 'sample' });
+            { kind: o.k === 'cam' ? 'camera' : 'sample' });
         else if (o.t === 'filter' && SPEC[o.f]) {
           n = addNode('filter', o.x, o.y, { name: o.f, params: o.v || {} });
           if (o.off) n.on = false;
@@ -1783,6 +1934,12 @@ function unpackGraph(packed) {
         } else if (o.t === 'glsl') {
           n = addNode('glsl', o.x, o.y, { code: typeof o.c === 'string' ? o.c : undefined });
           if (o.off) n.on = false;
+        } else if (o.t === 'mix') {
+          n = addNode('mix', o.x, o.y, Array.isArray(o.mx)
+              ? { blend: ['add', 'multiply', 'screen'].includes(o.mx[0]) ? o.mx[0] : 'normal',
+                  op: Math.min(1, Math.max(0, Number(o.mx[1]) ?? 0.5)) } : {});
+        } else if (o.t === 'split') {
+          n = addNode('split', o.x, o.y);
         } else if (o.t === 'xform' && Array.isArray(o.xf)) {
           n = addNode('xform', o.x, o.y, { pos: [Number(o.xf[0]) || 0, Number(o.xf[1]) || 0],
               rot: Number(o.xf[2]) || 0, scale: Math.min(1.6, Math.max(0.1, Number(o.xf[3]) || 0.45)),
@@ -1796,8 +1953,8 @@ function unpackGraph(packed) {
       }
       if (!nodes.some(x => x.type === 'out')) addNode('out', 900, 140);
       if (!nodes.some(x => x.type === 'src')) addNode('src', 40, 140, { kind: 'camera' });
-      for (const [f, fp, t] of packed.e || []) {
-        if (idMap[f] && idMap[t]) connect(idMap[f], Number(fp) || 0, idMap[t]);
+      for (const [f, fp, t, tp] of packed.e || []) {
+        if (idMap[f] && idMap[t]) connect(idMap[f], Number(fp) || 0, idMap[t], Number(tp) || 0);
       }
       return true;
 }
@@ -1890,6 +2047,28 @@ function addFilterNode(name, params = {}) {
 }
 function buildPalette(q) {
   palBody.replaceChildren();
+  if (!q) {
+    const cat = document.createElement('div');
+    cat.className = 'palcat';
+    const h = document.createElement('h4');
+    h.textContent = 'PRESET — 選択中の枝に一式';
+    h.style.color = 'var(--amber)';
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:7px;flex-wrap:wrap';
+    for (const [label, spec] of PRESETS) {
+      const b = document.createElement('button');
+      b.className = 'preset';
+      b.textContent = label;
+      b.addEventListener('click', () => {
+        palOverlay.classList.remove('open');
+        setBranchChain(spec, '');
+      });
+      row.append(b);
+    }
+    cat.append(h, row);
+    palBody.append(cat);
+  }
+
   for (const [label, names] of CATS) {
     const items = names.filter(n => SPEC[n]).filter(n => !q ||
         n.includes(q) || jaLabel(n).includes(q) || (JA[n] || ['', ''])[1].includes(q));
@@ -1953,16 +2132,16 @@ async function setBranchChain(spec, comment, pick = null) {
   compile();
   const br = (pick && branches.find(pick)) || targetBranch();
   if (!br) { say('出力につながる枝がありません — ●を線でつないでください', true); return; }
-  const headId = br.person ? br.person.id : br.hands ? br.hands.id : br.src.id;
-  const headFp = br.person ? br.personPort : br.hands ? br.handsPort : 0;
+  const anchorId = br.coreId, anchorFp = br.corePort;
+  if (!anchorId) { say('この枝(遅延線)にはAI適用できません — 別の枝を選んでから', true); return; }
   const tailId = br.xform ? br.xform.id : outNode().id;
   for (const f of br.filters.slice()) removeNode(f.id);
-  if (!edges.some(e => e.from === headId && e.fp === headFp && e.to === tailId)) {
-    connect(headId, headFp, tailId);
+  if (!edges.some(e => e.from === anchorId && e.fp === anchorFp && e.to === tailId)) {
+    connect(anchorId, anchorFp, tailId);
   }
   applyGraph(true);
   say(comment);
-  let cur = { id: headId, fp: headFp };
+  let cur = { id: anchorId, fp: anchorFp };
   for (const [name, over] of spec) {
     if (!SPEC[name] || filterCount() >= MAX_FILTERS) continue;
     await sleep(230);
@@ -1991,10 +2170,9 @@ function applyTransformAsk(xf, pick = null) {
   if (!br) return;
   let xn = br.xform;
   if (!xn) {
-    const headId = br.filters.length ? br.filters[br.filters.length - 1].id
-                 : br.person ? br.person.id : br.hands ? br.hands.id : br.src.id;
-    const headFp = !br.filters.length ?
-        (br.person ? br.personPort : br.hands ? br.handsPort : 0) : 0;
+    const headId = br.filters.length ? br.filters[br.filters.length - 1].id : br.coreId;
+    const headFp = br.filters.length ? 0 : br.corePort;
+    if (!headId) return;
     const outId = outNode().id;
     const e = edges.find(x => x.from === headId && x.fp === headFp && x.to === outId);
     const a = nodeById(headId);
@@ -2034,13 +2212,8 @@ const PRESETS = [
   ['⛪ 大聖堂', [['stainedglass', {}]]],
   ['👁 トリップ', [['lsd', {}]]],
 ];
-for (const [label, spec] of PRESETS) {
-  const b = document.createElement('button');
-  b.className = 'preset';
-  b.textContent = label;
-  b.addEventListener('click', () => setBranchChain(spec, ''));
-  $('presetBtns').append(b);
-}
+// presets live in the +フィルタ palette now — on demand, not as a
+// permanent strip (「必要もないのに全部出しとく」対策)
 
 // ---- built-in composer (offline "AI") --------------------------------------
 const RECIPES = [
@@ -2488,8 +2661,8 @@ function compileNodeShader(code) {    // test compile; error string or null
   try { compileGL(procGL, code); return null; } catch (e) { return String(e.message || e); }
 }
 function glslFor(src) {
-  const br = branches.find(b => b.src === src && b.glsl);
-  return br ? br.glsl : null;
+  const u = units.find(x => x.srcNode === src && x.deco && x.deco.glsl);
+  return u ? u.deco.glsl : null;
 }
 function runNodeShader(node, grab) {
   if (!node.on || !ensureProc()) return null;
@@ -2629,19 +2802,7 @@ $('btnShare').addEventListener('click', e =>
     copyText(location.href, e.currentTarget, '✅ コピー済'));
 function exportYaml() {
   compile();
-  let y = sceneYaml();
-  branches.forEach((br, i) => {
-    const on = br.filters.filter(n => n.on);
-    if (!on.length) return;
-    const lines = on.map(n => {
-      const s = SPEC[n.name];
-      const ps = s.params.map((p, j) => p.name === 'time' ? null : `${p.name}: ${+n.vals[j].toFixed(3)}`)
-          .filter(Boolean).join(', ');
-      return `      - { ${n.name}: { ${ps} } }`;
-    });
-    y = y.replace(`  - id: B${i}\n`, `  - id: B${i}\n    filters:\n${lines.join('\n')}\n`);
-  });
-  return y;
+  return sceneYaml(true);
 }
 let yamlTimer = 0;
 $('btnYaml').addEventListener('click', () => {
@@ -2700,6 +2861,7 @@ if (!gpu) {
   }
   ctx = canvas.getContext('2d');
 }
+const wantFeedback = () => units.some(u => u.delayed);
 fs.gStatus = gpu ? mod.cwrap('fs_webgpu_status', 'number', []) : () => -1;
 if (gpu) {
   fs.gReadLast = mod.cwrap('fs_webgpu_read_last', 'number', ['number', 'number']);
@@ -2708,7 +2870,6 @@ if (gpu) {
 // feedback capture state (per backend)
 const fbCpu = { px: 0, w: 0, h: 0 };
 const fbGpu = { buf: new Uint8Array(512 * 288 * 4), w: 512, h: 288, ready: false };
-const wantFeedback = () => nodes.some(n => n.type === 'src' && n.kind === 'feedback');
 
 function fallbackToCpu(why) {
   if (!gpu) return;
@@ -2777,8 +2938,8 @@ function hookCanvas(el) {
       setWipe(sx);
     } else if (dragXf) {
       dragXf.pos = [sx + dragOff[0], sy + dragOff[1]];
-      const bi = branches.findIndex(b => b.xform === dragXf);
-      if (bi >= 0) fs.setParamVec2(inst, 'p' + bi, dragXf.pos[0], dragXf.pos[1]);
+      const u = unitOfXform(dragXf);
+      if (u) fs.setParamVec2(inst, 'p_' + u.id, dragXf.pos[0], dragXf.pos[1]);
     }
   });
   el.addEventListener('pointerup', () => { dragging = false; dragXf = null; saveHash(); });
@@ -2809,7 +2970,6 @@ function updateSrcUI() {
   $('srcCam').classList.toggle('on', s.kind === 'camera');
   $('srcFile').classList.toggle('on', s.kind === 'image' || s.kind === 'video');
   $('srcSample').classList.toggle('on', s.kind === 'sample');
-  $('srcFb').classList.toggle('on', s.kind === 'feedback');
 }
 function releaseSource(s) {
   if (s.kind === 'video' && s.video) s.video.pause();
@@ -2844,14 +3004,6 @@ async function useCameraFor(s) {
   }
 }
 $('srcCam').addEventListener('click', () => { const s = selectedSrc(); if (s) useCameraFor(s); });
-$('srcFb').addEventListener('click', () => {
-  const s = selectedSrc();
-  if (!s) return;
-  releaseSource(s);
-  s.kind = 'feedback';
-  renderGraph(); updateSrcUI(); saveHash();
-  say('この入力は1フレーム前の出力になります — 変形/合成で少し縮小+回転すると無限トンネル');
-});
 $('srcSample').addEventListener('click', () => {
   const s = selectedSrc();
   if (!s) return;
@@ -2968,21 +3120,6 @@ function feedSources(t) {
     } else if (s.kind === 'sample') {
       if (grab.width !== FEED_W) { grab.width = FEED_W; grab.height = FEED_H; }
       drawSample(g, FEED_W, FEED_H, t + i * 13.7);
-    } else if (s.kind === 'feedback') {
-      // 1フレーム前の自分の出力を食べる (CPU=前フレームの surface,
-      // WebGPU=非同期リードバック)
-      let data = null, w = 0, h = 0;
-      if (!gpu && fbCpu.px) {
-        w = fbCpu.w; h = fbCpu.h;
-        data = new Uint8Array(mod.HEAPU8.buffer, fbCpu.px, w * h * 4);
-      } else if (gpu && fbGpu.ready) {
-        w = fbGpu.w; h = fbGpu.h; data = fbGpu.buf;
-      }
-      if (!data) return;
-      const fptr = fs.imageBuffer(inst, 'in' + i, w, h);
-      mod.HEAPU8.set(data, fptr);
-      fs.commitImage(inst, 'in' + i, w, h);
-      return;
     } else return;
     let data = null;
     const gn = glslFor(s);
@@ -2992,6 +3129,21 @@ function feedSources(t) {
     mod.HEAPU8.set(data, ptr);
     fs.commitImage(inst, 'in' + i, grab.width, grab.height);
   });
+  // delay lines eat the previous rendered frame
+  if (wantFeedback()) {
+    let data = null, w = 0, h = 0;
+    if (!gpu && fbCpu.px) {
+      w = fbCpu.w; h = fbCpu.h;
+      data = new Uint8Array(mod.HEAPU8.buffer, fbCpu.px, w * h * 4);
+    } else if (gpu && fbGpu.ready) {
+      w = fbGpu.w; h = fbGpu.h; data = fbGpu.buf;
+    }
+    if (data) {
+      const fptr = fs.imageBuffer(inst, 'inFB', w, h);
+      mod.HEAPU8.set(data, fptr);
+      fs.commitImage(inst, 'inFB', w, h);
+    }
+  }
 }
 
 // ---- boot ------------------------------------------------------------------
@@ -3018,6 +3170,10 @@ renderInspector();
 updateSrcUI();
 updateHint();
 updateBar();
+// theater by default — the video owns the screen, the dock floats
+// (「画面スクロール必須なのなんとかならんか」). ⛶で従来レイアウトに戻せる
+setTheater(true);
+if (COARSE) { dock.hidden = true; $('dockRestore').classList.add('show'); }
 // camera sources start on the sample so nothing is black while the
 // permission prompt is up; the webcam takes over the moment it lands.
 for (const s of nodes.filter(n => n.type === 'src' && n.kind === 'camera')) {
