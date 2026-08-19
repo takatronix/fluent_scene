@@ -300,6 +300,18 @@ FS_PARAM(2, dither, 0.5f, Scalar)
 FS_PARAM(3, saturate, 0.25f, Scalar)
 FS_END(Pixelart)
 
+FS_FILTER_STATEFUL(Inkline, inkline, FS_INKLINE,
+          "coherent ink lines (ETF/FDoG, Kang 2007) — the edge tangent "
+          "flow lives in a persistent field, one smoothing iteration per "
+          "frame; lines composite over the source, or set `matte` for "
+          "lines-on-transparent to stack as its own layer")
+FS_PARAM(0, width, 1.6f, Length)
+FS_PARAM(1, ink, 1.0f, Scalar)
+FS_PARAM(2, coherence, 0.8f, Scalar)
+FS_PARAM(3, detail, 1.0f, Scalar)
+FS_PARAM(4, matte, 0.0f, Scalar)
+FS_END(Inkline)
+
 // ---- analog television -----------------------------------------------------
 // The pair reads: signal first, tube second —
 //   layer.filter(Ntsc().time(t)).filter(Crt())

@@ -61,6 +61,6 @@ void main() {
     // Filters keep the source's alpha shape; FS_OPACITY scales it (the
     // same rule as the CPU reference).
     float src_a = texture(src_tex, v_uv).a;
-    float a = mode == FS_OPACITY ? src_a * res.a : src_a;
+    float a = (mode == FS_OPACITY || mode == FS_INKLINE) ? src_a * res.a : src_a;
     o_color = vec4(res.rgb * a, a);
 }

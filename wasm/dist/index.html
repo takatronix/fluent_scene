@@ -193,7 +193,7 @@ const HIDDEN = new Set(['lut', 'face', 'opacity']);
 const CATALOG = JSON.parse(fs.filtersJson()).filter(f => !HIDDEN.has(f.name));
 const CATS = [
   ['ANALOG', ['ntsc', 'crt']],
-  ['PAINT', ['impressionist', 'anime', 'watercolor', 'sumie', 'stainedglass', 'pixelart', 'wobble']],
+  ['PAINT', ['impressionist', 'anime', 'inkline', 'watercolor', 'sumie', 'stainedglass', 'pixelart', 'wobble']],
   ['ART', ['notebook', 'oilpaint', 'sketch', 'toon', 'halftone', 'emboss', 'edge_sobel', 'posterize', 'solarize']],
   ['LENS', ['bokeh', 'blur', 'bilateral', 'median', 'motion_blur', 'zoom_blur', 'sharpen', 'pixelate']],
   ['TRIP', ['lsd', 'fractal', 'swirl', 'ripple']],
@@ -267,6 +267,7 @@ const PRESETS = [
   ['✏️ ノート', 'notebook', 'wobble', {}],
   ['🎨 油絵', 'oilpaint', 'median', { radius: 7, levels: 20 }],
   ['🌸 アニメ', 'anime', '', {}],
+  ['🖋 アニメ・線v2', 'anime', 'inkline', { lines: 0 }],
   ['💧 水彩', 'watercolor', '', {}],
   ['🖌 水墨画', 'sumie', '', {}],
   ['🖌 水墨画・抽象', 'oilpaint', 'sumie', { radius: 8 }],

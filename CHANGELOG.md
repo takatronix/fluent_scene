@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.13.1 — 2026-08-19 (inkline: 首尾一貫線 ETF/FDoG)
+
+- **inkline** (`FS_INKLINE=47`): Kang 2007 の Coherent Line Drawing。
+  エッジ接線流 (ETF) を P1 永続フィールドに持ち**1フレーム=1平滑反復**
+  (数フレームで収束、ライブ映像では追従)。線は流れに直交する DoG を
+  ストリームライン沿いに積分 — v1 anime の等方 XDoG (「結構下手」評) と
+  違い、線が繋がった一本のストロークになる
+- `matte` パラメータ: 0=ソースに線を合成 (チェーン向き) / 1=**透明地に
+  線だけ** (オーナー指示の「線を別レイヤーに」— レイヤーとして重ねる)。
+  filter が α を書く2例目 (opacity に続く)
+- params: width / ink / coherence / detail / matte。
+  デモに「🖋 アニメ・線v2」プリセット (anime 線なし → inkline チェーン)
+- golden `inkline` (4tick 収束後 5タイル)、Vulkan 照合 **max|Δ|=1**
+
 ## 0.13.0 — 2026-08-19 (レイヤー画像マスク M1)
 
 - **Layer.mask** — 画像駆動アルファマスク (設計書

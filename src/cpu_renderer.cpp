@@ -482,7 +482,9 @@ void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext,
             // Filters keep the source's alpha shape (resampling filters
             // approximate; exact per-filter alpha is refined with L1 golden
             // work). FS_OPACITY scales it.
-            const float a = f.mode == FS_OPACITY ? src_a * out.w : src_a;
+            const float a = (f.mode == FS_OPACITY || f.mode == FS_INKLINE)
+                                ? src_a * out.w
+                                : src_a;
             d[0] = out.x * a;
             d[1] = out.y * a;
             d[2] = out.z * a;

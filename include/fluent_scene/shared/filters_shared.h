@@ -76,6 +76,7 @@ const int FS_IMPRESSIONIST = 43;
 const int FS_STAINEDGLASS = 44;
 const int FS_PIXELART = 45;
 const int FS_WOBBLE = 46;
+const int FS_INKLINE = 47;
 
 #ifdef FS_SAMPLE
 
@@ -1102,6 +1103,128 @@ vec3 fs_sumie_shade(vec2 uv, float ink, float bleed_px, float dry,
 
 #endif  // FS_SAMPLE_STATE
 
+// ---- inkline: coherent line drawing ----------------------------------------
+// Kang 2007's Coherent Line Drawing: smooth the edge tangent field (ETF),
+// then run a difference-of-Gaussians ACROSS the flow and accumulate it
+// ALONG the flow's streamline — lines connect into strokes instead of
+// crumbling into pixels (the v1 anime filter's weakness, by owner review).
+// ETF normally needs 2-3 smoothing passes; here the field is a persistent
+// P1 state and one iteration runs per frame, converging across frames and
+// simply tracking on live video. State: xy = tangent, z = smoothed edge
+// magnitude, w = age.
+
+float fs_ink_luma(vec2 uv) { return fs_luma(FS_SAMPLE(uv)); }
+
+#ifdef FS_SAMPLE_STATE
+
+vec4 fs_inkline_flow(vec2 uv, float width_px, float ink, float coherence,
+                     float detail, float matte) {
+    float res_y = 1.0 / FS_TEXEL.y;
+    float u = max(res_y / 400.0, 0.25);
+    vec4 st = FS_SAMPLE_STATE(uv);
+    // raw structure at a small scale
+    float e = 1.3 * u;
+    float gx = fs_ink_luma(uv + FS_TEXEL * vec2(e, 0.0))
+             - fs_ink_luma(uv - FS_TEXEL * vec2(e, 0.0));
+    float gy = fs_ink_luma(uv + FS_TEXEL * vec2(0.0, e))
+             - fs_ink_luma(uv - FS_TEXEL * vec2(0.0, e));
+    float gm = length(vec2(gx, gy));
+    vec2 t0 = gm > 1e-5 ? vec2(gy, -gx) / gm : vec2(st.x, st.y);
+    // one ETF iteration: neighbors vote with their previous tangents,
+    // weighted by their edge magnitude and alignment (Kang's kernel,
+    // radius 3u, sign-aligned so antiparallel tangents reinforce)
+    vec2 tc = vec2(st.x, st.y);
+    float tl = length(tc);
+    if (tl < 1e-4) {
+        tc = t0;
+    } else {
+        tc = tc / tl;
+    }
+    vec2 sum = t0 * (gm * 2.0);
+    for (int i = 0; i < 8; ++i) {
+        float a = 0.785398163 * float(i) + 0.39;
+        vec4 n = FS_SAMPLE_STATE(uv + FS_TEXEL * (vec2(cos(a), sin(a)) * (3.0 * u)));
+        vec2 tn = vec2(n.x, n.y);
+        float al = dot(tn, tc);
+        if (al < 0.0) {
+            tn = vec2(-tn.x, -tn.y);
+            al = -al;
+        }
+        sum = sum + tn * (n.z * (0.3 + 0.7 * al));
+    }
+    float sl = length(sum);
+    vec2 tnew = sl > 1e-5 ? sum / sl : t0;
+    float co = clamp(coherence, 0.0, 1.0);
+    vec2 tmix = tc * (1.0 - co) + tnew * co;
+    float ml = length(tmix);
+    tmix = ml > 1e-5 ? tmix / ml : tnew;
+    float zm = mix(st.z, gm, 0.5);
+    return vec4(tmix.x, tmix.y, zm, st.w + 0.016);
+}
+
+// Cross-flow DoG at one streamline point.
+float fs_ink_cross(vec2 uv, vec2 nrm, float sc) {
+    float c1 = fs_ink_luma(uv) * 0.44
+             + (fs_ink_luma(uv + FS_TEXEL * (nrm * sc))
+                + fs_ink_luma(uv - FS_TEXEL * (nrm * sc))) * 0.28;
+    float s2 = sc * 1.9;
+    float c2 = fs_ink_luma(uv) * 0.30
+             + (fs_ink_luma(uv + FS_TEXEL * (nrm * s2))
+                + fs_ink_luma(uv - FS_TEXEL * (nrm * s2))) * 0.24
+             + (fs_ink_luma(uv + FS_TEXEL * (nrm * (s2 * 1.8)))
+                + fs_ink_luma(uv - FS_TEXEL * (nrm * (s2 * 1.8)))) * 0.11;
+    return c1 - c2;
+}
+
+vec4 fs_inkline_shade(vec2 uv, float width_px, float ink, float coherence,
+                      float detail, float matte) {
+    vec4 st = FS_SAMPLE_STATE(uv);
+    vec2 t = vec2(st.x, st.y);
+    float tl = length(t);
+    if (tl < 1e-4) {
+        t = vec2(1.0, 0.0);
+    } else {
+        t = t / tl;
+    }
+    vec2 nrm = vec2(t.y, -t.x);
+    float sc = max(width_px, 0.7);
+    // accumulate the cross DoG along the streamline (walk both ways,
+    // re-reading the field so the walk bends with the stroke)
+    float acc = fs_ink_cross(uv, nrm, sc) * 0.26;
+    vec2 pf = uv;
+    vec2 pb = uv;
+    vec2 tf = t;
+    vec2 tb = t;
+    for (int i = 0; i < 4; ++i) {
+        pf = pf + FS_TEXEL * (tf * (sc * 1.4));
+        pb = pb - FS_TEXEL * (tb * (sc * 1.4));
+        vec4 nf = FS_SAMPLE_STATE(pf);
+        vec4 nb = FS_SAMPLE_STATE(pb);
+        vec2 tfn = vec2(nf.x, nf.y);
+        vec2 tbn = vec2(nb.x, nb.y);
+        if (dot(tfn, tf) < 0.0) tfn = vec2(-tfn.x, -tfn.y);
+        if (dot(tbn, tb) < 0.0) tbn = vec2(-tbn.x, -tbn.y);
+        float lf = length(tfn);
+        float lb = length(tbn);
+        tf = lf > 1e-4 ? tfn / lf : tf;
+        tb = lb > 1e-4 ? tbn / lb : tb;
+        float w = 0.26 * exp(-float((i + 1) * (i + 1)) * 0.10);
+        acc += fs_ink_cross(pf, vec2(tf.y, -tf.x), sc) * w;
+        acc += fs_ink_cross(pb, vec2(tb.y, -tb.x), sc) * w;
+    }
+    float sens = 0.010 / (0.35 + 0.65 * clamp(detail, 0.0, 2.0));
+    float line = smoothstep(sens, sens * 6.0, -acc) * clamp(ink, 0.0, 2.0);
+    line = clamp(line, 0.0, 1.0);
+    vec3 inkc = vec3(0.07, 0.065, 0.09);
+    if (matte > 0.5) {
+        return vec4(inkc, line);
+    }
+    vec3 srcc = FS_SAMPLE(uv);
+    return vec4(mix(srcc, inkc, line), 1.0);
+}
+
+#endif  // FS_SAMPLE_STATE
+
 // Impressionist brush dabs, single pass. Litwinowicz 1997 lays short
 // strokes along the local edge tangent and clips them at strong edges;
 // Hertzmann 1998 layers big background strokes under small ones. Both are
@@ -1967,6 +2090,11 @@ vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p
     else if (mode == FS_WATERCOLOR)      c = fs_watercolor(uv, p0, p1, p2, p3, p4);
 #ifdef FS_SAMPLE_STATE
     else if (mode == FS_SUMIE)           c = fs_sumie_shade(uv, p0, p1, p2, p3, p4);
+    else if (mode == FS_INKLINE) {
+        vec4 r = fs_inkline_shade(uv, p0, p1, p2, p3, p4);
+        c = vec3(r.x, r.y, r.z);
+        alpha = r.w;
+    }
 #endif
     else if (mode == FS_IMPRESSIONIST)   c = fs_impressionist(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_STAINEDGLASS)    c = fs_stainedglass(uv, p0, p1, p2, p3, p4);
@@ -1982,6 +2110,9 @@ vec4 fs_apply_state(int mode, vec2 uv, float p0, float p1, float p2, float p3,
                     float p4) {
     if (mode == FS_SUMIE) {
         return fs_sumie_flow(uv, p0, p1, p2, p3, p4);
+    }
+    if (mode == FS_INKLINE) {
+        return fs_inkline_flow(uv, p0, p1, p2, p3, p4);
     }
     return FS_SAMPLE_STATE(uv);
 }

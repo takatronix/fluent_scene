@@ -439,6 +439,32 @@ void sceneSumieLiving(Renderer& r) {
     g_max_diff_limit = saved_limit;
 }
 
+// Inkline's ETF field converges over frames (P1 state) — render 4 ticks,
+// then compare. Shares the stateful waiver: nearest state reads feed
+// streamline walks, so a whisker of drift moves a stroke.
+void sceneInkline(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Inkline());
+    stage.image(view).frame({170, 10, 150, 130}).filter(Inkline().width(3.0f).ink(1.5f));
+    stage.image(view).frame({330, 10, 140, 130})
+        .filter(Anime().lines(0.0f)).filter(Inkline());
+    stage.image(view).frame({10, 160, 150, 130}).filter(Inkline().matte(1.0f));
+    stage.image(view).frame({170, 160, 150, 130})
+        .filter(Inkline().detail(0.4f).coherence(0.3f));
+    for (int i = 0; i < 3; ++i) {
+        r.render(stage, 0.016f);
+    }
+    const int saved_limit = g_max_diff_limit;
+    const double saved_ratio = g_over_ratio_limit;
+    g_max_diff_limit = 255;
+    g_over_ratio_limit = 0.02;
+    checkScene("inkline", r.render(stage, 0.016f));
+    g_max_diff_limit = saved_limit;
+    g_over_ratio_limit = saved_ratio;
+}
+
 // Impressionist wears the covering dab with the best score — a hard argmax
 // like oilpaint's quadrant pick, but a flipped tie here repaints a whole
 // DAB (hundreds of texels), so the ratio guard sits above the default.
@@ -698,6 +724,7 @@ int main(int argc, char** argv) {
     sceneWatercolor(r);
     sceneSumie(r);
     sceneSumieLiving(r);
+    sceneInkline(r);
     sceneImpressionist(r);
     sceneStainedglassPixelart(r);
     sceneLayerMask(r);
