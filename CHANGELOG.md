@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.13.0 — 2026-08-19 (レイヤー画像マスク M1)
+
+- **Layer.mask** — 画像駆動アルファマスク (設計書
+  docs/design/layer_mask_input.ja.md): マスク画像の **A** がレイヤーの
+  bounds に正規化UVでマップされ、**フィルタ後**の完成画素の α に乗算。
+  `maskInvert` / `maskFeather` (論理単位、7-tap ディスク)。
+  人物セグメンテーション等の NN 外段マスクの受け皿
+- C++ `layer.mask(view)...` / C ABI `fs_layer_set_mask(inst, layer,
+  input, w, h, invert, feather)`。Scene YAML 露出は次版
+- 実装: CPU は bounds マップの bilinear α 乗算、GPU 2系は
+  layer_mask.frag のフルスクリーンパス (composite 前)。golden
+  `layer_mask` 5タイル、Vulkan 照合 max|Δ|=2
+- 「人物だけ残して背景だけ水墨」は 2 レイヤー構成 (bg=filter+mask
+  invert / fg=mask) で表現 — セグメンテーション PoC は次弾
+
 ## 0.12.1 — 2026-08-19 (sumie: 実物和紙 + フィルタ画像パラメータの一般化)
 
 - **sumie `paper` 画像パラメータ**: 実物の和紙スキャンを紙として使える

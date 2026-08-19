@@ -526,6 +526,33 @@ void sceneNotebook(Renderer& r) {
     g_over_ratio_limit = saved_ratio;
 }
 
+// Image-driven layer masks (docs/design/layer_mask_input.ja.md): a radial
+// alpha over the layer's bounds, plain / inverted / feathered / with a
+// filter first (mask applies to the FINISHED pixels).
+void sceneLayerMask(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    std::vector<uint8_t> mimg(64 * 64 * 4, 0);
+    for (int y = 0; y < 64; ++y) {
+        for (int x = 0; x < 64; ++x) {
+            const float dx = (x - 31.5f) / 32.0f;
+            const float dy = (y - 31.5f) / 32.0f;
+            const float d = std::sqrt(dx * dx + dy * dy);
+            const float a = std::clamp(1.6f - 2.2f * d, 0.0f, 1.0f);
+            mimg[(static_cast<size_t>(y) * 64 + x) * 4 + 3] =
+                static_cast<uint8_t>(a * 255.0f + 0.5f);
+        }
+    }
+    const ImageView mview{64, 64, mimg.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).mask(mview);
+    stage.image(view).frame({170, 10, 150, 130}).mask(mview).maskInvert(true);
+    stage.image(view).frame({330, 10, 140, 130}).mask(mview).maskFeather(9.0f);
+    stage.image(view).frame({10, 160, 150, 130}).grayscale().mask(mview);
+    stage.image(view).frame({170, 160, 150, 130}).mask(mview).maskInvert(true).maskFeather(14.0f);
+    checkScene("layer_mask", r.render(stage, 0.0f));
+}
+
 void sceneAnimation(Renderer& r) {
     // §13-6: "the screen at t = 0.15 s" must be reproducible.
     Stage stage(320, 200);
@@ -673,6 +700,7 @@ int main(int argc, char** argv) {
     sceneSumieLiving(r);
     sceneImpressionist(r);
     sceneStainedglassPixelart(r);
+    sceneLayerMask(r);
     sceneTv(r);
     sceneAnimation(r);
     sceneImagePaste(r);

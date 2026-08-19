@@ -546,6 +546,21 @@ Layer& Layer::shadow(const Shadow& s) {
     return *this;
 }
 
+Layer& Layer::mask(const ImageView& v) {
+    mask_ = v;
+    return *this;
+}
+
+Layer& Layer::maskInvert(bool on) {
+    mask_invert_ = on;
+    return *this;
+}
+
+Layer& Layer::maskFeather(float logical) {
+    mask_feather_ = logical;
+    return *this;
+}
+
 Layer& Layer::border(const Border& b) {
     border_ = b;
     return *this;

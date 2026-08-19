@@ -199,6 +199,20 @@ public:
     }
     const std::optional<Shadow>& shadowValue() const { return shadow_; }
 
+    /// An image-driven alpha mask over the layer's FINISHED pixels (after
+    /// filters, before compositing): the mask's ALPHA channel, mapped over
+    /// the layer's bounds, multiplies the layer's alpha — 0 hides, 1 shows.
+    /// Same borrowed-pixels lifetime contract as image content. An invalid
+    /// view means no mask. Design: docs/design/layer_mask_input.ja.md.
+    Layer& mask(const ImageView& v);
+    /// Flips the mask (show where the mask is transparent).
+    Layer& maskInvert(bool on);
+    /// Softens the mask edge by a radius in logical units.
+    Layer& maskFeather(float logical);
+    const ImageView& maskValue() const { return mask_; }
+    bool maskInvertValue() const { return mask_invert_; }
+    float maskFeatherValue() const { return mask_feather_; }
+
     /// A border stroked along the clip shape (corner radius included).
     Layer& border(const Border& b = Border{});
     Layer& border(float width, Color c) { return border(Border{width, c}); }
@@ -443,6 +457,9 @@ private:
     std::optional<Shadow> shadow_;
     std::optional<Border> border_;
     std::vector<Filter> filters_;
+    ImageView mask_{};
+    bool mask_invert_ = false;
+    float mask_feather_ = 0;
 
     // content style
     Color color_ = Color::White;

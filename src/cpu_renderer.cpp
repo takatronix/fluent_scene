@@ -292,6 +292,73 @@ using namespace glsl;
 #undef FS_SAMPLE_STATE
 }  // namespace filter_bodies
 
+// Image-driven layer mask (docs/design/layer_mask_input.ja.md): the mask's
+// ALPHA, mapped over the layer's bounds, multiplies the finished offscreen.
+// Bilinear with the GPU sampler's half-texel convention; the 7-tap feather
+// disc mirrors layer_mask.frag exactly.
+
+float maskAlphaBilinear(const ImageView& v, float ux, float uy) {
+    ux = std::clamp(ux, 0.0f, 1.0f);
+    uy = std::clamp(uy, 0.0f, 1.0f);
+    const float fx = ux * v.width - 0.5f;
+    const float fy = uy * v.height - 0.5f;
+    const int x0 = std::clamp(static_cast<int>(std::floor(fx)), 0,
+                              static_cast<int>(v.width) - 1);
+    const int y0 = std::clamp(static_cast<int>(std::floor(fy)), 0,
+                              static_cast<int>(v.height) - 1);
+    const int x1 = std::min(x0 + 1, static_cast<int>(v.width) - 1);
+    const int y1 = std::min(y0 + 1, static_cast<int>(v.height) - 1);
+    const float tx = std::clamp(fx - x0, 0.0f, 1.0f);
+    const float ty = std::clamp(fy - y0, 0.0f, 1.0f);
+    auto a = [&v](int x, int y) {
+        return v.pixels[static_cast<size_t>(y) * v.stride() + x * 4 + 3] / 255.0f;
+    };
+    const float top = a(x0, y0) * (1 - tx) + a(x1, y0) * tx;
+    const float bottom = a(x0, y1) * (1 - tx) + a(x1, y1) * tx;
+    return top * (1 - ty) + bottom * ty;
+}
+
+void applyLayerMask(Buf& buf, const Layer& layer, float scale, Rect ext, Rect bounds) {
+    const ImageView& mv = layer.maskValue();
+    const float ax = ext.w / std::max(bounds.w, 1e-4f);
+    const float bx = (ext.x - bounds.x) / std::max(bounds.w, 1e-4f);
+    const float ay = ext.h / std::max(bounds.h, 1e-4f);
+    const float by = (ext.y - bounds.y) / std::max(bounds.h, 1e-4f);
+    const float feather_px = layer.maskFeatherValue() * scale;
+    const float tx = 1.0f / buf.w;
+    const float ty = 1.0f / buf.h;
+    auto mask_at = [&](float uu, float vv) {
+        return maskAlphaBilinear(mv, uu * ax + bx, vv * ay + by);
+    };
+    for (int y = 0; y < buf.h; ++y) {
+        for (int x = 0; x < buf.w; ++x) {
+            const float uu = (x + 0.5f) * tx;
+            const float vv = (y + 0.5f) * ty;
+            float m;
+            if (feather_px > 0.01f) {
+                m = mask_at(uu, vv) * 0.4f;
+                for (int i = 0; i < 6; ++i) {
+                    const float a = 1.0471976f * i + 0.2618f;
+                    m += mask_at(uu + std::cos(a) * feather_px * tx,
+                                 vv + std::sin(a) * feather_px * ty) *
+                         0.1f;
+                }
+            } else {
+                m = mask_at(uu, vv);
+            }
+            m = std::clamp(m, 0.0f, 1.0f);
+            if (layer.maskInvertValue()) {
+                m = 1.0f - m;
+            }
+            float* d = buf.at(x, y);
+            d[0] *= m;
+            d[1] *= m;
+            d[2] *= m;
+            d[3] *= m;
+        }
+    }
+}
+
 // Separable gaussian blur on the premultiplied buffer (radius in buffer px).
 void gaussianBlur(Buf& buf, float radius_px) {
     if (radius_px <= 0.01f || buf.w == 0 || buf.h == 0) {
@@ -946,6 +1013,9 @@ struct CpuRenderer::Impl {
                 st = &entry;
             }
             applyFilter(buf, f, scale, ext, st);
+        }
+        if (layer.maskValue().valid()) {
+            applyLayerMask(buf, layer, scale, ext, r.bounds);
         }
 
         const Mat23 inv = m.inverse();

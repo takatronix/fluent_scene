@@ -76,6 +76,9 @@ const uint32_t kFilterFrag[] =
 const uint32_t kFilterStateFrag[] =
 #include "filter_state.frag.inc"
     ;
+const uint32_t kLayerMaskFrag[] =
+#include "layer_mask.frag.inc"
+    ;
 const uint32_t kBlurFrag[] =
 #include "blur.frag.inc"
     ;
@@ -230,6 +233,7 @@ struct VulkanRenderer::Impl {
     VkPipeline pipe_composite[4] = {};
     VkPipeline pipe_filter = VK_NULL_HANDLE;
     VkPipeline pipe_filter_state = VK_NULL_HANDLE;
+    VkPipeline pipe_layer_mask = VK_NULL_HANDLE;
     VkPipeline pipe_blur = VK_NULL_HANDLE;
     VkPipeline pipe_unpremul = VK_NULL_HANDLE;  // RGBA8
 
@@ -643,6 +647,7 @@ struct VulkanRenderer::Impl {
         VkShaderModule image = makeModule(kImageFrag, sizeof kImageFrag);
         VkShaderModule filter = makeModule(kFilterFrag, sizeof kFilterFrag);
         VkShaderModule filter_state = makeModule(kFilterStateFrag, sizeof kFilterStateFrag);
+        VkShaderModule layer_mask = makeModule(kLayerMaskFrag, sizeof kLayerMaskFrag);
         VkShaderModule blur = makeModule(kBlurFrag, sizeof kBlurFrag);
         VkShaderModule composite = makeModule(kCompositeFrag, sizeof kCompositeFrag);
         VkShaderModule unpremul = makeModule(kUnpremulFrag, sizeof kUnpremulFrag);
@@ -662,12 +667,14 @@ struct VulkanRenderer::Impl {
         pipe_filter = makePipeline(fullscreen, filter, layout_tex, kColor, overwriteState());
         pipe_filter_state =
             makePipeline(fullscreen, filter_state, layout_tex, kColor, overwriteState());
+        pipe_layer_mask =
+            makePipeline(fullscreen, layer_mask, layout_tex, kColor, overwriteState());
         pipe_blur = makePipeline(fullscreen, blur, layout_tex, kColor, overwriteState());
         pipe_unpremul = makePipeline(fullscreen, unpremul, layout_tex, VK_FORMAT_R8G8B8A8_UNORM,
                                      overwriteState());
 
         for (VkShaderModule m : {quad, fullscreen, shape_mask, glyph_mask, mask_comp, shape_color,
-                                 image, filter, filter_state, blur, composite, unpremul}) {
+                                 image, filter, filter_state, layer_mask, blur, composite, unpremul}) {
             vkDestroyShaderModule(device, m, nullptr);
         }
     }
@@ -697,7 +704,8 @@ struct VulkanRenderer::Impl {
         destroyBuffer(staging);
         destroyBuffer(points_ssbo);
         destroyBuffer(dummy_ssbo);
-        for (VkPipeline p : {pipe_mask_shape, pipe_mask_glyph, pipe_filter, pipe_filter_state, pipe_blur,
+        for (VkPipeline p : {pipe_mask_shape, pipe_mask_glyph, pipe_filter, pipe_filter_state,
+                             pipe_layer_mask, pipe_blur,
                              pipe_unpremul}) {
             if (p) {
                 vkDestroyPipeline(device, p, nullptr);
@@ -1024,6 +1032,9 @@ struct VulkanRenderer::Impl {
             if (f.image.valid()) {
                 uploadContentImage(f.image);
             }
+        }
+        if (layer.maskValue().valid()) {
+            uploadContentImage(layer.maskValue());
         }
         for (const auto& child : layer.sublayers()) {
             prepassLayer(*child);
@@ -1604,6 +1615,29 @@ struct VulkanRenderer::Impl {
                            push);
             buf->in_use = false;
             buf = dst;
+        }
+
+        if (layer.maskValue().valid()) {
+            auto mit = image_cache.find(layer.maskValue().pixels);
+            if (mit != image_cache.end()) {
+                endTarget();
+                toSampled(*buf);
+                Image* dst = acquireTransient(bw, bh, VK_FORMAT_R32G32B32A32_SFLOAT);
+                ensureTarget(*dst);
+                Push push{};
+                push.pa[0] = ext.w / std::max(r.bounds.w, 1e-4f);
+                push.pa[1] = (ext.x - r.bounds.x) / std::max(r.bounds.w, 1e-4f);
+                push.pa[2] = ext.h / std::max(r.bounds.h, 1e-4f);
+                push.pa[3] = (ext.y - r.bounds.y) / std::max(r.bounds.h, 1e-4f);
+                push.pb[0] = layer.maskInvertValue() ? 1.0f : 0.0f;
+                push.pb[1] = layer.maskFeatherValue() * scale;
+                drawFullscreen(pipe_layer_mask,
+                               texSet(buf->view, sampler_nearest, mit->second.image.view,
+                                      sampler_linear_edge),
+                               push);
+                buf->in_use = false;
+                buf = dst;
+            }
         }
 
         endTarget();

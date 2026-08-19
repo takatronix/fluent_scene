@@ -345,6 +345,32 @@ const char* fs_drain_events(FsInstance* inst) {
 EMSCRIPTEN_KEEPALIVE
 void fs_destroy(FsInstance* inst) { delete inst; }
 
+/// Sets an image-driven alpha mask on a layer (post-filter; the mask's
+/// ALPHA over the layer's bounds multiplies the layer's alpha). The input
+/// buffer comes from fs_image_buffer at this exact w×h; an empty input
+/// name clears the mask. `feather` is in logical units.
+EMSCRIPTEN_KEEPALIVE
+int fs_layer_set_mask(FsInstance* inst, const char* layer_id, const char* input, int w, int h,
+                      int invert, float feather) {
+    Layer* target = inst->scene->stage().find(layer_id);
+    if (target == nullptr) {
+        return 0;
+    }
+    if (input == nullptr || input[0] == '\0') {
+        target->mask(ImageView{});
+        return 1;
+    }
+    auto it = inst->images.find(input);
+    if (it == inst->images.end() || it->second.size() < static_cast<size_t>(w) * h * 4) {
+        return 0;
+    }
+    target->mask(ImageView{static_cast<uint32_t>(w), static_cast<uint32_t>(h),
+                           it->second.data(), 0})
+        .maskInvert(invert != 0)
+        .maskFeather(feather);
+    return 1;
+}
+
 /// Binds a committed image input as a filter's image parameter (sumie's
 /// `paper`, a `lut` grade atlas, ...). The input's buffer must have been
 /// filled via fs_image_buffer at this exact w×h; an empty input name

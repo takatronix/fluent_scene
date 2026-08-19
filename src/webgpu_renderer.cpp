@@ -215,6 +215,7 @@ struct WebGPURenderer::Impl {
     WGPURenderPipeline pipe_composite[4] = {};
     WGPURenderPipeline pipe_filter = nullptr;
     WGPURenderPipeline pipe_filter_state = nullptr;
+    WGPURenderPipeline pipe_layer_mask = nullptr;
     WGPURenderPipeline pipe_blur = nullptr;
     WGPURenderPipeline pipe_unpremul = nullptr;  // rgba8unorm
     WGPURenderPipeline pipe_present = nullptr;   // surface format
@@ -550,6 +551,7 @@ struct WebGPURenderer::Impl {
         WGPUShaderModule image = makeModule(kImageFragWgsl);
         WGPUShaderModule filter = makeModule(kFilterFragWgsl);
         WGPUShaderModule filter_state = makeModule(kFilterStateFragWgsl);
+        WGPUShaderModule layer_mask = makeModule(kLayerMaskFragWgsl);
         WGPUShaderModule blur = makeModule(kBlurFragWgsl);
         WGPUShaderModule composite = makeModule(kCompositeFragWgsl);
         WGPUShaderModule unpremul = makeModule(kUnpremulFragWgsl);
@@ -577,6 +579,7 @@ struct WebGPURenderer::Impl {
         pipe_filter = makePipeline(fullscreen, filter, layout_tex, kColor, nullptr, false);
         pipe_filter_state = makePipeline(fullscreen, filter_state, layout_tex,
                                          WGPUTextureFormat_RGBA32Float, nullptr, false);
+        pipe_layer_mask = makePipeline(fullscreen, layer_mask, layout_tex, kColor, nullptr, false);
         pipe_blur = makePipeline(fullscreen, blur, layout_tex, kColor, nullptr, false);
         pipe_unpremul = makePipeline(fullscreen, unpremul, layout_tex,
                                      WGPUTextureFormat_RGBA8Unorm, nullptr, false);
@@ -586,8 +589,8 @@ struct WebGPURenderer::Impl {
         }
 
         for (WGPUShaderModule m : {quad, fullscreen, shape_mask, glyph_mask, mask_comp,
-                                   shape_color, image, filter, filter_state, blur, composite,
-                                   unpremul, present}) {
+                                   shape_color, image, filter, filter_state, layer_mask, blur,
+                                   composite, unpremul, present}) {
             wgpuShaderModuleRelease(m);
         }
     }
@@ -636,6 +639,7 @@ struct WebGPURenderer::Impl {
         }
         releasePipe(pipe_filter);
         releasePipe(pipe_filter_state);
+        releasePipe(pipe_layer_mask);
         releasePipe(pipe_blur);
         releasePipe(pipe_unpremul);
         releasePipe(pipe_present);
@@ -945,6 +949,9 @@ struct WebGPURenderer::Impl {
             if (f.image.valid()) {
                 uploadContentImage(f.image);
             }
+        }
+        if (layer.maskValue().valid()) {
+            uploadContentImage(layer.maskValue());
         }
         for (const auto& child : layer.sublayers()) {
             prepassLayer(*child);
@@ -1500,6 +1507,28 @@ struct WebGPURenderer::Impl {
                            push);
             buf->in_use = false;
             buf = dst;
+        }
+
+        if (layer.maskValue().valid()) {
+            auto mit = image_cache.find(layer.maskValue().pixels);
+            if (mit != image_cache.end()) {
+                endTarget();
+                Tex* dst = acquireTransient(bw, bh, WGPUTextureFormat_RGBA16Float);
+                ensureTarget(*dst);
+                Push push{};
+                push.pa[0] = ext.w / std::max(r.bounds.w, 1e-4f);
+                push.pa[1] = (ext.x - r.bounds.x) / std::max(r.bounds.w, 1e-4f);
+                push.pa[2] = ext.h / std::max(r.bounds.h, 1e-4f);
+                push.pa[3] = (ext.y - r.bounds.y) / std::max(r.bounds.h, 1e-4f);
+                push.pb[0] = layer.maskInvertValue() ? 1.0f : 0.0f;
+                push.pb[1] = layer.maskFeatherValue() * scale;
+                drawFullscreen(pipe_layer_mask,
+                               texGroup(buf->view, sampler_nearest, mit->second.tex.view,
+                                        sampler_linear),
+                               push);
+                buf->in_use = false;
+                buf = dst;
+            }
         }
 
         endTarget();

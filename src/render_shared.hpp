@@ -155,6 +155,7 @@ inline bool safeOpacityFold(const Layer& layer) {
 
 inline bool needsOffscreen(const Layer& layer, float opacity) {
     return !layer.filters().empty() || layer.shadowValue().has_value() ||
+           layer.maskValue().valid() ||
            layer.masksToBounds() ||
            (layer.blendMode() != Blend::Normal && !layer.sublayers().empty()) ||
            (opacity < 1.0f && !safeOpacityFold(layer));

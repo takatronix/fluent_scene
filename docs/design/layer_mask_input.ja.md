@@ -1,6 +1,11 @@
 # レイヤー画像マスク入力 (設計書 draft-1)
 
-status: **draft — オーナーレビュー待ち** (論点§6に回答がつき次第実装)
+status: **M1 実装済** (2026-08-19、オーナー GO「OKですすめて」による。
+論点§6は提案どおりで確定: post-filter固定 / RGBA の A / 名前 mask /
+feather は M1 に同梱)。C++ API (`layer.mask(v).maskInvert().maskFeather()`)
++ C ABI (`fs_layer_set_mask`) + 3バックエンド (golden `layer_mask`、
+Vulkan max|Δ|=2)。**Scene YAML 露出は未実装** (次: `mask: {source:
+$inputs.x, invert, feather}` を compiler/binding へ)。
 date: 2026-08-19
 
 ## 1. 動機
