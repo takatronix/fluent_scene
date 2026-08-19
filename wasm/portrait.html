@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fluent scene — portrait cutout</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #e8e4f2; --dim: #9a93ad; --faint: #6c6580;
+    --glass: rgba(18, 16, 32, 0.72); --line: #241f38; --line-hi: #6f5fae;
+    --cyan: #7ee8fa; --violet: #c86ef0; --amber: #ffb35c;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; align-items: center;
+         gap: 14px; padding: 22px 14px 16px;
+         background: radial-gradient(90% 60% at 50% 0%, #14101f 0%, #07060c 60%), #07060c;
+         color: var(--ink); font: 14px/1.5 -apple-system, "Hiragino Sans",
+         "Noto Sans CJK JP", system-ui, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 14px; width: min(96vw, 1280px); }
+  header h1 { margin: 0; font: 700 22px/1 ui-monospace, monospace;
+              background: linear-gradient(100deg, var(--cyan), var(--violet), var(--amber));
+              -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header small { color: var(--faint); font-size: 12px; }
+  header a { margin-left: auto; color: var(--dim); font-size: 12px; text-decoration: none; }
+  #frame { position: relative; width: min(96vw, calc(62vh * 16 / 9), 1280px); }
+  #v { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000;
+       border-radius: 16px; border: 1px solid var(--line);
+       box-shadow: 0 30px 90px rgba(0, 0, 0, 0.65), 0 0 60px rgba(111, 95, 174, 0.12); }
+  #pill { position: absolute; top: 12px; right: 12px; z-index: 3;
+          font: 11px ui-monospace, monospace; color: var(--dim);
+          background: rgba(0, 0, 0, 0.5); border: 1px solid var(--line);
+          padding: 4px 10px; border-radius: 999px; backdrop-filter: blur(6px); }
+  #deck { width: min(96vw, 1280px); display: flex; flex-wrap: wrap; gap: 10px 22px;
+          align-items: center; padding: 12px 14px; border-radius: 16px;
+          background: var(--glass); border: 1px solid var(--line); backdrop-filter: blur(14px); }
+  .chip { background: #100e1c; color: var(--dim); border: 1px solid var(--line);
+          border-radius: 999px; padding: 5px 13px; font-size: 12.5px; cursor: pointer;
+          transition: 0.13s; }
+  .chip:hover { color: var(--ink); border-color: var(--line-hi); }
+  .chip.on { color: #0c0a14; border-color: transparent; font-weight: 700;
+             background: linear-gradient(120deg, var(--cyan), var(--violet)); }
+  label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dim); }
+  input[type=range] { accent-color: var(--violet); width: 130px; }
+  input[type=checkbox] { accent-color: var(--violet); }
+  output { font: 11px ui-monospace, monospace; color: var(--cyan); min-width: 30px; }
+  #bar { font: 11px ui-monospace, monospace; color: var(--faint); text-align: center; }
+</style>
+<header>
+  <h1>PORTRAIT CUTOUT</h1>
+  <small>人物セグメンテーション × アートフィルタ · layer mask M1</small>
+  <a href="./index.html">← fluent_scene demos</a>
+</header>
+<div id="frame">
+  <canvas id="v" width="1280" height="720"></canvas>
+  <div id="pill">loading…</div>
+</div>
+<div id="deck">
+  <span id="styles"></span>
+  <label><input id="onPerson" type="checkbox"> 人物側に適用（既定は背景側）</label>
+  <label><input id="flipMask" type="checkbox"> マスク反転</label>
+  <label>ぼかし <input id="feather" type="range" min="0" max="24" step="0.5" value="5">
+    <output id="featherOut">5</output></label>
+</div>
+<div id="bar">loading wasm…</div>
+<a href="https://x.com/takatronix" target="_blank" rel="noopener" style="position:fixed;right:12px;bottom:10px;z-index:9;font:11px ui-monospace,monospace;color:rgba(255,255,255,0.6);text-decoration:none;background:rgba(0,0,0,0.35);padding:4px 10px;border-radius:999px;backdrop-filter:blur(4px)">fluent_scene · by <b style="color:rgba(255,255,255,0.85)">@takatronix</b></a>
+<script type="module">
+// Portrait cutout — MediaPipe Selfie Segmenter (Apache-2.0) produces a
+// person mask, fed into the engine's layer-mask (M1): two camera layers,
+// one styled + masked to the background, one clean + masked to the person.
+// The art filter never touches the person (or the other way around).
+import createFluentScene from './fluent_scene.mjs';
+import { FilesetResolver, ImageSegmenter } from
+    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs';
+
+const bar = document.getElementById('bar');
+const pill = document.getElementById('pill');
+let canvas = document.getElementById('v');
+let ctx = null;
+
+const SCENE = `
+schema: fluent.scene/v1alpha2
+stage: { size: [1280, 720] }
+inputs:
+  camera: { type: image.rgba8, update: per_frame }
+layers:
+  - id: styled
+    content: { image: { source: $inputs.camera, fit: cover } }
+  - id: clean
+    content: { image: { source: $inputs.camera, fit: cover } }
+`;
+
+const mod = await createFluentScene();
+const fs = {
+  create: mod.cwrap('fs_create', 'number', ['number']),
+  error: mod.cwrap('fs_error', 'string', []),
+  imageBuffer: mod.cwrap('fs_image_buffer', 'number', ['number', 'string', 'number', 'number']),
+  commitImage: mod.cwrap('fs_commit_image', 'number', ['number', 'string', 'number', 'number']),
+  render: mod.cwrap('fs_render', 'number', ['number', 'number', 'number', 'number']),
+  renderW: mod.cwrap('fs_render_width', 'number', ['number']),
+  renderStride: mod.cwrap('fs_render_stride', 'number', ['number']),
+  renderH: mod.cwrap('fs_render_height', 'number', ['number']),
+  setFilter: mod.cwrap('fs_layer_set_filter', 'number',
+      ['number', 'string', 'string', 'number', 'number', 'number', 'number', 'number']),
+  clearFilters: mod.cwrap('fs_layer_clear_filters', 'number', ['number', 'string']),
+  setFilterImage: mod.cwrap('fs_layer_set_filter_image', 'number',
+      ['number', 'string', 'string', 'string', 'number', 'number']),
+  setMask: mod.cwrap('fs_layer_set_mask', 'number',
+      ['number', 'string', 'string', 'number', 'number', 'number', 'number']),
+  filtersJson: mod.cwrap('fs_filters_json', 'string', []),
+};
+const inst = fs.create(mod.stringToNewUTF8(SCENE));
+if (!inst) { bar.textContent = 'scene rejected: ' + fs.error(); throw new Error(fs.error()); }
+
+// ---- styles ---------------------------------------------------------------
+// [label, filter, params override, needs paper]
+const CATALOG = JSON.parse(fs.filtersJson());
+const STYLES = [
+  ['🖌 水墨画', 'sumie', {}, true],
+  ['🎨 油絵', 'oilpaint', { radius: 7, levels: 20 }, false],
+  ['🖼 印象派', 'impressionist', {}, false],
+  ['🌸 アニメ', 'anime', {}, false],
+  ['💧 水彩', 'watercolor', {}, false],
+  ['⛪ ステンドグラス', 'stainedglass', {}, false],
+  ['🕹 ドット絵', 'pixelart', {}, false],
+];
+let styleName = 'sumie';
+const stylesBox = document.getElementById('styles');
+for (const [label, name] of STYLES) {
+  const b = document.createElement('button');
+  b.className = 'chip' + (name === styleName ? ' on' : '');
+  b.textContent = label;
+  b.dataset.name = name;
+  b.addEventListener('click', () => {
+    styleName = name;
+    for (const c of stylesBox.children) c.classList.toggle('on', c.dataset.name === name);
+    pushStyle(simT);
+  });
+  stylesBox.append(b);
+}
+
+const onPerson = document.getElementById('onPerson');
+const flipMask = document.getElementById('flipMask');
+const feather = document.getElementById('feather');
+const featherOut = document.getElementById('featherOut');
+
+const spec = () => CATALOG.find(f => f.name === styleName);
+const timeSlot = s => s && s.params.length > 1 && s.params[1].name === 'time' ? 1 : -1;
+
+let paperReady = false;
+(async () => {
+  try {
+    const img = new Image();
+    img.src = './washi.jpg';
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = c.height = 1024;
+    const cx = c.getContext('2d');
+    cx.drawImage(img, 0, 0, 1024, 1024);
+    const ptr = fs.imageBuffer(inst, 'paper', 1024, 1024);
+    mod.HEAPU8.set(cx.getImageData(0, 0, 1024, 1024).data, ptr);
+    paperReady = true;
+    pushStyle(simT);
+  } catch (e) { console.error('washi load failed:', e); }
+})();
+
+function pushStyle(t) {
+  const s = spec();
+  if (!s) return;
+  const over = STYLES.find(x => x[1] === styleName)[2];
+  const v = s.params.map(p => over[p.name] !== undefined ? over[p.name] : p.def);
+  const ts = timeSlot(s);
+  if (ts >= 0) v[ts] = t;
+  const target = onPerson.checked ? 'clean' : 'styled';
+  const other = onPerson.checked ? 'styled' : 'clean';
+  fs.clearFilters(inst, other);
+  fs.clearFilters(inst, target);
+  fs.setFilter(inst, target, s.name, v[0] || 0, v[1] || 0, v[2] || 0, v[3] || 0, v[4] || 0);
+  if (styleName === 'sumie' && paperReady) {
+    fs.setFilterImage(inst, target, 'sumie', 'paper', 1024, 1024);
+  }
+}
+onPerson.addEventListener('change', () => { pushStyle(simT); pushMasks(); });
+flipMask.addEventListener('change', pushMasks);
+feather.addEventListener('input', () => {
+  featherOut.textContent = feather.value;
+  pushMasks();
+});
+
+// ---- person mask ----------------------------------------------------------
+const SEG_W = 256, SEG_H = 144;
+const segCanvas = document.createElement('canvas');
+segCanvas.width = SEG_W;
+segCanvas.height = SEG_H;
+const segCtx = segCanvas.getContext('2d', { willReadFrequently: true });
+let segmenter = null;
+let maskBound = false;
+
+function pushMasks() {
+  if (!maskBound) return;
+  // person A=1 in the mask; `styled` shows the background side by default
+  const flip = flipMask.checked ? 1 : 0;
+  fs.setMask(inst, 'styled', 'person', SEG_W, SEG_H, 1 - flip, Number(feather.value));
+  fs.setMask(inst, 'clean', 'person', SEG_W, SEG_H, flip, Number(feather.value));
+}
+
+(async () => {
+  try {
+    bar.textContent = 'loading segmenter…';
+    const vision = await FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm');
+    segmenter = await ImageSegmenter.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/' +
+                        'selfie_segmenter/float16/latest/selfie_segmenter.tflite',
+        delegate: 'GPU',
+      },
+      runningMode: 'VIDEO',
+      outputConfidenceMasks: true,
+      outputCategoryMask: false,
+    });
+    bar.textContent = '';
+  } catch (e) {
+    console.error('segmenter init failed:', e);
+    bar.textContent = 'セグメンテーション初期化失敗 (' + e + ') — マスクなしで表示中';
+  }
+})();
+
+function updateMask(ts) {
+  if (!segmenter || !video) return;
+  segCtx.drawImage(video, 0, 0, SEG_W, SEG_H);
+  const res = segmenter.segmentForVideo(segCanvas, ts);
+  const masks = res.confidenceMasks;
+  if (masks && masks.length > 0) {
+    // last confidence mask = person for the selfie model family
+    const m = masks[masks.length - 1].getAsFloat32Array();
+    const ptr = fs.imageBuffer(inst, 'person', SEG_W, SEG_H);
+    const heap = mod.HEAPU8;
+    for (let i = 0; i < SEG_W * SEG_H; ++i) {
+      heap[ptr + i * 4 + 3] = (m[i] * 255) | 0;
+    }
+    if (!maskBound) {
+      maskBound = true;
+      pushMasks();
+    }
+  }
+  res.close();
+}
+
+// ---- backend choice: WebGPU when available, CPU otherwise ------------------
+let gpu = false;
+try {
+  if (navigator.gpu) {
+    const gInit = mod.cwrap('fs_webgpu_init', null, ['string']);
+    const gStatus = mod.cwrap('fs_webgpu_status', 'number', []);
+    const gError = mod.cwrap('fs_webgpu_error', 'string', []);
+    fs.gRender = mod.cwrap('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']);
+    gInit('#v');
+    gpu = await new Promise(resolve => {
+      const t0 = performance.now();
+      (function poll() {
+        const s = gStatus();
+        if (s === 1) return resolve(true);
+        if (s === -1) { console.error('WebGPU init failed:', gError()); return resolve(false); }
+        if (performance.now() - t0 > 5000) return resolve(false);
+        requestAnimationFrame(poll);
+      })();
+    });
+  }
+} catch (e) { gpu = false; }
+if (!gpu) {
+  if (navigator.gpu) {
+    const fresh = canvas.cloneNode(false);
+    fresh.width = 1280; fresh.height = 720;
+    canvas.replaceWith(fresh);
+    canvas = fresh;
+  }
+  ctx = canvas.getContext('2d');
+}
+fs.gStatus = gpu ? mod.cwrap('fs_webgpu_status', 'number', []) : () => -1;
+function fallbackToCpu(why) {
+  if (!gpu) return;
+  gpu = false;
+  console.error('falling back to CPU renderer:', why);
+  const fresh = canvas.cloneNode(false);
+  fresh.width = 1280; fresh.height = 720;
+  canvas.replaceWith(fresh);
+  canvas = fresh;
+  ctx = canvas.getContext('2d');
+}
+
+// ---- camera ---------------------------------------------------------------
+let CAM_W = 1280, CAM_H = 720;
+const grab = document.createElement('canvas');
+const grabCtx = grab.getContext('2d', { willReadFrequently: true });
+let video = null;
+try {
+  const stream = await navigator.mediaDevices.getUserMedia(
+      { video: { width: { ideal: CAM_W }, height: { ideal: CAM_H } }, audio: false });
+  video = document.createElement('video');
+  video.srcObject = stream;
+  video.muted = true;
+  await video.play();
+  CAM_W = video.videoWidth || CAM_W;
+  CAM_H = video.videoHeight || CAM_H;
+  grab.width = CAM_W;
+  grab.height = CAM_H;
+} catch (e) {
+  bar.textContent = 'webcam: ' + e + ' (needs https or localhost)';
+}
+
+// ---- render loop -----------------------------------------------------------
+let last = performance.now(), frames = 0, fpsShown = 0, simT = 0;
+setInterval(() => { fpsShown = frames; frames = 0; }, 1000);
+
+function tick() {
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+  simT += dt;
+
+  if (video && video.readyState >= 2) {
+    grabCtx.drawImage(video, 0, 0, CAM_W, CAM_H);
+    const data = grabCtx.getImageData(0, 0, CAM_W, CAM_H).data;
+    const ptr = fs.imageBuffer(inst, 'camera', CAM_W, CAM_H);
+    mod.HEAPU8.set(data, ptr);
+    fs.commitImage(inst, 'camera', CAM_W, CAM_H);
+    updateMask(now);
+  }
+  if (timeSlot(spec()) >= 0) pushStyle(simT);
+
+  if (gpu) {
+    if (fs.gStatus() !== 1) {
+      fallbackToCpu('device left ready state');
+    } else if (!fs.gRender(inst, dt, canvas.width, canvas.height)) {
+      fallbackToCpu('fs_render_webgpu failed');
+    }
+  }
+  if (!gpu) {
+    const px = fs.render(inst, dt, canvas.width, canvas.height);
+    const w = fs.renderW(inst), h = fs.renderH(inst), stride = fs.renderStride(inst);
+    if (w === canvas.width && stride === w * 4) {
+      const view = new Uint8ClampedArray(mod.HEAPU8.buffer, px, w * h * 4);
+      ctx.putImageData(new ImageData(view, w, h), 0, 0);
+    }
+  }
+  ++frames;
+  pill.textContent = `${fpsShown} fps · ${gpu ? 'webgpu' : 'cpu'} · ` +
+      (segmenter ? 'seg on' : 'seg off');
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
