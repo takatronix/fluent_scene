@@ -861,14 +861,40 @@ vec4 fs_watercolor_flow(vec2 uv, float wash_px, float edge, float grain,
     // hand wobble on where the brush reads the picture
     vec2 wn = fs_art_vnoise2(px * (0.045 / u)) - vec2(0.5, 0.5);
     vec2 wuv = uv + FS_TEXEL * (wn * (6.0 * u * clamp(wobble, 0.0, 2.0)));
-    // target absorbance: a small ring mean (the painter states shapes,
-    // not texels), diluted by taste
-    vec3 csrc = FS_SAMPLE(wuv) * 0.28;
-    for (int i = 0; i < 4; ++i) {
-        float a = 1.5707963 * float(i) + 0.4;
-        csrc += FS_SAMPLE(wuv + FS_TEXEL * (vec2(cos(a), sin(a)) * (2.6 * u))) * 0.18;
+    // target absorbance — where "looks like a watercolor" is decided.
+    // A painting is not the photo's complement: the painter (1) simplifies
+    // shapes (ring mean, radius grows with `wash`), (2) reserves the paper
+    // in the lights (absorbance floor), (3) does not paint dull grays —
+    // desaturated areas get water, not pigment, (4) mixes VIVID pigment,
+    // and (5) states the picture in a few washes (soft per-channel
+    // quantization), whose boundaries are where the drying rims land.
+    float rr = 3.0 * u + clamp(wash_px, 0.0, 14.0) * 0.4;
+    vec3 csrc = FS_SAMPLE(wuv) * 0.2;
+    for (int i = 0; i < 8; ++i) {
+        float a = 0.785398163 * float(i) + 0.4;
+        csrc += FS_SAMPLE(wuv + FS_TEXEL * (vec2(cos(a), sin(a)) * rr)) * 0.1;
     }
-    vec3 target = (vec3(1.0, 1.0, 1.0) - csrc) * (1.2 - 0.7 * clamp(dl, 0.0, 1.0));
+    vec3 cs = clamp(csrc, 0.0, 1.0);
+    float lum = fs_luma(cs);
+    float sat = max(max(cs.x, cs.y), cs.z) - min(min(cs.x, cs.y), cs.z);
+    vec3 cv = clamp(mix(vec3(lum), cs, 1.45), 0.0, 1.0);   // vivid pigment
+    vec3 ab = vec3(1.0, 1.0, 1.0) - cv;
+    // dull grays are water; lights are reserved paper
+    float satw = 0.35 + 0.65 * smoothstep(0.04, 0.30, sat);
+    float dark = smoothstep(0.75, 0.2, lum);               // darks still paint
+    ab = ab * max(satw, dark);
+    ab = max(ab - vec3(0.10, 0.10, 0.10), vec3(0.0, 0.0, 0.0)) * 1.2;
+    ab = ab * (1.25 - 0.8 * clamp(dl, 0.0, 1.0));
+    // a few washes, softly
+    float bq = 0.0;
+    vec3 abq = ab;
+    bq = ab.x * 5.0 - floor(ab.x * 5.0);
+    abq.x = (floor(ab.x * 5.0) + 0.5 + clamp((bq - 0.5) * 2.2, -0.5, 0.5)) * 0.2;
+    bq = ab.y * 5.0 - floor(ab.y * 5.0);
+    abq.y = (floor(ab.y * 5.0) + 0.5 + clamp((bq - 0.5) * 2.2, -0.5, 0.5)) * 0.2;
+    bq = ab.z * 5.0 - floor(ab.z * 5.0);
+    abq.z = (floor(ab.z * 5.0) + 0.5 + clamp((bq - 0.5) * 2.2, -0.5, 0.5)) * 0.2;
+    vec3 target = clamp(ab + (abq - ab) * 0.7, 0.0, 1.15);
     // the buffer rim (layer edge × transparent padding) stays dry
     float bd = min(min(uv.x, 1.0 - uv.x) / FS_TEXEL.x,
                    min(uv.y, 1.0 - uv.y) / FS_TEXEL.y);
@@ -1327,7 +1353,7 @@ vec3 fs_impressionist(vec2 uv, float stroke_px, float time_s, float vibrance,
     for (int layer = 0; layer < 2; ++layer) {
         float pitch = layer == 0 ? p_fine * 2.1 : p_fine;
         float zbias = layer == 0 ? 0.0 : 0.35;
-        float wid = layer == 0 ? pitch * 0.55 : pitch * 0.42;
+        float wid = layer == 0 ? pitch * 0.56 : pitch * 0.38;
         vec2 lofs = layer == 0 ? vec2(0.0, 0.0) : vec2(37.7, 17.3);
         vec2 cell = floor(px / pitch);
         for (int j = -1; j <= 1; ++j) {
@@ -1339,7 +1365,7 @@ vec3 fs_impressionist(vec2 uv, float stroke_px, float time_s, float vibrance,
                 vec2 seed = (id - lofs + vec2(0.5, 0.5)
                              + (vec2(h1, h2) - vec2(0.5, 0.5)) * 0.9) * pitch;
                 vec2 rel = px - seed;
-                float lmax = pitch * 1.95;   // conservative cull, no taps yet
+                float lmax = pitch * 2.75;   // conservative cull, no taps yet
                 if (dot(rel, rel) > lmax * lmax) continue;
                 vec2 suv = clamp(vec2(seed.x * FS_TEXEL.x, seed.y * FS_TEXEL.y),
                                  vec2(0.0, 0.0), vec2(1.0, 1.0));
@@ -1376,10 +1402,11 @@ vec3 fs_impressionist(vec2 uv, float stroke_px, float time_s, float vibrance,
                     vec2 dd = dir + (tg - dir) * wf;
                     dir = dd / max(length(dd), 1e-4);
                 }
-                // long thin capsule = a loaded brush pulled through the
-                // paint; strokes shorten only where edges are strong
-                // (Litwinowicz's clipping, reduced to a statistic)
-                float len = pitch * (1.7 - 1.0 * smoothstep(0.05, 0.30, gm));
+                // LONG thin capsule = a loaded brush pulled through the
+                // paint (owner: longer, closer to real strokes); strokes
+                // shorten only where edges are strong (Litwinowicz's
+                // clipping, reduced to a statistic)
+                float len = pitch * (2.5 - 1.6 * smoothstep(0.05, 0.30, gm));
                 float s = dot(rel, dir);
                 float q = dot(rel, vec2(dir.y, -dir.x));
                 float edge_d = abs(q) / wid + (s * s) / max(len * len, 1e-4);
@@ -1391,6 +1418,10 @@ vec3 fs_impressionist(vec2 uv, float stroke_px, float time_s, float vibrance,
                 if (score > best_score) {
                     best_score = score;
                     vec3 c = FS_SAMPLE(suv);
+                    // unmixed pigment straight from the tube (owner: closer
+                    // to primaries) — saturation lifted before the jitter
+                    float lum0 = fs_luma(c);
+                    c = clamp(mix(vec3(lum0), c, 1.55), 0.0, 1.0);
                     // broken color: each dab mixes its pigment a bit wrong.
                     // LUMA-PRESERVING — divisionism vibrates hue while the
                     // values keep the large forms readable (a free jitter
