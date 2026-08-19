@@ -271,6 +271,30 @@
            font-weight: 800; cursor: pointer; color: #0c0a14; background: var(--grad);
            box-shadow: 0 0 20px rgba(160, 140, 250, 0.4); }
   .cfgset[hidden] { display: none; }
+
+  /* ---- Safari + mobile ---- */
+  #aibar, #dock, #pill, #hint, #srcBtns button { -webkit-backdrop-filter: blur(14px); }
+  header { flex-wrap: wrap; row-gap: 6px; }
+  .port { touch-action: none; }
+  /* phones: the aurora + panel blurs are GPU-expensive — trade glass for
+     frame rate, and fatten the wiring targets for fingers */
+  @media (max-width: 760px), (pointer: coarse) {
+    #aurora { display: none; }
+    #aibar, #dock { backdrop-filter: none; -webkit-backdrop-filter: none;
+                    background: rgba(14, 12, 26, 0.96); }
+    .panel { backdrop-filter: none; -webkit-backdrop-filter: none; }
+    .port { width: 20px; height: 20px; margin-top: -3px; }
+    .port.in { left: -11px; }
+    .port.out { right: -11px; }
+    #toolbar .tip { display: none; }
+    #graph { height: 240px; }
+    /* the top strip is tight on a phone: sources shrink, fps pill moves down */
+    #srcBtns button { padding: 4px 8px; font-size: 12px; }
+    #srcTag { font-size: 10px; padding: 3px 8px; }
+    #pill { top: auto; bottom: 14px; font-size: 10px; }
+    #hint { max-width: 55vw; overflow: hidden; text-overflow: ellipsis; }
+    #tail { flex-wrap: wrap; }
+  }
 </style>
 <div id="aurora"><i></i><i></i><i></i></div>
 <header>
@@ -312,9 +336,13 @@
   </div>
   <div id="graph"><div id="gInner">
     <svg id="edgeSvg">
-      <defs><linearGradient id="egrad" x1="0" y1="0" x2="1" y2="0">
+      <!-- userSpaceOnUse: the default objectBoundingBox degenerates (and the
+           stroke vanishes) on perfectly horizontal edges -->
+      <defs><linearGradient id="egrad" gradientUnits="userSpaceOnUse"
+          x1="0" y1="0" x2="2200" y2="0">
         <stop offset="0" stop-color="rgba(126,232,250,0.75)"/>
-        <stop offset="1" stop-color="rgba(200,110,240,0.75)"/>
+        <stop offset="0.5" stop-color="rgba(200,110,240,0.75)"/>
+        <stop offset="1" stop-color="rgba(255,179,92,0.75)"/>
       </linearGradient></defs>
       <g id="edgeG"></g>
       <path id="tempEdge" class="temp" d=""/>
@@ -399,6 +427,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const bar = $('bar'), pill = $('pill'), aiSay = $('aiSay'), hint = $('hint');
 let canvas = $('v');
 let ctx = null;
+
+// phones get smaller input feeds, a lower starting rung, and 1x canvas
+const COARSE = matchMedia('(pointer: coarse)').matches;
+const FEED_W = COARSE ? 640 : STAGE_W, FEED_H = COARSE ? 360 : STAGE_H;
+
+// surface failures on the page itself — on a phone there is no console
+window.addEventListener('error', e => {
+  bar.textContent = '⚠ ' + (e.message || e.error || 'error') + ' @' + (e.lineno || '?');
+});
+window.addEventListener('unhandledrejection', e => {
+  bar.textContent = '⚠ ' + ((e.reason && e.reason.message) || e.reason || 'promise rejection');
+});
 
 const mod = await createFluentScene();
 const fs = {
@@ -1157,7 +1197,14 @@ function simNow() {
 }
 
 // ---- persistence (URL hash) ------------------------------------------------
+// debounced: Safari throws SecurityError past ~100 replaceState per 30s,
+// and slider drags fire per input event
+let hashTimer = 0;
 function saveHash() {
+  clearTimeout(hashTimer);
+  hashTimer = setTimeout(saveHashNow, 400);
+}
+function saveHashNow() {
   const srcs = nodes.filter(n => n.type === 'src');
   const packed = {
     n: nodes.map(n => {
@@ -1847,6 +1894,8 @@ async function useCameraFor(s) {
     releaseSource(s);
     const video = document.createElement('video');
     video.srcObject = camStream; video.muted = true;
+    video.playsInline = true;                   // iOS: no playsinline, no play
+    video.setAttribute('playsinline', '');
     await video.play();
     s.kind = 'camera'; s.video = video; s.dirty = true;
     renderGraph();
@@ -1877,6 +1926,8 @@ $('filePick').addEventListener('change', async e => {
     if (f.type.startsWith('video/')) {
       const video = document.createElement('video');
       video.src = url; video.muted = true; video.loop = true;
+      video.playsInline = true;
+      video.setAttribute('playsinline', '');
       await video.play();
       releaseSource(s);
       s.kind = 'video'; s.video = video; s.dirty = true;
@@ -1902,8 +1953,9 @@ window.addEventListener('drop', e => {
   $('filePick').dispatchEvent(new Event('change'));
 });
 
-// procedural sample: drifting dunes under a slow sky
+// procedural sample: drifting dunes under a slow sky (k scales to feed size)
 function drawSample(g, w, h, t) {
+  const k = w / 1280;
   const sky = g.createLinearGradient(0, 0, 0, h * 0.62);
   const hue = 210 + 40 * Math.sin(t * 0.11);
   sky.addColorStop(0, `hsl(${hue}, 65%, 16%)`);
@@ -1911,37 +1963,37 @@ function drawSample(g, w, h, t) {
   sky.addColorStop(1, `hsl(${(hue + 130) % 360}, 75%, 60%)`);
   g.fillStyle = sky;
   g.fillRect(0, 0, w, h);
-  const sx = w * (0.5 + 0.28 * Math.sin(t * 0.07)), sy = h * 0.4;
-  const halo = g.createRadialGradient(sx, sy, 10, sx, sy, 190);
+  const sx = w * (0.5 + 0.28 * Math.sin(t * 0.07)), sy = h * 0.4, hr = 190 * k;
+  const halo = g.createRadialGradient(sx, sy, 10 * k, sx, sy, hr);
   halo.addColorStop(0, 'rgba(255,240,200,0.95)');
   halo.addColorStop(0.25, 'rgba(255,190,120,0.5)');
   halo.addColorStop(1, 'rgba(255,190,120,0)');
   g.fillStyle = halo;
-  g.fillRect(sx - 190, sy - 190, 380, 380);
+  g.fillRect(sx - hr, sy - hr, hr * 2, hr * 2);
   g.fillStyle = '#fff7e0';
-  g.beginPath(); g.arc(sx, sy, 46, 0, 7); g.fill();
+  g.beginPath(); g.arc(sx, sy, 46 * k, 0, 7); g.fill();
   for (let i = 0; i < 4; ++i) {
     const base = h * (0.5 + 0.13 * i);
     g.fillStyle = `hsl(${(hue + 160 + i * 14) % 360}, ${46 - i * 6}%, ${38 - i * 8}%)`;
     g.beginPath();
     g.moveTo(0, h);
-    for (let x = 0; x <= w; x += 16) {
-      g.lineTo(x, base + 34 * Math.sin(x * 0.004 + t * (0.25 + i * 0.1) + i * 2.1)
-                     + 16 * Math.sin(x * 0.011 - t * 0.18 + i));
+    for (let x = 0; x <= w; x += 16 * k) {
+      g.lineTo(x, base + 34 * k * Math.sin(x * 0.004 / k + t * (0.25 + i * 0.1) + i * 2.1)
+                     + 16 * k * Math.sin(x * 0.011 / k - t * 0.18 + i));
     }
     g.lineTo(w, h);
     g.closePath();
     g.fill();
   }
   for (let i = 0; i < 6; ++i) {
-    const ox = ((i * 227 + t * (18 + i * 7)) % (w + 120)) - 60;
-    const oy = h * (0.16 + 0.1 * ((i * 137) % 5)) + 12 * Math.sin(t + i * 1.7);
+    const ox = ((i * 227 * k + t * (18 + i * 7) * k) % (w + 120 * k)) - 60 * k;
+    const oy = h * (0.16 + 0.1 * ((i * 137) % 5)) + 12 * k * Math.sin(t + i * 1.7);
     g.fillStyle = `hsla(${(hue + i * 47) % 360}, 80%, 75%, 0.8)`;
-    g.beginPath(); g.arc(ox, oy, 7 + (i % 3) * 5, 0, 7); g.fill();
+    g.beginPath(); g.arc(ox, oy, (7 + (i % 3) * 5) * k, 0, 7); g.fill();
   }
   g.fillStyle = 'rgba(255,255,255,0.85)';
-  g.font = '700 44px ui-monospace, monospace';
-  g.fillText('fluent_scene', 40, h - 42);
+  g.font = `700 ${Math.round(44 * k)}px ui-monospace, monospace`;
+  g.fillText('fluent_scene', 40 * k, h - 42 * k);
 }
 
 function feedSources(t) {
@@ -1952,21 +2004,24 @@ function feedSources(t) {
       const v = s.video;
       if (!v || v.readyState < 2) return;
       const vw = v.videoWidth || STAGE_W, vh = v.videoHeight || STAGE_H;
-      if (grab.width !== vw) { grab.width = vw; grab.height = vh; }
-      g.drawImage(v, 0, 0, vw, vh);
+      // phones: cap the feed — the engine cover-fits, the readback shrinks 4x
+      const sc = Math.min(1, (COARSE ? 640 : 4096) / Math.max(vw, vh));
+      const tw = Math.max(2, Math.round(vw * sc)), th = Math.max(2, Math.round(vh * sc));
+      if (grab.width !== tw || grab.height !== th) { grab.width = tw; grab.height = th; }
+      g.drawImage(v, 0, 0, tw, th);
     } else if (s.kind === 'image') {
       if (!s.dirty) return;
-      if (grab.width !== STAGE_W) { grab.width = STAGE_W; grab.height = STAGE_H; }
+      if (grab.width !== FEED_W) { grab.width = FEED_W; grab.height = FEED_H; }
       const img = s.img;
-      const sc = Math.max(STAGE_W / img.width, STAGE_H / img.height);
+      const sc = Math.max(FEED_W / img.width, FEED_H / img.height);
       g.fillStyle = '#000';
-      g.fillRect(0, 0, STAGE_W, STAGE_H);
-      g.drawImage(img, (STAGE_W - img.width * sc) / 2, (STAGE_H - img.height * sc) / 2,
+      g.fillRect(0, 0, FEED_W, FEED_H);
+      g.drawImage(img, (FEED_W - img.width * sc) / 2, (FEED_H - img.height * sc) / 2,
                   img.width * sc, img.height * sc);
       s.dirty = false;
     } else if (s.kind === 'sample') {
-      if (grab.width !== STAGE_W) { grab.width = STAGE_W; grab.height = STAGE_H; }
-      drawSample(g, STAGE_W, STAGE_H, t + i * 13.7);
+      if (grab.width !== FEED_W) { grab.width = FEED_W; grab.height = FEED_H; }
+      drawSample(g, FEED_W, FEED_H, t + i * 13.7);
     } else return;
     const data = g.getImageData(0, 0, grab.width, grab.height).data;
     const ptr = fs.imageBuffer(inst, 'in' + i, grab.width, grab.height);
@@ -2010,10 +2065,11 @@ window.__studio = {
 
 // ---- render loop -----------------------------------------------------------
 let last = performance.now(), frames = 0, fpsShown = 0;
-const DPR = Math.min(window.devicePixelRatio || 1, 2);
+const DPR = Math.min(window.devicePixelRatio || 1, COARSE ? 1 : 2);
 if (gpu && DPR > 1) { canvas.width = 1280 * DPR; canvas.height = 720 * DPR; }
-const LADDER = [[1280, 720], [1024, 576], [854, 480], [640, 360]];
-let rung = 0;
+const LADDER = [[1280, 720], [1024, 576], [854, 480], [640, 360], [480, 270]];
+let rung = COARSE ? 2 : 0;                       // phones start CPU at 854×480
+if (!gpu) { canvas.width = LADDER[rung][0]; canvas.height = LADDER[rung][1]; }
 setInterval(() => {
   fpsShown = frames; frames = 0;
   if (gpu) return;
