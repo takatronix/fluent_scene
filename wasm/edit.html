@@ -321,6 +321,10 @@
   .shchip:hover { background: rgba(183, 240, 126, 0.16); border-color: rgba(183, 240, 126, 0.6); }
   .shchip .shdel { color: var(--faint); font-size: 10px; padding: 2px 3px; border-radius: 50%; }
   .shchip .shdel:hover { color: #ff8f8f; }
+  .shchip.preset { background: rgba(126, 232, 250, 0.06);
+           border-color: rgba(126, 232, 250, 0.28); }
+  .shchip.preset:hover { background: rgba(126, 232, 250, 0.14);
+           border-color: rgba(126, 232, 250, 0.55); }
 
   #aiCfg label { display: flex; flex-direction: column; gap: 4px; font-size: 12px;
            color: var(--dim); margin-bottom: 10px; }
@@ -604,7 +608,7 @@
       <button id="shSave" class="save" style="padding:8px 16px">💾 保存</button>
     </div>
     <div id="shLib" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
-    <div style="font-size:11px;color:var(--faint);margin-top:4px">保存したシェーダはこの端末に残り、パレット(+ フィルタ)の「🧪 マイシェーダ」からノードとして何個でも配線できます</div>
+    <div style="font-size:11px;color:var(--faint);margin-top:4px">✨は内蔵プリセット(読み込んでAIに「もっと◯◯」と頼める)。保存したシェーダはこの端末に残り、どちらもパレット(+ フィルタ)の「🧪 シェーダ」からノードとして何個でも配線できます</div>
   </div>
 </div>
 <div id="cfgOverlay" class="overlay">
@@ -2278,45 +2282,49 @@ function buildPalette(q) {
     palBody.append(cat);
   }
 
-  // saved user shaders lead the filter list — each one is a wireable glsl node
-  const mine = shaderLib.filter(s => !q || s.n.toLowerCase().includes(q) ||
-                                     'シェーダ'.includes(q) || 'glsl'.includes(q));
-  if (mine.length) {
+  // shader section: built-in presets + saved user shaders — all wireable glsl nodes
+  const shMatch = nm => !q || nm.toLowerCase().includes(q) ||
+                        'シェーダ'.includes(q) || 'glsl'.includes(q);
+  const presets = SHADER_PRESETS.filter(([nm]) => shMatch(nm));
+  const mine = shaderLib.filter(s => shMatch(s.n));
+  if (presets.length || mine.length) {
     const cat = document.createElement('div');
     cat.className = 'palcat';
     const h = document.createElement('h4');
-    h.textContent = '🧪 マイシェーダ';
+    h.textContent = '🧪 シェーダ';
     h.style.color = '#b7f07e';
     const grid = document.createElement('div');
     grid.className = 'palgrid';
-    for (const s of mine) {
+    const addItem = (name, code, desc, emoji) => {
       const btn = document.createElement('button');
       btn.className = 'palitem';
       btn.style.setProperty('--ac', '#b7f07e');
       const pe = document.createElement('span');
       pe.className = 'pe';
-      pe.textContent = '🧪';
+      pe.textContent = emoji;
       const tx = document.createElement('div');
       const t = document.createElement('div');
       t.className = 't';
-      t.textContent = s.n + ' ';
+      t.textContent = name + ' ';
       const sm = document.createElement('small');
       sm.textContent = 'glsl';
       t.append(sm);
       const d = document.createElement('div');
       d.className = 'd';
-      d.textContent = '保存した自作シェーダ';
+      d.textContent = desc;
       tx.append(t, d);
       btn.append(pe, tx);
       btn.addEventListener('click', () => {
         palOverlay.classList.remove('open');
-        const n2 = addNode('glsl', 0, 0, { code: s.c, name: s.n });
+        const n2 = addNode('glsl', 0, 0, { code, name });
         spliceNodeAfterSelected(n2);
         applyGraph(true);
-        say('「' + s.n + '」をノードとして追加しました — 後段フィルタとも合成できます');
+        say('「' + name + '」をノードとして追加しました — 後段フィルタとも合成できます');
       });
       grid.append(btn);
-    }
+    };
+    for (const p of presets) addItem(p[0], presetBody(p), '内蔵プリセット', '✨');
+    for (const s of mine) addItem(s.n, s.c, '保存した自作シェーダ', '🧪');
     cat.append(h, grid);
     palBody.append(cat);
   }
@@ -2975,6 +2983,125 @@ const SHADER_SHOTS = [
   outColor = vec4(srcAt(m), 1.0);
 }` },
 ];
+// built-in shader presets — always in the palette, no saving needed.
+// Bodies follow the same 作法 the LLM is taught; every one compile-verified.
+const shotBody = ask =>
+    SHADER_SHOTS[SHADER_SHOTS.findIndex(m => m.role === 'user' && m.content === ask) + 1].content;
+const SHADER_PRESETS = [
+  ['万華鏡', () => shotBody('映像を万華鏡に')],
+  ['VHS', () => shotBody('VHSっぽく')],
+  ['輪郭スキャン', () => shotBody('輪郭が光る近未来スキャン')],
+  ['波ゆらぎ', () => SHADER_TEMPLATES[1][1]],
+  ['色収差', () => SHADER_TEMPLATES[2][1]],
+  ['モザイク', () => `void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  // セルの大きさは呼吸で僅かに揺れる
+  float cell = 64.0 + 8.0 * sin(u_time * 0.3);
+  vec2 g = floor(uv * cell) / cell + 0.5 / cell;
+  vec3 col = srcAt(g);
+  // セル境界にうっすら目地
+  vec2 f = fract(uv * cell);
+  float line = smoothstep(0.0, 0.08, f.x) * smoothstep(0.0, 0.08, f.y);
+  outColor = vec4(col * (0.85 + 0.15 * line), 1.0);
+}`],
+  ['ハーフトーン', () => `void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  vec2 grid = vec2(90.0 * u_res.x / u_res.y, 90.0);
+  vec2 p = uv * grid;
+  float l = luma(srcAt((floor(p) + 0.5) / grid));
+  float r = 0.55 * sqrt(1.0 - l);          // 暗いほど大きい網点
+  float ink = 1.0 - smoothstep(r - 0.07, r, length(fract(p) - 0.5));
+  vec3 col = mix(vec3(0.96, 0.94, 0.89), vec3(0.12, 0.1, 0.14), ink);
+  outColor = vec4(col, 1.0);
+}`],
+  ['魚眼', () => `void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  vec2 p = uv - 0.5;
+  p.x *= u_res.x / u_res.y;
+  float r = length(p);
+  // 樽型に膨らませる(中心ほど拡大)
+  vec2 q = p * (1.0 + 0.9 * r * r) * 0.75;
+  q.x *= u_res.y / u_res.x;
+  vec3 col = srcAt(q + 0.5);
+  col *= 1.0 - 0.6 * smoothstep(0.5, 0.9, r);   // 周辺減光
+  outColor = vec4(col, 1.0);
+}`],
+  ['うずまき', () => `void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  vec2 p = uv - 0.5;
+  p.x *= u_res.x / u_res.y;
+  float r = length(p);
+  // 中心ほど強くねじる。ゆっくり呼吸
+  float tw = 2.5 * (1.0 + 0.2 * sin(u_time * 0.4)) * smoothstep(0.7, 0.0, r);
+  vec2 q = rot(p, tw);
+  q.x *= u_res.y / u_res.x;
+  outColor = vec4(srcAt(q + 0.5), 1.0);
+}`],
+  ['ネオン輪郭', () => `void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  float e = smoothstep(0.05, 0.3, edgeAt(uv));
+  // 色相は場所と時間でゆっくり回る
+  vec3 neon = hsv2rgb(vec3(fract(uv.x * 0.3 + uv.y * 0.2 + u_time * 0.05), 0.9, 1.0));
+  vec3 base = srcAt(uv) * 0.15;
+  vec3 g = clamp(neon * e, 0.0, 1.0);
+  vec3 col = 1.0 - (1.0 - base) * (1.0 - g);   // screen合成で白飛びしない
+  outColor = vec4(col, 1.0);
+}`],
+  ['サーモグラフィ', () => `void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  float l = luma(srcAt(uv));
+  l += (vnoise(uv * 40.0 + u_time * 2.0) - 0.5) * 0.04;   // 熱の揺らぎ
+  vec3 col = mix(vec3(0.05, 0.0, 0.25), vec3(0.6, 0.0, 0.5), smoothstep(0.0, 0.3, l));
+  col = mix(col, vec3(1.0, 0.45, 0.0), smoothstep(0.3, 0.65, l));
+  col = mix(col, vec3(1.0, 1.0, 0.75), smoothstep(0.65, 0.95, l));
+  outColor = vec4(col, 1.0);
+}`],
+  ['鉛筆スケッチ', () => `void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  float e = smoothstep(0.03, 0.25, edgeAt(uv));
+  float paper = 0.93 + 0.05 * vnoise(uv * u_res * 0.5);   // 紙の質感
+  float l = luma(srcAt(uv));
+  // 中間調は斜めハッチングで沈める
+  float hatch = smoothstep(0.4, 0.0, l) * (0.5 + 0.5 * sin((uv.x + uv.y) * u_res.y * 0.9));
+  float ink = clamp(e + 0.45 * hatch, 0.0, 1.0);
+  outColor = vec4(vec3(paper) * (1.0 - ink * 0.85), 1.0);
+}`],
+  ['グリッチ', () => `void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  float t = floor(u_time * 8.0);
+  float band = floor(uv.y * 24.0);
+  float burst = step(0.92, hash12(vec2(t, 7.0)));          // たまに発作
+  float shift = (hash12(vec2(band, t)) - 0.5) * 0.2 * burst
+              + (hash12(vec2(band, t + 13.0)) - 0.5) * 0.01;
+  vec2 q = vec2(uv.x + shift, uv.y);
+  float split = 0.01 + 0.05 * burst;                        // ずれた行はRGBも割る
+  vec3 col = vec3(srcAt(q + vec2(split, 0.0)).r, srcAt(q).g, srcAt(q - vec2(split, 0.0)).b);
+  float corrupt = step(0.97, hash12(vec2(band, t + 31.0))) * burst;
+  col = mix(col, col.gbr, corrupt);                         // 色化けブロック
+  outColor = vec4(col, 1.0);
+}`],
+  ['8mmフィルム', () => `void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  // ゲートウィーブ(フレームの微妙な揺れ)
+  vec2 q = uv + vec2(hash12(vec2(floor(u_time * 24.0), 1.0)) - 0.5,
+                     hash12(vec2(floor(u_time * 24.0), 2.0)) - 0.5) * 0.003;
+  vec3 col = srcAt(q);
+  float l = luma(col);
+  col = mix(col, vec3(l), 0.35) * vec3(1.08, 1.0, 0.82) + vec3(0.06, 0.03, 0.0);
+  col += (hash12(uv * u_res + u_time * 60.0) - 0.5) * 0.08; // 粒子
+  col *= 1.0 - 0.5 * smoothstep(0.4, 0.75, length(uv - 0.5));
+  float scratch = step(0.985, hash12(vec2(floor(uv.x * 60.0), floor(u_time * 3.0))));
+  col = mix(col, vec3(0.9), scratch * 0.4);                 // たまに縦キズ
+  outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}`],
+  ['左右対称', () => `void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  // 合わせ目がゆっくり漂う左右対称
+  float c = 0.5 + 0.06 * sin(u_time * 0.25);
+  outColor = vec4(srcAt(vec2(c - abs(uv.x - c), uv.y)), 1.0);
+}`],
+];
+const presetBody = entry => entry[1]();
 const postState = { c: null, gl: null, prog: null, uT: null, uR: null, tex: null, on: false };
 function ensurePost() {
   if (postState.c) return true;
@@ -3147,6 +3274,20 @@ function libSave(name, code) {
 function renderShLib() {
   const box = $('shLib');
   box.replaceChildren();
+  for (const p of SHADER_PRESETS) {    // built-ins first: load as an editable base
+    const chip = document.createElement('button');
+    chip.className = 'shchip preset';
+    chip.title = '内蔵プリセットをエディタに読み込み';
+    chip.append('✨ ' + p[0]);
+    chip.addEventListener('click', () => {
+      $('shCode').value = presetBody(p);
+      $('shName').value = p[0];
+      $('shEditMode').checked = true;  // そのままAIに「もっと◯◯」と頼める
+      $('shErr').textContent = '';
+      shRenderGutter();
+    });
+    box.append(chip);
+  }
   for (const s of shaderLib) {
     const chip = document.createElement('button');
     chip.className = 'shchip';
@@ -3798,6 +3939,7 @@ window.__studio = {
   saveShader: libSave,
   buildPalette,
   shaderShots: SHADER_SHOTS,
+  shaderPresets: () => SHADER_PRESETS.map(p => [p[0], presetBody(p)]),
   compileShader: compileNodeShader,
 };
 
