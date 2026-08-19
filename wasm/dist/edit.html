@@ -341,6 +341,17 @@
            box-shadow: 0 0 20px rgba(160, 140, 250, 0.4); }
   .cfgset[hidden] { display: none; }
 
+  #peekCv { display: none; position: absolute; inset: 0; z-index: 2;
+          width: 100%; height: 100%; border-radius: 20px; pointer-events: none; }
+  #peekCv.on { display: block; }
+  body.theater #peekCv { inset: auto; top: 50%; left: 50%;
+          transform: translate(-50%, -50%);
+          width: min(100vw, calc(100vh * 16 / 9)); aspect-ratio: 16 / 9;
+          height: auto; border-radius: 0; }
+  #btnPeek { touch-action: none; -webkit-user-select: none; user-select: none; }
+  #btnPeek.hold { color: #0c0a14 !important; background: var(--grad) !important;
+          border-color: transparent !important; font-weight: 700; }
+
   /* AI-shader post pass canvas sits exactly over the video */
   #post { display: none; position: absolute; inset: 0; z-index: 2;
           width: 100%; height: 100%; border-radius: 20px; pointer-events: none; }
@@ -448,11 +459,13 @@
     <button id="srcCam" title="Webカメラ">📷 カメラ</button>
     <button id="srcFile" title="画像・動画を開く">🖼 ファイル</button>
     <button id="srcSample" title="サンプル映像">✨ サンプル</button>
+    <button id="btnPeek" title="押している間だけ原画を表示">👁 原画</button>
     <input id="filePick" type="file" accept="image/*,video/*" hidden>
   </div>
   <div id="pill">loading…</div>
+  <canvas id="peekCv"></canvas>
   <button id="btnFull" title="全画面モード">⛶</button>
-  <div id="hint">原画と比べる: 左端からドラッグ</div>
+  <div id="hint">ノードをつないで合成 (下の枝ほど手前)</div>
 </div>
 <div id="aibar">
   <span class="spark">✨</span>
@@ -946,10 +959,6 @@ function unitFirstSrc(u) {
   return null;
 }
 const unitOfXform = n => units.find(u => u.deco && u.deco.xform === n) || null;
-const wipeMode = () => branches.length === 1 && branches[0].unit.kind === 'image' &&
-                       !branches[0].xform && !branches[0].person && !branches[0].hands &&
-                       !branches[0].feedback &&
-                       nodes.filter(n => n.type === 'src').length === 1;
 
 function sceneYaml(withFilters = false) {
   const srcs = nodes.filter(n => n.type === 'src');
@@ -963,17 +972,6 @@ inputs:
 `;
   srcs.forEach((s2, i) => { y += `  in${i}: { type: image.rgba8, update: per_frame }\n`; });
   let params = '';
-  if (wipeMode()) {
-    // defaults come from wipeX so a recompile (ノード追加等) never snaps the
-    // divider back — and the default IS "全面フィルタ" (wipeX = 0)
-    params += `  wipe_win: { type: vec2, default: [${(wipeX - 640).toFixed(1)}, 360], runtime_mutable: true,
-              animate: { duration: 0.1, ease: ease_out } }
-  wipe_inv: { type: vec2, default: [${(1920 - wipeX).toFixed(1)}, 360], runtime_mutable: true,
-              animate: { duration: 0.1, ease: ease_out } }
-  divider: { type: vec2, default: [${(wipeX < 2 ? -10 : wipeX).toFixed(1)}, 360], runtime_mutable: true,
-             animate: { duration: 0.1, ease: ease_out } }
-`;
-  }
   for (const u of units) {
     if (!u.deco || !u.deco.xform) continue;
     const l = u.deco.xform;
@@ -1035,20 +1033,6 @@ inputs:
     return o;
   }
   for (const br of branches) y += emit(br.unit, 2, null);
-  if (wipeMode()) {
-    y += `  - id: before_win
-    bounds: [0, 0, 1280, 720]
-    masks_to_bounds: true
-    position: $params.wipe_win
-    sublayers:
-      - bounds: [0, 0, 1280, 720]
-        position: $params.wipe_inv
-        content: { image: { source: $inputs.in0, fit: cover } }
-  - id: divider_line
-    position: $params.divider
-    content: { rect: { size: [3, 720], color: [1, 1, 1, 0.55] } }
-`;
-  }
   return y;
 }
 
@@ -3427,6 +3411,46 @@ $('btnSnap').addEventListener('click', () => {
   }, 'image/png');
 });
 
+// ---- 原画 hold-to-peek: 押している間だけ生ソースを出力の上に表示 -----------
+// (ワイプ機構はScene文書ごと全廃 — 比較はこのボタンだけ。文書は常に
+//  ユーザーが組んだグラフの純粋な写像)
+let peekOn = false;
+function drawPeek() {
+  const s2 = selectedSrc();
+  const c = $('peekCv');
+  if (!s2 || !s2.grab.width) return;
+  if (c.width !== canvas.width || c.height !== canvas.height) {
+    c.width = canvas.width;
+    c.height = canvas.height;
+  }
+  const g = c.getContext('2d');
+  const sc = Math.max(c.width / s2.grab.width, c.height / s2.grab.height);
+  const w = s2.grab.width * sc, h = s2.grab.height * sc;
+  g.drawImage(s2.grab, (c.width - w) / 2, (c.height - h) / 2, w, h);
+}
+{
+  const b = $('btnPeek');
+  const on = e => {
+    e.preventDefault();
+    peekOn = true;
+    b.classList.add('hold');
+    $('peekCv').classList.add('on');
+    drawPeek();
+  };
+  const off = () => {
+    if (!peekOn) return;
+    peekOn = false;
+    b.classList.remove('hold');
+    $('peekCv').classList.remove('on');
+  };
+  b.addEventListener('pointerdown', on);
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) {
+    b.addEventListener(ev, off);
+  }
+  window.addEventListener('pointerup', off);
+  b.addEventListener('contextmenu', e => e.preventDefault());
+}
+
 // ---- backend: WebGPU when available, CPU otherwise -------------------------
 let gpu = false;
 try {
@@ -3484,14 +3508,6 @@ function fallbackToCpu(why) {
 }
 
 // ---- canvas interaction: wipe / move selected branch's xform ----------------
-let wipeX = 0;                        // 0 = 全面フィルタ (比較は左端からドラッグ)
-function setWipe(s) {
-  s = Math.max(0, Math.min(STAGE_W, s));
-  wipeX = s;
-  fs.setParamVec2(inst, 'wipe_win', s - 640, 360);
-  fs.setParamVec2(inst, 'wipe_inv', 1920 - s, 360);
-  fs.setParamVec2(inst, 'divider', s < 2 ? -10 : s, 360);
-}
 function stagePoint(el, e) {
   const r = el.getBoundingClientRect();
   return [(e.clientX - r.left) / r.width * STAGE_W,
@@ -3509,10 +3525,7 @@ function activeXform() {
 }
 function updateHint() {
   const xf = activeXform();
-  if (wipeMode()) {
-    hint.textContent = wipeX > 2 ? 'ドラッグで境界移動 · 左=原画' : '原画と比べる: 左端からドラッグ';
-    canvas.style.cursor = 'ew-resize';
-  } else if (xf) {
+  if (xf) {
     hint.textContent = '小窓をドラッグで移動 · ホイールで拡縮';
     canvas.style.cursor = 'move';
   } else {
@@ -3525,20 +3538,14 @@ function hookCanvas(el) {
   el.addEventListener('pointerdown', e => {
     dragging = true; el.setPointerCapture(e.pointerId);
     const [sx, sy] = stagePoint(el, e);
-    if (wipeMode()) {
-      setWipe(sx);
-    } else {
-      dragXf = activeXform();
-      if (dragXf) dragOff = [dragXf.pos[0] - sx, dragXf.pos[1] - sy];
-    }
+    dragXf = activeXform();
+    if (dragXf) dragOff = [dragXf.pos[0] - sx, dragXf.pos[1] - sy];
     e.preventDefault();
   });
   el.addEventListener('pointermove', e => {
     if (!dragging) return;
     const [sx, sy] = stagePoint(el, e);
-    if (wipeMode()) {
-      setWipe(sx);
-    } else if (dragXf) {
+    if (dragXf) {
       dragXf.pos = [sx + dragOff[0], sy + dragOff[1]];
       const u = unitOfXform(dragXf);
       if (u) fs.setParamVec2(inst, 'p_' + u.id, dragXf.pos[0], dragXf.pos[1]);
@@ -3547,7 +3554,7 @@ function hookCanvas(el) {
   el.addEventListener('pointerup', () => { dragging = false; dragXf = null; saveHash(); updateHint(); });
   el.addEventListener('wheel', e => {
     const xf = activeXform();
-    if (wipeMode() || !xf) return;
+    if (!xf) return;
     e.preventDefault();
     xf.scale = Math.min(1.6, Math.max(0.1, xf.scale * (e.deltaY < 0 ? 1.06 : 0.94)));
     rebuildSoon();
@@ -3858,6 +3865,7 @@ function tick() {
     }
   }
   drawPost(t);
+  if (peekOn) drawPeek();
   ++frames;
   pill.textContent = `${fpsShown} fps · ${gpu ? 'webgpu' : 'cpu'} · ${canvas.width}×${canvas.height}` +
       (branches.length > 1 ? ` · ${branches.length}枝` : '');
