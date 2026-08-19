@@ -178,7 +178,7 @@ const stageW = fs.stageW(inst);
 const HIDDEN = new Set(['lut', 'face', 'opacity']);
 const CATALOG = JSON.parse(fs.filtersJson()).filter(f => !HIDDEN.has(f.name));
 const CATS = [
-  ['ANALOG', ['ntsc', 'crt']],
+  ['ANALOG', ['ntsc', 'crt', 'texture']],
   ['PAINT', ['impressionist', 'anime', 'inkline', 'watercolor', 'sumie', 'stainedglass', 'pixelart', 'wobble']],
   ['ART', ['notebook', 'oilpaint', 'sketch', 'toon', 'halftone', 'emboss', 'edge_sobel', 'posterize', 'solarize']],
   ['LENS', ['bokeh', 'blur', 'bilateral', 'median', 'motion_blur', 'zoom_blur', 'sharpen', 'pixelate', 'fisheye', 'chromab']],
@@ -186,7 +186,13 @@ const CATS = [
   ['COLOR', ['grayscale', 'sepia', 'invert', 'hue', 'exposure', 'white_balance', 'levels',
              'threshold', 'rgb', 'haze', 'color_transform', 'vignette', 'beauty']],
 ];
-function rangeFor(p) {
+function rangeFor(p, fname) {
+  // texture reuses `blend` and `scale` with its own meaning (blend is a mode
+  // index, scale is a tile multiplier), so it wins over the shared table
+  if (fname === 'texture') {
+    if (p.name === 'scale') return [0.1, 3, 0.05];
+    if (p.name === 'strength') return [0, 1, 0.01];
+  }
   const byName = {
     blades: [0, 9, 1], rotation: [0, 360, 1], angle: [0, 360, 1],
     levels: [0, 64, 1], mask: [0, 2, 1], scale: [0.05, 1, 0.01],
@@ -246,8 +252,12 @@ function makeChip(name) {
 for (const f of CATALOG) chainSel.add(new Option(f.name, f.name));
 
 // ---- presets ---------------------------------------------------------------
-// [label, primary, chain, primary overrides {name: value}]
+// [label, primary, chain, primary overrides {name: value}, texture plate]
 const PRESETS = [
+  ['🎞 フィルム粒状', 'texture', '', {}, 'grain'],
+  ['🎬 古い映画', 'ntsc', 'texture', {}, 'dust'],
+  ['🌅 リークライト', 'texture', '', {}, 'leak'],
+  ['🖼 キャンバス画', 'oilpaint', 'texture', { radius: 6 }, 'canvas'],
   ['📺 ブラウン管', 'ntsc', 'crt', {}],
   ['📼 深夜の電波', 'ntsc', 'crt', { noise: 0.18, artifacts: 1.0 }],
   ['✏️ ノート', 'notebook', 'wobble', {}],
@@ -265,13 +275,15 @@ const PRESETS = [
   ['👁 トリップ', 'lsd', '', {}],
 ];
 const presetsBox = document.getElementById('presets');
-for (const [label, primary, chain, over] of PRESETS) {
+for (const [label, primary, chain, over, pl] of PRESETS) {
   const b = document.createElement('button');
   b.className = 'preset';
   b.textContent = label;
   b.addEventListener('click', () => {
     chainSel.value = chain;
+    if (pl) plate = pl;              // before selectFilter: it reads the plate
     selectFilter(primary, over);
+    if (chain === 'texture') loadPlate(plate).then(() => pushFilters(perfNowSec()));
   });
   presetsBox.append(b);
 }
@@ -303,17 +315,63 @@ function selectFilter(name, overrides = {}) {
   history.replaceState(null, '', '?f=' + name);
   for (const [n, b] of Object.entries(chipByName)) b.classList.toggle('on', n === name);
   chipByName[name]?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  if (name === 'texture') {
+    if (!Object.keys(overrides).length) overrides = PLATES[plate][3];
+    loadPlate(plate).then(() => pushFilters(perfNowSec()));   // bind once decoded
+  }
   buildSliders(overrides);
   pushFilters(perfNowSec());
+}
+
+// A labelled dropdown shaped like the slider rows around it.
+function selectRow(labelText, options, value, onChange) {
+  const label = document.createElement('label');
+  label.className = 'slider';
+  const row = document.createElement('div');
+  row.className = 'row';
+  const sel = document.createElement('select');
+  for (const [v, t] of options) sel.add(new Option(t, v));
+  sel.value = String(value);
+  sel.addEventListener('change', () => onChange(sel.value));
+  row.append(sel);
+  label.append(labelText, row);
+  return label;
+}
+const BLENDS = [[0, 'multiply 乗算'], [1, 'screen スクリーン'], [2, 'overlay オーバーレイ'],
+                [3, 'softlight ソフトライト'], [4, 'add 加算']];
+// texture's mode and plate are choices, not continuous values — sliders
+// would only invite the broken combinations (a black dust plate multiplied).
+function textureRows(s) {
+  const iBlend = s.params.findIndex(p => p.name === 'blend');
+  const iFit = s.params.findIndex(p => p.name === 'fit');
+  return [
+    selectRow('plate', Object.keys(PLATES).map(k => [k, PLATES[k][2]]), plate, k => {
+      plate = k;
+      loadPlate(k).then(() => {
+        buildSliders(PLATES[k][3]);      // the plate carries its own pairing
+        pushFilters(perfNowSec());
+      });
+    }),
+    selectRow('blend', BLENDS, values[iBlend], v => {
+      values[iBlend] = Number(v);
+      pushFilters(perfNowSec());
+    }),
+    selectRow('fit', [[0, 'タイル'], [1, '引き伸ばし']], values[iFit], v => {
+      values[iFit] = Number(v);
+      pushFilters(perfNowSec());
+    }),
+  ];
 }
 
 function buildSliders(overrides = {}) {
   const s = spec();
   values = s.params.map(p => overrides[p.name] !== undefined ? overrides[p.name] : p.def);
   paramsBox.replaceChildren();
+  if (s.name === 'texture') paramsBox.append(...textureRows(s));
   s.params.forEach((p, i) => {
     if (p.name === 'time') return;              // the clock drives this one
-    const [lo, hi, step] = rangeFor(p);
+    if (s.name === 'texture' && (p.name === 'blend' || p.name === 'fit')) return;
+    const [lo, hi, step] = rangeFor(p, s.name);
     const label = document.createElement('label');
     label.className = 'slider';
     const row = document.createElement('div');
@@ -332,6 +390,42 @@ function buildSliders(overrides = {}) {
     label.append(p.name, row);
     paramsBox.append(label);
   });
+}
+
+// Texture plates for `texture`. That filter is a documented pass-through
+// until a plate is fed, so the lab always feeds the selected one — and the
+// plate, not a slider, is the real choice. Each carries the pairing that
+// makes it look right (mid-gray grain is the identity under overlay, dust
+// and leaks want screen over black, weaves want multiply).
+const PLATES = {
+  grain:   ['./grain.jpg',    512, 'フィルム粒状', { blend: 2, strength: 0.5,  scale: 0.4, fit: 0 }],
+  dust:    ['./dust.jpg',    1024, 'ほこり傷',     { blend: 1, strength: 0.8,  scale: 1.0, fit: 0 }],
+  leak:    ['./leak.jpg',    1024, 'リークライト', { blend: 1, strength: 0.85, scale: 1.0, fit: 1 }],
+  canvas:  ['./canvas.jpg',  1024, 'キャンバス',   { blend: 0, strength: 0.7,  scale: 1.6, fit: 0 }],
+  washi:   ['./washi.jpg',   1024, '和紙',         { blend: 0, strength: 0.75, scale: 2.0, fit: 0 }],
+  wcpaper: ['./wcpaper.jpg', 1024, '水彩紙',       { blend: 0, strength: 0.75, scale: 2.0, fit: 0 }],
+};
+let plate = 'grain';
+const plateReady = {};
+async function loadPlate(k) {
+  if (plateReady[k]) return true;
+  try {
+    const [src, size] = PLATES[k];
+    const img = new Image();
+    img.src = src;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const cx = c.getContext('2d');
+    cx.drawImage(img, 0, 0, size, size);
+    const ptr = fs.imageBuffer(inst, 'tex_' + k, size, size);
+    mod.HEAPU8.set(cx.getImageData(0, 0, size, size).data, ptr);
+    plateReady[k] = true;
+    return true;
+  } catch (e) {
+    console.error('plate ' + k + ' load failed:', e);
+    return false;
+  }
 }
 
 // washi paper for sumie — a real scan-based sheet (CC0 base + synthesized
@@ -364,6 +458,10 @@ function bindPaper() {
       fs.setFilterImage(inst, 'after', k, input, 1024, 1024);
     }
   }
+  if ((current === 'texture' || chainSel.value === 'texture') && plateReady[plate]) {
+    const size = PLATES[plate][1];
+    fs.setFilterImage(inst, 'after', 'texture', 'tex_' + plate, size, size);
+  }
 }
 
 function pushFilters(t) {
@@ -375,7 +473,11 @@ function pushFilters(t) {
   fs.setFilter(inst, 'after', s.name, v[0] || 0, v[1] || 0, v[2] || 0, v[3] || 0, v[4] || 0);
   const c = chainSpec();
   if (c && c.name !== s.name) {
-    const cv = c.params.map(p => p.def);
+    // chained texture takes the plate's pairing, not the raw defaults —
+    // multiply over a black dust plate would just black the frame out
+    const cv = c.name === 'texture'
+        ? c.params.map(p => PLATES[plate][3][p.name] ?? p.def)
+        : c.params.map(p => p.def);
     const cts = timeSlot(c);
     if (cts >= 0) cv[cts] = anim.checked ? t : 0;
     fs.setFilter(inst, 'after', c.name, cv[0] || 0, cv[1] || 0, cv[2] || 0, cv[3] || 0, cv[4] || 0);
@@ -383,7 +485,10 @@ function pushFilters(t) {
   bindPaper();
 }
 
-chainSel.addEventListener('change', () => pushFilters(perfNowSec()));
+chainSel.addEventListener('change', () => {
+  if (chainSel.value === 'texture') loadPlate(plate).then(() => pushFilters(perfNowSec()));
+  pushFilters(perfNowSec());
+});
 anim.addEventListener('change', () => pushFilters(perfNowSec()));
 selectFilter(current);
 
