@@ -1,6 +1,24 @@
 # Changelog
 
-## 0.14.3 — 2026-08-19 (anime.html: WebGPU完全経路化 + 顔用モデル)
+## 0.14.4 — 2026-08-20 (anime.html: グラフ外科手術第2弾 — IN融合+Resize定数化)
+
+0.14.3後も「JP_face以外めちゃ遅い」(JP=140ms、他~700ms級) への追撃。
+JP_faceだけ速い理由 = 書き出し世代が新しくReduceMean型正規化。他3本は
+tf.nn.moments分解形 (GAP×52+微小op200個) だった:
+
+- **IN融合**: 分解された正規化コア (GAP×2+Sub+Mul+Add+Sqrt+Div+Transpose)
+  13ブロックを `InstanceNormalization` 単一op (WebGPU対応) に融合。
+  残り13ブロックは正規化でなく**統計移植 (AdaIN風: 別テンソルに
+  mean/stdを掛け直す)** でIN置換不可、ただし全構成opはWebGPU対応
+- **Resize倍率定数化**: 全モデルで倍率が実測定数 [1,1,2,2] なのに
+  Shape→Slice→Cast→Concatで毎回動的計算していた。初期化子に固定し
+  shape計算チェーンを死滅 (Shape 4→1, Slice 11→2, Cast 11→2)。
+  PortraitSketchはsizes型→scales型に書き換え
+- 検証: 2解像度×乱数入力でCPU EP照合 max|Δ|≤2e-5 (Resize折りは0.0)。
+  パターンマッチの罠: Mul(x,x) はconsumer表に二重登録される /
+  protobufのnode.extendはコピーでid同一性が壊れる (一括再構築で回避)
+- 既知の残課題: JP_faceは引きの顔だとのっぺらぼう (顔アップで学習された
+  モデルの特性)。次手 = 顔検出クロップ→顔だけ変換→貼り戻し
 
 初回実機評「めちゃくちゃ遅いし絵になってない」(M3 Ultra で webgpu 表示
 なのに 692ms/512px) への根治:

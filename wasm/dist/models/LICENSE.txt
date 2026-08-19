@@ -10,8 +10,10 @@ AnimeGANv3 pretrained generators by TachibanaYoshino
 
 The network weights are unmodified. The graphs were mechanically converted
 for browser execution (opset 9 → 17, deprecated Upsample → Resize with
-asymmetric coordinates, onnxslim constant folding) and verified bit-exact
-against the originals on the CPU execution provider (max|Δ| = 0.0).
+asymmetric coordinates, constant-folded x2 resize scales, decomposed
+tf.nn.moments normalization fused into InstanceNormalization, onnxslim)
+and verified numerically against the originals on the CPU execution
+provider (max|Δ| ≤ 2e-5; bit-exact except the norm fusion rounding).
 
 These weights are NOT covered by this repository's MIT license. They are
 made freely available for NON-COMMERCIAL purposes only (academic research,
