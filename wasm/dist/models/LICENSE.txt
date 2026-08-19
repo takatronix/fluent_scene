@@ -1,19 +1,20 @@
-AnimeGANv3 pretrained generators by TachibanaYoshino
+AnimeGANv3 pretrained face generators by TachibanaYoshino
 (https://github.com/TachibanaYoshino/AnimeGANv3):
 
-  AnimeGANv3_Hayao_36.onnx      — official release v1.1.0 (scenery)
-  AnimeGANv3_Shinkai_37.onnx    — official release v1.1.0 (scenery)
-  AnimeGANv3_JP_face.onnx       — via huggingface.co/vumichien/AnimeGANv3_JP_face
-                                  (mirror of the author's face model)
+  AnimeGANv3_JP_face.onnx        — via huggingface.co/vumichien/AnimeGANv3_JP_face
+                                   (mirror of the author's face model)
   AnimeGANv3_PortraitSketch.onnx — via huggingface.co/public-data/
-                                  AnimeGANv3-portrait-sketch (PortraitSketch_25)
+                                   AnimeGANv3-portrait-sketch (PortraitSketch_25)
+  *_fp16.onnx                    — the same weights in float16 (served to the
+                                   WebGPU execution provider)
 
-The network weights are unmodified. The graphs were mechanically converted
-for browser execution (opset 9 → 17, deprecated Upsample → Resize with
-asymmetric coordinates, constant-folded x2 resize scales, decomposed
-tf.nn.moments normalization fused into InstanceNormalization, onnxslim)
-and verified numerically against the originals on the CPU execution
-provider (max|Δ| ≤ 2e-5; bit-exact except the norm fusion rounding).
+The network weights are unmodified apart from float16 rounding in the fp16
+variants. The graphs were mechanically converted for browser execution
+(opset 9 → 17, deprecated Upsample → Resize with asymmetric coordinates,
+constant-folded x2 resize scales, decomposed tf.nn.moments normalization
+fused into InstanceNormalization / ReduceMean, onnxslim) and verified
+numerically against the originals on the CPU execution provider
+(fp32: max|Δ| ≤ 2e-5, fp16: mean|Δ| ≈ 2e-3).
 
 These weights are NOT covered by this repository's MIT license. They are
 made freely available for NON-COMMERCIAL purposes only (academic research,

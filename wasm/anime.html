@@ -28,18 +28,11 @@
   <select id="model" title="style">
     <option value="models/AnimeGANv3_JP_face.onnx" selected>anime face (JP)</option>
     <option value="models/AnimeGANv3_PortraitSketch.onnx">portrait sketch</option>
-    <option value="models/AnimeGANv3_Hayao_36.onnx">Hayao (scenery)</option>
-    <option value="models/AnimeGANv3_Shinkai_37.onnx">Shinkai (scenery)</option>
-  </select>
-  <select id="scope" title="where the style lands">
-    <option value="full">everything</option>
-    <option value="person">person only</option>
-    <option value="background">background only</option>
   </select>
   <select id="res" title="inference size">
-    <option value="256">256px (fast)</option>
+    <option value="256">256px (rough)</option>
     <option value="384">384px</option>
-    <option value="512" selected>512px (fine)</option>
+    <option value="512" selected>512px (native)</option>
   </select>
   <button id="face" title="detect the face and stylize it at the scale the model was trained on">👤 face lock</button>
   <button id="flip" title="switch camera">🔄</button>
@@ -76,7 +69,6 @@ let session = null, epName = '?', busy = false, stream = null, facing = 'user';
 const mk = () => { const c = document.createElement('canvas'); return [c, c.getContext('2d', { willReadFrequently: true })]; };
 const [srcCanvas, srcCtx] = mk();       // the exact frame the GAN sees
 const [animeCanvas, animeCtx] = mk();   // raw GAN output
-const [maskCanvas, maskCtx] = mk();     // segmentation alpha
 const [outCanvas, outCtx] = mk();       // composed frame we display
 const [pairCanvas, pairCtx] = mk();     // full frame paired with a face crop
 const video = document.createElement('video');
@@ -92,9 +84,7 @@ view.addEventListener('pointerdown', e => { view.setPointerCapture(e.pointerId);
 view.addEventListener('pointermove', e => { if (e.buttons) pointerSplit(e); });
 
 // ---- GAN session: same-origin model, download progress, webgpu → wasm ------
-async function loadModel(url) {
-  session = null;
-  if (!haveOrt) { bar.textContent = 'onnxruntime-web failed to load from the CDN — check the connection and reload'; throw new Error('no ort'); }
+async function fetchBuf(url) {
   const name = url.split('/').pop();
   const resp = await fetch(url);
   if (!resp.ok) { bar.textContent = 'model fetch failed: ' + resp.status; throw new Error(url); }
@@ -109,10 +99,20 @@ async function loadModel(url) {
   }
   const buf = new Uint8Array(got); let o = 0;
   for (const p of parts) { buf.set(p, o); o += p.length; }
+  return buf;
+}
+async function loadModel(url) {
+  session = null;
+  if (!haveOrt) { bar.textContent = 'onnxruntime-web failed to load from the CDN — check the connection and reload'; throw new Error('no ort'); }
   let lastErr = null;
   for (const ep of (q.get('ep') ? [q.get('ep')] : ['webgpu', 'wasm'])) {
-    try { session = await ort.InferenceSession.create(buf, { executionProviders: [ep] }); epName = ep; break; }
-    catch (e) { lastErr = e; }
+    // fp16 weights on the GPU (half the download, faster kernels); fp32 on CPU
+    const file = ep === 'webgpu' ? url.replace('.onnx', '_fp16.onnx') : url;
+    try {
+      const buf = await fetchBuf(file);
+      session = await ort.InferenceSession.create(buf, { executionProviders: [ep] });
+      epName = ep; break;
+    } catch (e) { lastErr = e; }
   }
   if (!session) { bar.textContent = 'model load failed: ' + lastErr; throw lastErr; }
 }
@@ -122,10 +122,8 @@ async function loadModel(url) {
 // Feeding it a wide webcam frame is what produces the featureless blob.
 let detector = null, detLoading = false, mpFiles = null, mpVision = null;
 let faceEMA = null, lastFaceT = 0;
-let faceLock = null;   // null = auto (on for the face models), else user override
-const isFaceModel = url => /JP_face|PortraitSketch/.test(url);
-const faceActive = () => faceLock !== null ? faceLock
-                       : isFaceModel(document.getElementById('model').value);
+let faceLock = null;   // null = auto (on: both models are face models)
+const faceActive = () => faceLock !== null ? faceLock : true;
 
 async function mediapipe() {
   if (!mpVision) {
@@ -210,51 +208,6 @@ function feather(S) {
   return featherCanvas;
 }
 
-// ---- segmentation analyzer (lazy): MediaPipe selfie segmenter --------------
-let segmenter = null, segLoading = false;
-async function ensureSegmenter() {
-  if (segmenter || segLoading) return;
-  segLoading = true;
-  bar.textContent = 'loading segmenter…';
-  try {
-    const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
-    const vision = await import(`${MP}/vision_bundle.mjs`);
-    const files = await vision.FilesetResolver.forVisionTasks(`${MP}/wasm`);
-    const make = delegate => vision.ImageSegmenter.createFromOptions(files, {
-      baseOptions: {
-        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
-        delegate,
-      },
-      runningMode: 'VIDEO',
-      outputConfidenceMasks: true,
-      outputCategoryMask: false,
-    });
-    try { segmenter = await make('GPU'); }
-    catch (e) { console.error('segmenter GPU delegate failed, retrying on CPU:', e); segmenter = await make('CPU'); }
-  } catch (e) {
-    console.error('segmenter unavailable:', e);
-    document.getElementById('scope').value = 'full';
-    bar.textContent = 'segmenter unavailable — falling back to everything';
-  } finally { segLoading = false; }
-}
-document.getElementById('scope').addEventListener('change',
-  e => { if (e.target.value !== 'full') ensureSegmenter(); });
-
-function drawMask(conf, w, h, invert) {
-  // confidence → alpha at model resolution, then let the canvas scaler feather
-  const mw = conf.width, mh = conf.height, m = conf.getAsFloat32Array();
-  const [tiny, tctx] = mk();
-  tiny.width = mw; tiny.height = mh;
-  const id = tctx.createImageData(mw, mh);
-  for (let i = 0; i < mw * mh; i++) id.data[i * 4 + 3] = (invert ? 1 - m[i] : m[i]) * 255;
-  tctx.putImageData(id, 0, 0);
-  maskCanvas.width = w; maskCanvas.height = h;
-  maskCtx.imageSmoothingEnabled = true;
-  maskCtx.filter = 'blur(1.5px)';
-  maskCtx.drawImage(tiny, 0, 0, w, h);
-  maskCtx.filter = 'none';
-}
-
 // ---- camera -----------------------------------------------------------------
 async function startCamera() {
   if (stream) for (const t of stream.getTracks()) t.stop();
@@ -307,16 +260,6 @@ async function inferOnce() {
       srcCtx.drawImage(video, 0, 0, w, h);
     }
 
-    // mask first, on the SAME frame the GAN will see (time-consistent pair)
-    const scope = document.getElementById('scope').value;
-    let haveMask = false;
-    if (!box && scope !== 'full' && segmenter) {
-      const res = segmenter.segmentForVideo(srcCanvas, performance.now());
-      const conf = res.confidenceMasks && res.confidenceMasks[0];
-      if (conf) { drawMask(conf, w, h, scope === 'background'); haveMask = true; }
-      res.close();
-    }
-
     const rgba = srcCtx.getImageData(0, 0, w, h).data;
     const n = w * h;
     const inp = new Float32Array(n * 3);
@@ -351,13 +294,6 @@ async function inferOnce() {
       }
       outCtx.drawImage(pairCanvas, 0, 0);
       outCtx.drawImage(animeCanvas, box.x, box.y, box.s, box.s);
-    } else if (haveMask) {
-      if (outCanvas.width !== w) { outCanvas.width = w; outCanvas.height = h; }
-      animeCtx.globalCompositeOperation = 'destination-in';
-      animeCtx.drawImage(maskCanvas, 0, 0);
-      animeCtx.globalCompositeOperation = 'source-over';
-      outCtx.drawImage(srcCanvas, 0, 0);
-      outCtx.drawImage(animeCanvas, 0, 0);
     } else {
       if (outCanvas.width !== w) { outCanvas.width = w; outCanvas.height = h; }
       outCtx.drawImage(animeCanvas, 0, 0);
@@ -410,9 +346,5 @@ document.getElementById('model').addEventListener('change', async e => {
 });
 updateFaceBtn();
 if (q.get('res')) document.getElementById('res').value = q.get('res');
-if (q.get('scope')) {
-  document.getElementById('scope').value = q.get('scope');
-  if (q.get('scope') !== 'full') ensureSegmenter();
-}
 if (q.get('auto')) start();
 </script>
