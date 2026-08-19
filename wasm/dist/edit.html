@@ -200,7 +200,7 @@
           stroke: rgba(255, 255, 255, 0.22); stroke-width: 1; transition: 0.12s; }
   #edgeSvg .cutbtn text { font-size: 11px; fill: #cfc9e8; user-select: none; }
   #edgeSvg .cutbtn:hover circle { stroke: var(--coral); fill: rgba(60, 20, 25, 0.95); }
-  .gnode { position: absolute; z-index: 2; width: 104px;
+  .gnode { position: absolute; z-index: 2; min-width: 78px;
           background: rgba(22, 19, 38, 0.94); border: 1px solid var(--line);
           border-left: 3px solid var(--ac, var(--violet)); border-radius: 11px;
           padding: 7px 9px 6px; cursor: grab; touch-action: none;
@@ -1361,6 +1361,33 @@ function nodeMeta(n) {
 }
 const nodeH = n => n.type === 'person' || n.type === 'hands' ||
                    n.type === 'mix' || n.type === 'split' ? 66 : NODE_H;
+// 幅はラベルに合わせる: max(日本語名, 英名)+余白。短名ノードは自然に細く、
+// 200pxを超えるものだけellipsisに任せる
+const NODE_GAP = 46;
+const _wCache = new Map();
+const _wCtx = document.createElement('canvas').getContext('2d');
+function nodeW(n) {
+  const m = nodeMeta(n);
+  const key = m.j + '|' + m.e;
+  let w = _wCache.get(key);
+  if (w === undefined) {
+    _wCtx.font = '700 12.5px -apple-system, "Hiragino Sans", "Noto Sans CJK JP", system-ui, sans-serif';
+    const jw = _wCtx.measureText(m.j).width;
+    _wCtx.font = '9.5px ui-monospace, monospace';
+    const ew = _wCtx.measureText(m.e).width;
+    w = Math.max(78, Math.min(200, Math.ceil(Math.max(jw + 63, ew + 43))));
+    _wCache.set(key, w);
+  }
+  return w;
+}
+// 終端(出力など)を直前ノードの直後へ詰める — 長い空白ワイヤーを残さない
+function settleTail(tailId) {
+  const t = nodeById(tailId);
+  if (!t) return;
+  const ins = edges.filter(e => e.to === tailId && !isDelayEdge(e))
+      .map(e => nodeById(e.from)).filter(Boolean);
+  if (ins.length) t.x = Math.max(...ins.map(n => n.x + nodeW(n))) + NODE_GAP;
+}
 function portXY(n, isOut, portIdx) {
   const h = nodeH(n);
   const m = nodeMeta(n);
@@ -1369,7 +1396,7 @@ function portXY(n, isOut, portIdx) {
     return [n.x, n.y + h * ((portIdx | 0) + 1) / (k + 1)];
   }
   const k = m.outs.length;
-  return [n.x + NODE_W, n.y + h * (portIdx + 1) / (k + 1)];
+  return [n.x + nodeW(n), n.y + h * (portIdx + 1) / (k + 1)];
 }
 
 let justAddedId = null;
@@ -1385,6 +1412,7 @@ function renderGraph() {
     card.style.left = n.x + 'px';
     card.style.top = n.y + 'px';
     card.style.height = nodeH(n) + 'px';
+    card.style.width = nodeW(n) + 'px';
     card.dataset.id = n.id;
     const em = document.createElement('div');
     em.className = 'emoji';
@@ -1631,7 +1659,7 @@ let graphZoom = 1;
 function sizeGInner() {
   let mx = 1200, my = 360;
   for (const n of nodes) {
-    mx = Math.max(mx, n.x + NODE_W);
+    mx = Math.max(mx, n.x + nodeW(n));
     my = Math.max(my, n.y + nodeH(n));
   }
   gInner.style.width = (mx + 200) + 'px';
@@ -1641,7 +1669,7 @@ function sizeGInner() {
 function panToNode(n) {
   const g = $('graph'), z = graphZoom, pad = 40;
   const nx0 = n.x * z, ny0 = n.y * z;
-  const nx1 = (n.x + NODE_W) * z, ny1 = (n.y + nodeH(n)) * z;
+  const nx1 = (n.x + nodeW(n)) * z, ny1 = (n.y + nodeH(n)) * z;
   let sl = g.scrollLeft, st = g.scrollTop;
   if (nx1 > sl + g.clientWidth - pad) sl = nx1 - g.clientWidth + pad;
   if (nx0 < sl + pad) sl = Math.max(0, nx0 - pad);
@@ -1656,7 +1684,7 @@ function fitAll() {
   if (!nodes.length || !g.clientWidth) return;
   const x0 = Math.min(...nodes.map(n => n.x)) - 30;
   const y0 = Math.min(...nodes.map(n => n.y)) - 24;
-  const x1 = Math.max(...nodes.map(n => n.x + NODE_W)) + 30;
+  const x1 = Math.max(...nodes.map(n => n.x + nodeW(n))) + 30;
   const y1 = Math.max(...nodes.map(n => n.y + nodeH(n))) + 24;
   const z = Math.max(0.4, Math.min(1,
       g.clientWidth / (x1 - x0), g.clientHeight / (y1 - y0)));
@@ -1718,10 +1746,12 @@ $('tbTidy').addEventListener('click', () => {
   if (out) depth[out.id] = Math.max(0, ...nodes.filter(n => n !== out).map(n => depth[n.id])) + 1;
   const cols = {};
   for (const n of nodes) (cols[depth[n.id]] = cols[depth[n.id]] || []).push(n);
-  for (const d of Object.keys(cols)) {
+  let colAcc = 40;
+  for (const d of Object.keys(cols).map(Number).sort((a, b) => a - b)) {
     const arr = cols[d];
     arr.sort((a, b) => a.y - b.y);
-    arr.forEach((n, i) => { n.x = 40 + d * 150; n.y = 50 + i * 92; });
+    arr.forEach((n, i) => { n.x = colAcc; n.y = 50 + i * 92; });
+    colAcc += Math.max(...arr.map(nodeW)) + NODE_GAP;
   }
   applyGraph(true);
   fitAll();
@@ -2238,16 +2268,18 @@ function loadHash() {
 const legacy = list => {          // old #c= / #s= chain links → linear graph
     nodes = []; edges = []; nextId = 1;
     const src = addNode('src', 40, 140, { kind: 'camera' });
-    const out = addNode('out', 40 + 150 * (list.length + 1), 140);
+    const out = addNode('out', 40, 140);
     let prev = src;
     for (const o of list) {
       if (!SPEC[o.n]) continue;
-      const f = addNode('filter', prev.x + 150, 140, { name: o.n, params: o.v || {} });
+      const f = addNode('filter', prev.x + nodeW(prev) + NODE_GAP, 140,
+                        { name: o.n, params: o.v || {} });
       if (o.x) f.on = false;
       connect(prev.id, 0, f.id);
       prev = f;
     }
     connect(prev.id, 0, out.id);
+    out.x = prev.x + nodeW(prev) + NODE_GAP;
     return true;
   };
 function unpackGraph(packed) {
@@ -2335,7 +2367,7 @@ function spliceNodeAfterSelected(n2) {
   const sel = nodeById(selId) || nodes.find(n => n.type === 'src');
   if (sel && sel.type !== 'out' && sel !== n2) {
     const e = edges.find(x => x.from === sel.id);
-    n2.x = Math.min(1900, sel.x + 150);
+    n2.x = sel.x + nodeW(sel) + NODE_GAP;
     n2.y = sel.y;
     if (e) {
       const toId = e.to, fp = e.fp;
@@ -2343,7 +2375,7 @@ function spliceNodeAfterSelected(n2) {
       connect(sel.id, fp, n2.id);
       connect(n2.id, 0, toId);
       const to = nodeById(toId);
-      if (to && to.x < n2.x + 150) to.x = n2.x + 150;
+      if (to && to.x < n2.x + nodeW(n2) + NODE_GAP) to.x = n2.x + nodeW(n2) + NODE_GAP;
     } else {
       connect(sel.id, sel.type === 'person' || sel.type === 'hands' ? 1 : 0, n2.id);
     }
@@ -2363,7 +2395,7 @@ function addFilterNode(name, params = {}) {
   let spliceEdge = null;
   if (sel && sel.type !== 'out') {
     spliceEdge = edges.find(e => e.from === sel.id);
-    x = sel.x + 150;
+    x = sel.x + nodeW(sel) + NODE_GAP;
     y = sel.y + (spliceEdge ? 0 : 0);
   }
   const [fx, fy] = spliceEdge ? [x, nodeById(spliceEdge.to).type === 'out' ? sel.y : sel.y]
@@ -2376,7 +2408,7 @@ function addFilterNode(name, params = {}) {
     connect(f.id, 0, toId);
     // nudge downstream nodes right so the row keeps breathing room
     const to = nodeById(toId);
-    if (to && to.x < f.x + 150) to.x = f.x + 150;
+    if (to && to.x < f.x + nodeW(f) + NODE_GAP) to.x = f.x + nodeW(f) + NODE_GAP;
   } else if (sel && sel.type !== 'out') {
     connect(sel.id, sel.type === 'person' ? 1 : 0, f.id);
   }
@@ -2600,13 +2632,12 @@ async function setBranchChain(spec, comment, pick = null) {
     if (!e) return;                            // user rewired mid-animation
     const f = addNode('filter', 0, 0, { name, params: over || {} });
     const a = nodeById(cur.id);
-    f.x = Math.min(1900, a.x + 150);
+    f.x = a.x + nodeW(a) + NODE_GAP;
     f.y = a.type === 'person' || a.type === 'hands' ? a.y + (cur.fp === 0 ? -14 : 52) : a.y;
     edges = edges.filter(x => x !== e);
     connect(cur.id, cur.fp, f.id);
     connect(f.id, 0, tailId);
-    const tailN = nodeById(tailId);
-    if (tailN.x < f.x + 150) tailN.x = f.x + 150;
+    settleTail(tailId);
     selId = justAddedId = f.id;
     cur = { id: f.id, fp: 0 };
     applyGraph(true);
@@ -2626,7 +2657,7 @@ function applyTransformAsk(xf, pick = null) {
     const outId = outNode().id;
     const e = edges.find(x => x.from === headId && x.fp === headFp && x.to === outId);
     const a = nodeById(headId);
-    xn = addNode('xform', Math.min(1900, a.x + 150), a.y,
+    xn = addNode('xform', a.x + nodeW(a) + NODE_GAP, a.y,
         { pos: [STAGE_W / 2, STAGE_H / 2], rot: 0, scale: 1, op: 1 });
     if (e) edges = edges.filter(x => x !== e);
     connect(headId, headFp, xn.id);
@@ -3193,19 +3224,29 @@ function buildGrid(n, asked) {
   out.y = midY;
   // ルック集から均等に散らして1タイル1フィルタ (負荷と上限の折衷)
   const step = Math.max(1, Math.floor(LOOK_PRESETS.length / (n * n)));
+  const tiles = [];
   for (let i = 0; i < n * n; i++) {
     const col = i % n, row = (i / n) | 0;
     const look = LOOK_PRESETS[(i * step) % LOOK_PRESETS.length];
     const first = look.chain.find(c => SPEC[c.name]) || { name: 'grayscale', params: {} };
-    const f = addNode('filter', 170 + col * 310, 30 + row * 130,
+    const f = addNode('filter', 0, 30 + row * 130,
                       { name: first.name, params: first.params || {} });
-    const xf = addNode('xform', 320 + col * 310, 30 + row * 130, {
+    const xf = addNode('xform', 0, 30 + row * 130, {
       pos: [(col + 0.5) * STAGE_W / n, (row + 0.5) * STAGE_H / n],
       rot: 0, scale: 1 / n, op: 1, blend: 'normal' });
     connect(keep.id, 0, f.id);
     connect(f.id, 0, xf.id);
     connect(xf.id, 0, out.id);
+    tiles.push({ f, xf, col });
   }
+  let cx = 170;
+  for (let c = 0; c < n; c++) {
+    const colTiles = tiles.filter(t => t.col === c);
+    const fw = Math.max(...colTiles.map(t => nodeW(t.f)));
+    for (const t of colTiles) { t.f.x = cx; t.xf.x = cx + fw + NODE_GAP; }
+    cx += fw + NODE_GAP + Math.max(...colTiles.map(t => nodeW(t.xf))) + NODE_GAP + 14;
+  }
+  out.x = cx;
   selId = null;
   applyGraph(true);
   panToNode(out);
