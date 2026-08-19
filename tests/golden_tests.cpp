@@ -544,6 +544,31 @@ void sceneGlitch(Renderer& r) {
     g_over_ratio_limit = saved_ratio;
 }
 
+// Texture compositing: pointwise blends plus a tiled read of the image
+// parameter. The tile lookup floors px*ts, so ~1e-7 of CPU/GPU drift at a
+// seam flips an isolated texel to the opposite edge of the plate — the
+// notebook-class waiver, with the default over_ratio still guarding area.
+// The first panel is deliberately unfed (documented pass-through).
+void sceneTexture(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Texture());  // unfed
+    stage.image(view).frame({170, 10, 150, 130}).filter(Texture().source(view));
+    stage.image(view).frame({330, 10, 140, 130})
+        .filter(Texture().blend(1.0f).strength(1.0f).scale(0.35f).source(view));
+    stage.image(view).frame({10, 160, 150, 130})
+        .filter(Texture().blend(2.0f).scale(2.0f).source(view));
+    stage.image(view).frame({170, 160, 150, 130})
+        .filter(Texture().blend(3.0f).fit(1.0f).source(view));
+    stage.image(view).frame({330, 160, 140, 130})
+        .filter(Texture().blend(4.0f).strength(0.5f).source(view));
+    const int saved_limit = g_max_diff_limit;
+    g_max_diff_limit = 255;
+    checkScene("texture", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
+}
+
 // Stainedglass picks the nearest Worley site (hard selection at pane
 // borders), pixelart quantizes hard against the Bayer threshold — both get
 // the oilpaint waiver for the same reason.
@@ -785,6 +810,7 @@ int main(int argc, char** argv) {
     sceneStainedglassPixelart(r);
     sceneResampleFx(r);
     sceneGlitch(r);
+    sceneTexture(r);
     sceneLayerMask(r);
     sceneTv(r);
     sceneAnimation(r);

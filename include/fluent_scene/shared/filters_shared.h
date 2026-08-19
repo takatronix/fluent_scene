@@ -83,6 +83,7 @@ const int FS_CHROMAB = 50;
 const int FS_MIRROR = 51;
 const int FS_THERMAL = 52;
 const int FS_GLITCH = 53;
+const int FS_TEXTURE = 54;
 
 #ifdef FS_SAMPLE
 
@@ -438,6 +439,43 @@ vec3 fs_face(vec2 uv, float eye, float slim, float lip, float cheek) {
         }
     }
     return c;
+}
+
+// Texture compositing: tiles (or stretches) the image parameter over the
+// layer and blends it in per channel. Soft light is the pegtop variant —
+// continuous everywhere, unlike the W3C piecewise form, so the golden
+// contract costs nothing. A mid-gray texture (0.5) is the identity for
+// overlay/softlight, which is what makes grain plates work.
+float fs_tex_blend1(float b, float t, float blend) {
+    float r;
+    if (blend < 0.5)      r = b * t;                                   // multiply
+    else if (blend < 1.5) r = 1.0 - (1.0 - b) * (1.0 - t);             // screen
+    else if (blend < 2.5) r = b < 0.5 ? 2.0 * b * t                    // overlay
+                              : 1.0 - 2.0 * (1.0 - b) * (1.0 - t);
+    else if (blend < 3.5) r = (1.0 - 2.0 * t) * b * b + 2.0 * t * b;   // soft light
+    else                  r = b + t;                                   // add
+    return clamp(r, 0.0, 1.0);
+}
+
+vec3 fs_texture(vec2 uv, float blend, float strength, float scale, float fit) {
+    vec3 c = FS_SAMPLE(uv);
+    vec2 muv;
+    if (fit >= 0.5) {
+        muv = uv;                       // stretch: light leaks, edge burns
+    } else {
+        // square tiling in source pixels; scale=1 spans the buffer height,
+        // so a given scale reads the same weave at any output resolution
+        float res_y = 1.0 / FS_TEXEL.y;
+        vec2 px = vec2(uv.x / FS_TEXEL.x, uv.y / FS_TEXEL.y);
+        float ts = 1.0 / (res_y * max(scale, 0.05));
+        vec2 mt = vec2(px.x * ts, px.y * ts);
+        muv = mt - floor(mt);
+    }
+    vec3 t = FS_SAMPLE_LUT(muv);
+    vec3 blended = vec3(fs_tex_blend1(c.x, t.x, blend),
+                        fs_tex_blend1(c.y, t.y, blend),
+                        fs_tex_blend1(c.z, t.z, blend));
+    return mix(c, blended, clamp(strength, 0.0, 1.0));
 }
 
 #endif  // FS_SAMPLE_LUT
@@ -2290,6 +2328,7 @@ vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p
 #ifdef FS_SAMPLE_LUT
     else if (mode == FS_LUT)             c = fs_lut(uv, p0, p1, p2, p3);
     else if (mode == FS_FACE)            c = fs_face(uv, p0, p1, p2, p3);
+    else if (mode == FS_TEXTURE)         c = fs_texture(uv, p0, p1, p2, p3);
 #endif
     else if (mode == FS_RIPPLE)          c = fs_ripple(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_LSD)             c = fs_lsd(uv, p0, p1, p2, p3, p4);

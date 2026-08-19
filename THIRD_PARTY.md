@@ -33,6 +33,7 @@ fluent_scene 本体は **MIT** (© 2026 takatronix)。ただし以下の例外�
 | ファイル | 由来 | ライセンス |
 |---|---|---|
 | `wasm/washi.jpg` (和紙テクスチャ) | [ambientCG Paper006](https://ambientcg.com/view?id=Paper006) (CC0) の微細粒を下地に、楮繊維・地合いムラを独自合成 | CC0 ベース+独自 → 実質制約なし |
+| `wasm/canvas.jpg` / `grain.jpg` / `dust.jpg` / `leak.jpg` (texture フィルタ用プレート: 織り目 / フィルム粒状 / ほこり傷 / リークライト) | 完全手続き生成の自家製 (numpy+PIL、外部素材不使用) | 本体と同じ MIT |
 | `wasm/dist/models/id_lineart*.onnx` (線画NN) | [Informative Drawings](https://github.com/carolineec/informative-drawings) (Chan+ 2022) の生成器、ONNX化はHF rocca経由・重み無改変 | **MIT — 商用可**。NNノードのライセンスクリア第1号 |
 | wasm 埋め込みフォント DejaVuSans | DejaVu fonts | Bitstream Vera / DejaVu ライセンス (再配布可) |
 

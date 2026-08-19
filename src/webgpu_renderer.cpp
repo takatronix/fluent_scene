@@ -1441,14 +1441,15 @@ struct WebGPURenderer::Impl {
                 continue;
             }
             WGPUTextureView lut_view = nullptr;
-            if (f.image.valid() && f.mode != FS_LUT && f.mode != FS_FACE) {
+            if (f.image.valid() && f.mode != FS_LUT && f.mode != FS_FACE &&
+                f.mode != FS_TEXTURE) {
                 // generic image parameter (sumie's paper): bind, never gate
                 auto it = image_cache.find(f.image.pixels);
                 if (it != image_cache.end()) {
                     lut_view = it->second.tex.view;
                 }
             }
-            if (f.mode == FS_LUT || f.mode == FS_FACE) {
+            if (f.mode == FS_LUT || f.mode == FS_FACE || f.mode == FS_TEXTURE) {
                 // Unfed or malformed image parameter: the documented
                 // pass-through (identical to the CPU reference).
                 auto it = image_cache.find(f.image.pixels);

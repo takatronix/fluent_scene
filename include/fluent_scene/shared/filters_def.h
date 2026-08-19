@@ -446,6 +446,23 @@ FS_PARAM(2, scale, 1.0f, Scalar)
 FS_PARAM(3, fps, 6.0f, Scalar)
 FS_END(Wobble)
 
+// ---- texture compositing ---------------------------------------------------
+// The texture comes through the layer's filter-image binding, like `lut`
+// (`source: $inputs.<name>` in Scene YAML, `Texture().source(view)` in C++).
+// Unfed = the documented pass-through. `fit` 0 tiles in source pixels
+// (scale 1 spans the buffer height), 1 stretches over the layer (light
+// leaks). Mid-gray plates are the identity under overlay/softlight.
+FS_FILTER_IMG(Texture, texture, FS_TEXTURE, source,
+              "texture compositing — tiles or stretches the image parameter "
+              "over the layer and blends it in (blend: 0=multiply 1=screen "
+              "2=overlay 3=softlight 4=add); paper, canvas, grain, dust, "
+              "light leaks")
+FS_PARAM(0, blend, 0.0f, Scalar)
+FS_PARAM(1, strength, 0.8f, Scalar)
+FS_PARAM(2, scale, 1.0f, Scalar)
+FS_PARAM(3, fit, 0.0f, Scalar)
+FS_END(Texture)
+
 #ifdef FS_FILTER_IMG_DEFAULTED
 #undef FS_FILTER_IMG
 #undef FS_FILTER_IMG_DEFAULTED

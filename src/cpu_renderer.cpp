@@ -436,8 +436,9 @@ void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext,
             return;
         }
         g_filter_image = &f.image;
-    } else if (f.mode == FS_FACE) {
-        // No landmark strip = no face on screen: pass through quietly.
+    } else if (f.mode == FS_FACE || f.mode == FS_TEXTURE) {
+        // No landmark strip = no face on screen; an unfed texture plate
+        // likewise: pass through quietly.
         if (!f.image.valid()) {
             return;
         }

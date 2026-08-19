@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.16.0 — 2026-08-20 (テクスチャ合成フィルタ: texture = 54)
+
+オーナー指摘「足らないのはテクスチャとの合成系」への回答。レイヤー
+blend拡張ではなく**画像スロット付きフィルタ**として実装 — overlay/
+softlight はGPU固定機能ブレンドでは表現できないが、フィルタなら
+GLSL∩C++単一ソースでgolden契約に乗り、タイリングも紙テクスチャで
+実証済みの経路がそのまま使える:
+- **texture** (54, FS_FILTER_IMG): 画像パラメータをタイル(またはfit=1で
+  引き伸ばし)してレイヤーに合成。blend 0=multiply/1=screen/2=overlay/
+  3=softlight(pegtop連続形)/4=add、strength、scale(1=バッファ高さ1周)。
+  未給餌=パススルー(lut/faceと同じ文書化済み挙動)
+- 中灰(0.5)プレートが overlay/softlight の恒等元 — グレインプレートは
+  この性質で作る
+- 同梱プレート4種(全て自作手続き生成、権利問題なし): canvas(織り目)/
+  grain(中灰フィルム粒状)/dust(ほこり傷、screen用)/leak(リークライト、
+  fit=1+screen用)。既存 washi/wcpaper もそのまま素材になる
+- golden `texture` 追加(6パネル: 未給餌/5ブレンド×tile/fit)。CPU基準・
+  Vulkan max|Δ|=1。タイル継ぎ目のfloor読みはnotebook級waiverで防御
+
 ## 0.15.0 — 2026-08-20 (基本フィルタ6種昇格: 48〜53)
 
 オーナー指示「作成したシェーダの基本なのは基本フィルタに入れたほうが

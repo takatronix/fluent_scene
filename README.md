@@ -112,7 +112,7 @@ three backends to the same reference images.
 - **CALayer-style attributes** — frame / position / anchor / rotation /
   scale / opacity / shadow / border / background / cornerRadius /
   masksToBounds / blend. One coordinate system: top-left origin, +y down
-- **53 filters** — blur / bilateral / color_transform / toon / halftone /
+- **54 filters** — blur / bilateral / color_transform / toon / halftone /
   ripple / beauty (smoothing + whitening + NR) / lut (3D LUT) / lsd /
   bokeh (polygonal iris) / oilpaint (Kuwahara) / ntsc + crt (real composite
   modulation → tube, after MAME ntsc.fx BSD-3, Lottes PD, Cathode-Retro MIT)
@@ -124,7 +124,10 @@ three backends to the same reference images.
   bleed) / impressionist (gradient-following brush dabs) / stainedglass
   (Worley panes + lead came) / pixelart (Bayer-dithered quantization) —
   survey and parameter rationale in
-  [docs/design/art_filters.ja.md](docs/design/art_filters.ja.md) … —
+  [docs/design/art_filters.ja.md](docs/design/art_filters.ja.md) /
+  texture (texture compositing — tiles the image parameter and blends it
+  multiply / screen / overlay / softlight / add; paper, canvas, grain and
+  light-leak plates ship in `wasm/`) … —
   applicable to any layer or to a group's composited result
 
   ![Filter catalog (filters_tour output)](docs/images/filters_tour.png)
