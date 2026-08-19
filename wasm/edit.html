@@ -213,9 +213,9 @@
   @keyframes pop { 0% { transform: scale(0.2); opacity: 0; }
                    65% { transform: scale(1.1); opacity: 1; } 100% { transform: none; } }
   .gnode .emoji { position: absolute; left: 7px; top: 9px; font-size: 15px; }
-  .gnode .jname { font-size: 12px; font-weight: 700; white-space: nowrap;
+  .gnode .jname { font-size: 12.5px; font-weight: 700; white-space: nowrap;
           overflow: hidden; text-overflow: ellipsis; padding: 0 20px 0 21px; }
-  .gnode .ename { font: 9px ui-monospace, monospace; color: var(--faint);
+  .gnode .ename { font: 9.5px ui-monospace, monospace; color: var(--faint);
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
           padding-left: 21px; }
   .gnode .pw { position: absolute; top: 7px; right: 20px; width: 13px; height: 13px;
@@ -1456,7 +1456,7 @@ function renderGraph() {
     gInner.append(card);
   }
   sizeGInner();
-  if (justAddedId && nodeById(justAddedId)) fitAll();
+  if (justAddedId && nodeById(justAddedId)) panToNode(nodeById(justAddedId));
   justAddedId = null;
   drawEdges();
 }
@@ -1636,6 +1636,18 @@ function sizeGInner() {
   }
   gInner.style.width = (mx + 200) + 'px';
   gInner.style.height = (my + 120) + 'px';
+}
+// 追加/伸長時はズームを触らず視点だけ追いかける (勝手に世界を縮めない)
+function panToNode(n) {
+  const g = $('graph'), z = graphZoom, pad = 40;
+  const nx0 = n.x * z, ny0 = n.y * z;
+  const nx1 = (n.x + NODE_W) * z, ny1 = (n.y + nodeH(n)) * z;
+  let sl = g.scrollLeft, st = g.scrollTop;
+  if (nx1 > sl + g.clientWidth - pad) sl = nx1 - g.clientWidth + pad;
+  if (nx0 < sl + pad) sl = Math.max(0, nx0 - pad);
+  if (ny1 > st + g.clientHeight - pad) st = ny1 - g.clientHeight + pad;
+  if (ny0 < st + pad) st = Math.max(0, ny0 - pad);
+  g.scrollTo({ left: sl, top: st, behavior: 'smooth' });
 }
 // 全ノードが視界に収まるようズーム+スクロールを再設定 (ノード座標は動かさない)
 // スケールだけ変えて scrollLeft が古いままだと左外へ消えるので必ず両方リセット
@@ -3196,9 +3208,9 @@ function buildGrid(n, asked) {
   }
   selId = null;
   applyGraph(true);
-  fitAll();
+  panToNode(out);
   say((asked ? asked + ' はさすがに重すぎるので ' : '') +
-      `${n}×${n} の監視モニタ壁にしました — 各タイル別ルック、フィルタは差し替え自由`);
+      `${n}×${n} の監視モニタ壁にしました — 各タイル別ルック (⊞整理で全体表示)`);
 }
 aiGo.addEventListener('click', generate);
 aiText.addEventListener('keydown', e => { if (e.key === 'Enter') generate(); });
