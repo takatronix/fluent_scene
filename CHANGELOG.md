@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.15.0 — 2026-08-20 (基本フィルタ6種昇格: 48〜53)
+
+オーナー指示「作成したシェーダの基本なのは基本フィルタに入れたほうが
+よくないか」— studioのGLSLプリセットからエンジン本体へ昇格 (全独自実装・
+単一パス・golden 3バックエンド保証、ROS/Vulkan/wasm全環境で動く):
+- **kaleido** (48): 万華鏡 — 中心周りの角度折りたたみ+ミラーラップ読み。
+  segments/time/rotate/zoom
+- **fisheye** (49): 魚眼/樽型歪み (負で糸巻き)。strength/zoom
+- **chromab** (50): 色収差 — 端に向かって育つ放射R/B分離。amount/curve
+- **mirror** (51): シンメトリー (左右/上下/四面)。axis/offset
+- **thermal** (52): サーモグラフィ (ironbow/rainbow/white-hot)。gain/palette
+- **glitch** (53): ブロック行ずれ+チャネル分離+ドロップアウト (time駆動
+  12拍/秒)。amount/time/blocks/split
+- golden 2シーン追加 (resample_fx: Vulkan max|Δ|=1 / resample_fx2:
+  glitchハード閾値waiver)。filter labのLENS/TRIPカテゴリに配置
+
 ## 0.14.7 — 2026-08-20 (anime.html: MIT線画モデル追加 — NNノードのライセンス解)
 
 - **pencil lines (MIT)**: Informative Drawings (Chan+ 2022, **MIT**) の

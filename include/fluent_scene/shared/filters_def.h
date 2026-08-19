@@ -355,6 +355,52 @@ FS_PARAM(3, amplitude, 6.0f, Length)
 FS_PARAM(4, wavelength, 26.0f, Length)
 FS_END(RippleWave)
 
+// ---- resampling fx (promoted from studio shader presets — owner: 基本は
+// エンジンへ。すべて独自実装・単一パス) --------------------------------------
+
+FS_FILTER(Kaleido, kaleido, FS_KALEIDO,
+          "kaleidoscope — angular mirror fold around the center (host may "
+          "drive `time` for a slow drift)")
+FS_PARAM(0, segments, 6.0f, Scalar)
+FS_PARAM(1, time, 0.0f, Scalar)
+FS_PARAM(2, rotate, 0.0f, Scalar)
+FS_PARAM(3, zoom, 1.0f, Scalar)
+FS_END(Kaleido)
+
+FS_FILTER(Fisheye, fisheye, FS_FISHEYE,
+          "fisheye / barrel distortion (negative strength = pincushion)")
+FS_PARAM(0, strength, 0.5f, Scalar)
+FS_PARAM(1, zoom, 1.0f, Scalar)
+FS_END(Fisheye)
+
+FS_FILTER(Chromab, chromab, FS_CHROMAB,
+          "chromatic aberration — radial R/B split growing toward the edges")
+FS_PARAM(0, amount, 6.0f, Length)
+FS_PARAM(1, curve, 1.5f, Scalar)
+FS_END(Chromab)
+
+FS_FILTER(Mirror, mirror, FS_MIRROR,
+          "symmetry mirror — axis 0=left|right, 1=top|bottom, 2=quad")
+FS_PARAM(0, axis, 0.0f, Scalar)
+FS_PARAM(1, offset, 0.5f, Scalar)
+FS_END(Mirror)
+
+FS_FILTER(Thermal, thermal, FS_THERMAL,
+          "thermal camera — luma through an ironbow palette "
+          "(palette: 0=ironbow, 1=rainbow, 2=white-hot)")
+FS_PARAM(0, gain, 1.0f, Scalar)
+FS_PARAM(1, palette, 0.0f, Scalar)
+FS_END(Thermal)
+
+FS_FILTER(Glitch, glitch, FS_GLITCH,
+          "digital glitch — blocky row displacement, channel split and "
+          "dropout bursts (host drives `time`)")
+FS_PARAM(0, amount, 0.7f, Scalar)
+FS_PARAM(1, time, 0.0f, Scalar)
+FS_PARAM(2, blocks, 24.0f, Scalar)
+FS_PARAM(3, split, 4.0f, Length)
+FS_END(Glitch)
+
 // ---- psychedelia -----------------------------------------------------------
 
 FS_FILTER(Lsd, lsd, FS_LSD,

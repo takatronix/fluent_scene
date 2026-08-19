@@ -112,7 +112,7 @@ three backends to the same reference images.
 - **CALayer-style attributes** — frame / position / anchor / rotation /
   scale / opacity / shadow / border / background / cornerRadius /
   masksToBounds / blend. One coordinate system: top-left origin, +y down
-- **45 filters** — blur / bilateral / color_transform / toon / halftone /
+- **53 filters** — blur / bilateral / color_transform / toon / halftone /
   ripple / beauty (smoothing + whitening + NR) / lut (3D LUT) / lsd /
   bokeh (polygonal iris) / oilpaint (Kuwahara) / ntsc + crt (real composite
   modulation → tube, after MAME ntsc.fx BSD-3, Lottes PD, Cathode-Retro MIT)

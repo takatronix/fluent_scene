@@ -108,7 +108,7 @@ golden テストが3バックエンドを同じ基準画像に対して検証し
 - **CALayer 準拠の属性** — frame / position / anchor / rotation / scale /
   opacity / shadow / border / background / cornerRadius / masksToBounds /
   blend。左上原点・+y 下の**1座標系のみ**（反転スイッチは存在しない）
-- **フィルタ 45種** — blur / bilateral / color_transform / toon / halftone /
+- **フィルタ 53種** — blur / bilateral / color_transform / toon / halftone /
   ripple / beauty（磨皮+美白+NR） / lut（3D LUT） / lsd /
   bokeh（多角形絞り） / oilpaint（Kuwahara油絵） / ntsc + crt（コンポジット
   信号の実変調→ブラウン管。MAME ntsc.fx BSD-3 / Lottes PD / Cathode-Retro

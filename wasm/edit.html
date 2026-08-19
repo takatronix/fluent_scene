@@ -112,6 +112,20 @@
           transition: 0.15s; }
   #aibar .mini:hover { color: var(--ink); border-color: rgba(255,255,255,0.25);
           transform: translateY(-1px) rotate(15deg); }
+  #lookRow { width: min(93vw, 760px); margin-top: 8px; overflow: hidden; }
+  #lookTrack { display: flex; width: max-content;
+           animation: lookflow 100s linear infinite; }
+  #lookRow:hover #lookTrack, #lookRow.paused #lookTrack { animation-play-state: paused; }
+  @keyframes lookflow { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  #lookTrack .preset { flex: none; margin-right: 6px; padding: 5px 12px; font-size: 12px;
+           background: rgba(13, 11, 25, 0.72); backdrop-filter: blur(10px);
+           -webkit-backdrop-filter: blur(10px); }
+  @media (prefers-reduced-motion: reduce) {
+    #lookTrack { animation: none; }
+    #lookRow { overflow-x: auto; }
+  }
+  body.theater #lookRow { position: fixed; left: 50%; transform: translateX(-50%);
+           bottom: 74px; z-index: 30; margin: 0; }
   #aiSay { min-height: 18px; font-size: 12.5px; color: var(--dim); margin-top: 7px;
            text-align: center; padding: 0 12px; }
   #aiSay b { color: var(--cyan); font-weight: 600; }
@@ -398,12 +412,6 @@
           resize: none; overflow: hidden; }
   body.theater #dock.min > :not(#dockBar) { display: none !important; }
   #dock[hidden] { display: none !important; }
-  #dockRestore { display: none; position: fixed; right: 16px; top: 16px; z-index: 25;
-          font-size: 16px; background: rgba(13, 11, 24, 0.94); color: var(--ink);
-          border: 1px solid var(--line); border-radius: 999px; width: 42px; height: 42px;
-          cursor: pointer; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7); }
-  body.theater #dockRestore.show { display: block; }
-
   /* theater window is frosted glass on desktop — the video stays visible
      through it (phones keep the solid panel: blur is too expensive there) */
   @media (hover: hover) and (pointer: fine) {
@@ -476,9 +484,12 @@
   <input id="aiText" placeholder="どんな見た目にしたい?">
   <button id="aiGo">生成</button>
   <button id="aiDice" class="mini" title="おまかせ">🎲</button>
+  <button id="aiEdit" class="mini" style="width:auto;padding:0 12px;font-size:12.5px"
+    title="フィルタエディタ (ノードグラフ) を開く">✏️ 編集</button>
   <button id="aiLooks" class="mini" title="ルックプリセット">🎨</button>
   <button id="aiGear" class="mini" title="AI設定">⚙</button>
 </div>
+<div id="lookRow"><div id="lookTrack"></div></div>
 <div id="aiSay"></div>
 <div id="dock">
   <div id="dockBar"><span>🎛 フィルタ</span><span class="sp"></span>
@@ -551,7 +562,6 @@
   </div>
 </div>
 <div id="bar">loading wasm…</div>
-<button id="dockRestore" title="フィルタウィンドウを開く">🎛</button>
 
 <div id="lookOverlay" class="overlay">
   <div class="panel">
@@ -732,6 +742,9 @@ const JA = {
   halftone: ['網点', '印刷ドット', '🔘'], ripple: ['波紋', '水の屈折', '💦'],
   lsd: ['トリップ', 'サイケデリア', '👁'], fractal: ['フラクタル', '無限飛行', '🌌'],
   notebook: ['ノート鉛筆', '方眼紙に鉛筆', '📓'], wobble: ['手描き揺れ', 'コマ撮りの震え', '〰️'],
+  kaleido: ['万華鏡', '折りたたみ反射', '🔯'], fisheye: ['魚眼', 'レンズ歪み', '🐠'],
+  chromab: ['色収差', 'RGBの色ずれ', '💠'], mirror: ['シンメトリー', '鏡映合成', '🪞'],
+  thermal: ['サーモグラフィ', '熱画像風', '🔥'], glitch: ['グリッチ', 'デジタル破損', '🧨'],
 };
 const jaLabel = n => (JA[n] || [n])[0];
 const jaEmoji = n => (JA[n] || ['', '', '🔧'])[2] || '🔧';
@@ -742,11 +755,12 @@ const CATS = [
   ['PAINT', ['impressionist', 'anime', 'inkline', 'watercolor', 'sumie', 'oilpaint',
              'stainedglass', 'pixelart', 'notebook', 'wobble']],
   ['ART', ['sketch', 'toon', 'halftone', 'emboss', 'edge_sobel', 'posterize', 'solarize', 'pixelate']],
-  ['ANALOG', ['ntsc', 'crt']],
-  ['LENS', ['bokeh', 'blur', 'bilateral', 'median', 'motion_blur', 'zoom_blur', 'sharpen']],
-  ['TRIP', ['lsd', 'fractal', 'swirl', 'ripple']],
+  ['ANALOG', ['ntsc', 'crt', 'glitch']],
+  ['LENS', ['bokeh', 'blur', 'bilateral', 'median', 'motion_blur', 'zoom_blur', 'sharpen',
+             'fisheye', 'chromab']],
+  ['TRIP', ['lsd', 'fractal', 'swirl', 'ripple', 'kaleido', 'mirror']],
   ['COLOR', ['grayscale', 'sepia', 'invert', 'hue', 'exposure', 'white_balance', 'levels',
-             'threshold', 'rgb', 'haze', 'color_transform', 'vignette', 'beauty']],
+             'threshold', 'rgb', 'haze', 'color_transform', 'vignette', 'beauty', 'thermal']],
 ];
 const CAT_OF = {};
 for (const [label, names] of CATS) for (const n of names) CAT_OF[n] = label;
@@ -1767,7 +1781,6 @@ function setTheater(on) {
   } else {
     dock.classList.remove('min');
     dock.hidden = false;
-    $('dockRestore').classList.remove('show');
     for (const p of ['width', 'height', 'left', 'top', 'right']) dock.style[p] = '';
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   }
@@ -1778,13 +1791,10 @@ document.addEventListener('fullscreenchange', () => {
   if (!document.fullscreenElement && fsWasOn) { fsWasOn = false; setTheater(false); }
 });
 $('dockMin').addEventListener('click', () => dock.classList.toggle('min'));
-$('dockClose').addEventListener('click', () => {
-  dock.hidden = true;
-  $('dockRestore').classList.add('show');
-});
-$('dockRestore').addEventListener('click', () => {
-  dock.hidden = false;
-  $('dockRestore').classList.remove('show');
+$('dockClose').addEventListener('click', () => { dock.hidden = true; });
+$('aiEdit').addEventListener('click', () => {
+  dock.hidden = !dock.hidden;
+  if (!dock.hidden) dock.classList.remove('min');
 });
 $('dockBar').addEventListener('pointerdown', e => {
   if (e.target.closest('button')) return;
@@ -2623,6 +2633,23 @@ $('aiLooks').addEventListener('click', () => {
   lookSearch.value = '';
 });
 lookSearch.addEventListener('input', buildLookPicker);
+// 流れるルック列 — 2周複製のシームレスマーキー。触ると止まる
+{
+  const track = $('lookTrack');
+  for (let k = 0; k < 2; k++) {
+    for (const pr of LOOK_PRESETS) {
+      const b = document.createElement('button');
+      b.className = 'preset';
+      b.textContent = pr.emoji + ' ' + pr.name;
+      b.addEventListener('click', () => setBranchChain(lookSpec(pr), pr.emoji + ' ' + pr.name + ' を適用'));
+      track.append(b);
+    }
+  }
+  track.style.animationDuration = (LOOK_PRESETS.length * 3) + 's';
+  const row = $('lookRow');
+  row.addEventListener('pointerdown', () => row.classList.add('paused'));
+  window.addEventListener('pointerup', () => setTimeout(() => row.classList.remove('paused'), 400));
+}
 
 // built-in composer, first pass: match against the look vocabulary
 function bestLook(t) {
@@ -4077,7 +4104,7 @@ updateBar();
 // theater by default — the video owns the screen, the dock floats
 // (「画面スクロール必須なのなんとかならんか」). ⛶で従来レイアウトに戻せる
 setTheater(true);
-if (COARSE) { dock.hidden = true; $('dockRestore').classList.add('show'); }
+if (COARSE) dock.hidden = true;              // スマホは✏️編集で開く
 if (dockView !== 'graph') setDockView(dockView);
 // camera sources start on the sample so nothing is black while the
 // permission prompt is up; the webcam takes over the moment it lands.

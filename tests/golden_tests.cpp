@@ -509,6 +509,41 @@ void sceneImpressionist(Renderer& r) {
     g_over_ratio_limit = saved_ratio;
 }
 
+// The promoted basics (kaleido/fisheye/chromab/mirror/thermal/glitch).
+// Glitch beats on hard hash thresholds per row/block — oilpaint's waiver.
+void sceneResampleFx(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Kaleido());
+    stage.image(view).frame({170, 10, 150, 130}).filter(Fisheye().strength(0.8f));
+    stage.image(view).frame({330, 10, 140, 130}).filter(Chromab().amount(10.0f));
+    stage.image(view).frame({10, 160, 150, 130}).filter(Mirror());
+    stage.image(view).frame({170, 160, 150, 130}).filter(Thermal());
+    const int saved_limit = g_max_diff_limit;
+    g_max_diff_limit = 255;
+    checkScene("resample_fx", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
+}
+
+void sceneGlitch(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Glitch().time(0.3f));
+    stage.image(view).frame({170, 10, 150, 130}).filter(Glitch().time(1.7f).amount(1.5f));
+    stage.image(view).frame({330, 10, 140, 130}).filter(Thermal().palette(1.0f));
+    stage.image(view).frame({10, 160, 150, 130}).filter(Mirror().axis(2.0f));
+    stage.image(view).frame({170, 160, 150, 130}).filter(Kaleido().segments(10.0f).time(2.0f));
+    const int saved_limit = g_max_diff_limit;
+    const double saved_ratio = g_over_ratio_limit;
+    g_max_diff_limit = 255;
+    g_over_ratio_limit = 0.02;
+    checkScene("resample_fx2", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
+    g_over_ratio_limit = saved_ratio;
+}
+
 // Stainedglass picks the nearest Worley site (hard selection at pane
 // borders), pixelart quantizes hard against the Bayer threshold — both get
 // the oilpaint waiver for the same reason.
@@ -748,6 +783,8 @@ int main(int argc, char** argv) {
     sceneInkline(r);
     sceneImpressionist(r);
     sceneStainedglassPixelart(r);
+    sceneResampleFx(r);
+    sceneGlitch(r);
     sceneLayerMask(r);
     sceneTv(r);
     sceneAnimation(r);

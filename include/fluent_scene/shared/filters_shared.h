@@ -77,6 +77,12 @@ const int FS_STAINEDGLASS = 44;
 const int FS_PIXELART = 45;
 const int FS_WOBBLE = 46;
 const int FS_INKLINE = 47;
+const int FS_KALEIDO = 48;
+const int FS_FISHEYE = 49;
+const int FS_CHROMAB = 50;
+const int FS_MIRROR = 51;
+const int FS_THERMAL = 52;
+const int FS_GLITCH = 53;
 
 #ifdef FS_SAMPLE
 
@@ -551,6 +557,81 @@ vec3 fs_halftone(vec2 uv, float spacing) {
     return vec3(step(radius, length(px - cell)));
 }
 
+// ---- resampling fx -----------------------------------------------------------
+// Promoted from the studio's GLSL presets (owner: the basic ones belong in
+// the engine — golden-tested, running on every backend). All original.
+
+vec3 fs_kaleido(vec2 uv, float segments, float time_s, float rotate_deg,
+                float zoom) {
+    float aspect = FS_TEXEL.y / FS_TEXEL.x;
+    vec2 p = vec2((uv.x - 0.5) * aspect, uv.y - 0.5);
+    float seg = 6.28318531 / max(floor(segments + 0.5), 2.0);
+    float a = atan(p.y, p.x) + radians(rotate_deg) + time_s * 0.15;
+    float r = length(p) / max(zoom, 0.1);
+    a = a - seg * floor(a / seg);              // fold into one segment
+    a = min(a, seg - a);                       // mirror inside it
+    vec2 q = vec2(cos(a), sin(a)) * r;
+    // mirror-wrap the read so the fold never samples a hard border
+    vec2 m = vec2(q.x / aspect, q.y) + vec2(0.5, 0.5);
+    m = abs(m - floor(m * 0.5 + vec2(0.5, 0.5)) * 2.0);
+    m = vec2(1.0, 1.0) - abs(vec2(1.0, 1.0) - m);
+    return FS_SAMPLE(m);
+}
+
+vec3 fs_fisheye(vec2 uv, float strength, float zoom) {
+    float aspect = FS_TEXEL.y / FS_TEXEL.x;
+    vec2 p = vec2((uv.x - 0.5) * aspect, uv.y - 0.5);
+    float r = length(p) * 2.0;
+    float k = clamp(strength, -1.0, 1.0);
+    float f = 1.0 + k * r * r * 0.5;
+    vec2 q = p / (f * max(zoom, 0.2));
+    return FS_SAMPLE(vec2(q.x / aspect + 0.5, q.y + 0.5));
+}
+
+vec3 fs_chromab(vec2 uv, float amount_px, float curve) {
+    vec2 d = uv - vec2(0.5, 0.5);
+    float r = length(d) * 1.4142136;
+    float w = pow(clamp(r, 0.0, 1.0), max(curve, 0.2)) * amount_px;
+    vec2 dir = r > 1e-4 ? d / r : vec2(0.0, 0.0);
+    vec2 off = dir * w * FS_TEXEL;
+    return vec3(FS_SAMPLE(uv + off).x, FS_SAMPLE(uv).y, FS_SAMPLE(uv - off).z);
+}
+
+vec3 fs_mirror(vec2 uv, float axis, float offset) {
+    float o = clamp(offset, 0.05, 0.95);
+    vec2 q = uv;
+    if (axis < 0.5) {
+        q.x = uv.x < o ? uv.x : 2.0 * o - uv.x;
+        q.x = max(q.x, 2.0 * o - 1.0);         // stay inside when o > 0.5
+    } else if (axis < 1.5) {
+        q.y = uv.y < o ? uv.y : 2.0 * o - uv.y;
+        q.y = max(q.y, 2.0 * o - 1.0);
+    } else {
+        q.x = uv.x < o ? uv.x : 2.0 * o - uv.x;
+        q.y = uv.y < 0.5 ? uv.y : 1.0 - uv.y;
+    }
+    return FS_SAMPLE(clamp(q, vec2(0.0, 0.0), vec2(1.0, 1.0)));
+}
+
+vec3 fs_thermal(vec2 uv, float gain, float palette) {
+    float l = clamp(fs_luma(FS_SAMPLE(uv)) * max(gain, 0.05), 0.0, 1.0);
+    if (palette < 0.5) {
+        // ironbow: black → purple → red → orange → yellow → white
+        vec3 c = vec3(pow(l, 0.55), pow(l, 1.8), 0.0);
+        c.z = l < 0.35 ? (0.35 - l) * 2.0 * pow(l, 0.4) + l * 0.3
+                       : max(0.0, (l - 0.85)) * 6.0;
+        return clamp(c, 0.0, 1.0);
+    }
+    if (palette < 1.5) {
+        // rainbow: blue → cyan → green → yellow → red
+        vec3 c = vec3(clamp(l * 3.0 - 1.8, 0.0, 1.0),
+                      clamp(1.6 - abs(l - 0.55) * 3.2, 0.0, 1.0),
+                      clamp(1.2 - l * 2.2, 0.0, 1.0));
+        return clamp(c, 0.0, 1.0);
+    }
+    return vec3(l, l, l);                       // white-hot
+}
+
 // ---- psychedelia -----------------------------------------------------------
 
 // A tiny value-noise kit for fs_lsd. Fract-free spellings (x - floor(x)) so
@@ -576,6 +657,33 @@ float fs_lsd_vnoise(vec2 p) {
     float d = fs_lsd_hash(ip + vec2(1.0, 1.0));
     return mix(mix(a, b, s.x), mix(c, d, s.x), s.y);
 }
+
+// Digital glitch lives here, below the hash kit it beats to.
+vec3 fs_glitch(vec2 uv, float amount, float time_s, float blocks,
+               float split_px) {
+    float amt = clamp(amount, 0.0, 2.0);
+    float tq = floor(time_s * 12.0) / 12.0;     // 12 glitch beats a second
+    float nb = max(floor(blocks + 0.5), 4.0);
+    float row = floor(uv.y * nb);
+    // per-row burst: most rows are calm, a few tear hard
+    float g = fs_lsd_hash(vec2(row * 0.731, tq * 1.13));
+    float burst = smoothstep(0.72, 0.98, g) * amt;
+    vec2 q = uv;
+    q.x = q.x + (fs_lsd_hash(vec2(row * 1.37, tq * 0.71)) - 0.5) * 0.22 * burst;
+    // occasional block dropout shifts a sub-block vertically
+    float col = floor(q.x * (nb * 0.5));
+    float d = fs_lsd_hash(vec2(col * 0.913 + row * 0.417, tq * 0.531));
+    if (d > 0.96 && amt > 0.05) {
+        q.y = q.y + (d - 0.98) * 6.0 * amt * 0.12;
+    }
+    q = clamp(q, vec2(0.0, 0.0), vec2(1.0, 1.0));
+    vec2 off = vec2(split_px * (0.35 + burst) * FS_TEXEL.x, 0.0);
+    vec3 c = vec3(FS_SAMPLE(q + off).x, FS_SAMPLE(q).y, FS_SAMPLE(q - off).z);
+    // thin scan flicker riding the beat
+    c = c * (1.0 - 0.06 * amt * sin(uv.y * 900.0 + tq * 40.0));
+    return c;
+}
+
 
 // LSD: the serotonergic-psychedelic visual phenomenology, each stage mapped
 // to a documented mechanism (the full story with citations lives in the
@@ -2205,6 +2313,12 @@ vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p
     else if (mode == FS_IMPRESSIONIST)   c = fs_impressionist(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_STAINEDGLASS)    c = fs_stainedglass(uv, p0, p1, p2, p3, p4);
     else if (mode == FS_PIXELART)        c = fs_pixelart(uv, p0, p1, p2, p3);
+    else if (mode == FS_KALEIDO)         c = fs_kaleido(uv, p0, p1, p2, p3);
+    else if (mode == FS_FISHEYE)         c = fs_fisheye(uv, p0, p1);
+    else if (mode == FS_CHROMAB)         c = fs_chromab(uv, p0, p1);
+    else if (mode == FS_MIRROR)          c = fs_mirror(uv, p0, p1);
+    else if (mode == FS_THERMAL)         c = fs_thermal(uv, p0, p1);
+    else if (mode == FS_GLITCH)          c = fs_glitch(uv, p0, p1, p2, p3);
     return vec4(clamp(c, 0.0, 1.0), alpha);
 }
 
