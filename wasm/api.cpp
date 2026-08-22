@@ -13,6 +13,7 @@
 #include <emscripten.h>
 
 #include <algorithm>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <string>
@@ -44,6 +45,9 @@ struct FsInstance {
     // Borrowed-view contract: the pixels behind setImage must outlive the
     // render, so each input keeps its own persistent buffer.
     std::map<std::string, std::vector<uint8_t>> images;
+    // Same contract for float payloads (boxes / points): JS writes into a
+    // persistent buffer, then commits by pointer. No _malloc juggling.
+    std::map<std::string, std::vector<float>> floats;
     std::unique_ptr<fx::Ripple> ripple;
     std::string events_json;  // UI events since the last drain
     int last_w = 0, last_h = 0, last_stride = 0;
@@ -211,6 +215,71 @@ int fs_commit_image(FsInstance* inst, const char* input, int w, int h) {
                                          it->second.data(), 0})
                ? 1
                : 0;
+}
+
+/// Lends a persistent float buffer (`floats` elements) keyed by `key` —
+/// the fs_image_buffer pattern for numeric payloads. JS writes via HEAPF32
+/// and passes the same pointer to fs_set_boxes / fs_set_points.
+EMSCRIPTEN_KEEPALIVE
+float* fs_float_buffer(FsInstance* inst, const char* key, int floats) {
+    auto& buf = inst->floats[key];
+    buf.resize(floats > 0 ? static_cast<size_t>(floats) : 0);
+    return buf.data();
+}
+
+/// Feeds detection boxes into a `sequence<detection2d, N>` input — the HUD
+/// overlay path (external inference in JS, drawing here; the analyzer design
+/// keeps inference out of the core). `data` is `count` boxes of 6 floats
+/// [x, y, w, h, score, track_id] in stage logical units; `labels` is a
+/// '\n'-joined UTF-8 list, one entry per box (nullptr or short = unlabeled).
+/// Track ids let smoothing follow objects; id 0 falls back to
+/// nearest-neighbour matching. Returns 0 with fs_error()-style diagnostics
+/// in the scene's log when the input is missing or of the wrong type.
+EMSCRIPTEN_KEEPALIVE
+int fs_set_boxes(FsInstance* inst, const char* input, const float* data,
+                 int count, const char* labels) {
+    if (inst == nullptr || input == nullptr || (count > 0 && data == nullptr)) {
+        return 0;
+    }
+    std::vector<Box> boxes;
+    boxes.reserve(count > 0 ? static_cast<size_t>(count) : 0);
+    const char* lp = labels;
+    for (int i = 0; i < count; ++i) {
+        const float* d = data + static_cast<size_t>(i) * 6;
+        Box b;
+        b.rect = Rect(d[0], d[1], d[2], d[3]);
+        b.score = d[4];
+        b.id = d[5] > 0 ? static_cast<uint32_t>(d[5]) : 0;
+        if (lp != nullptr && *lp != '\0') {
+            const char* nl = std::strchr(lp, '\n');
+            if (nl != nullptr) {
+                b.label.assign(lp, nl);
+                lp = nl + 1;
+            } else {
+                b.label = lp;
+                lp += b.label.size();
+            }
+        }
+        boxes.push_back(std::move(b));
+    }
+    return inst->scene->setBoxes(input, boxes) ? 1 : 0;
+}
+
+/// Feeds points into a `sequence<vec2, N>` input (polyline / polygon /
+/// circles layers) — AprilTag corners, skeletons, traces. `data` is
+/// `count` × 2 floats [x, y] in stage logical units.
+EMSCRIPTEN_KEEPALIVE
+int fs_set_points(FsInstance* inst, const char* input, const float* data,
+                  int count) {
+    if (inst == nullptr || input == nullptr || (count > 0 && data == nullptr)) {
+        return 0;
+    }
+    std::vector<Vec2> points;
+    points.reserve(count > 0 ? static_cast<size_t>(count) : 0);
+    for (int i = 0; i < count; ++i) {
+        points.push_back({data[i * 2], data[i * 2 + 1]});
+    }
+    return inst->scene->setPoints(input, points) ? 1 : 0;
 }
 
 /// Pointer injection in logical stage coordinates (phase 0 down, 1 move,
