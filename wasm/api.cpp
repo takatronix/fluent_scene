@@ -106,7 +106,9 @@ const char* fs_backend() {
 #ifdef FS_HAVE_WEBGPU
 
 /// Starts the async WebGPU init presenting into `canvas_selector`
-/// (e.g. "#view"). Poll fs_webgpu_status() from rAF until it leaves 0.
+/// (e.g. "#view"; "" = no primary canvas, attach them with
+/// fs_webgpu_add_canvas). Poll fs_webgpu_status() from rAF until it
+/// leaves 0.
 EMSCRIPTEN_KEEPALIVE
 void fs_webgpu_init(const char* canvas_selector) {
     WebGPURenderer::Options opts;
@@ -146,6 +148,42 @@ int fs_render_webgpu(FsInstance* inst, float dt, int out_w, int out_h) {
     }
     return g_webgpu->renderToCanvas(inst->scene->stage(), static_cast<uint32_t>(out_w),
                                     static_cast<uint32_t>(out_h), dt)
+               ? 1
+               : 0;
+}
+
+/// One device, many canvases: attaches another <canvas> (CSS selector) to
+/// the renderer started by fs_webgpu_init and returns its target id (> 0),
+/// or 0 when the canvas has no WebGPU context (claimed by 2d/WebGL, or not
+/// in the DOM yet). Callable right after fs_webgpu_init, before Ready.
+EMSCRIPTEN_KEEPALIVE
+int fs_webgpu_add_canvas(const char* canvas_selector) {
+    if (!g_webgpu || canvas_selector == nullptr) {
+        return 0;
+    }
+    return g_webgpu->addCanvas(canvas_selector);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void fs_webgpu_remove_canvas(int target) {
+    if (g_webgpu) {
+        g_webgpu->removeCanvas(target);
+    }
+}
+
+/// fs_render_webgpu for a canvas from fs_webgpu_add_canvas. Returns 0 when
+/// that canvas cannot present; the device stays usable (fs_webgpu_status
+/// is unchanged), so a page keeps its other canvases drawing.
+EMSCRIPTEN_KEEPALIVE
+int fs_render_webgpu_to(FsInstance* inst, int target, float dt, int out_w, int out_h) {
+    if (!g_webgpu) {
+        return 0;
+    }
+    if (inst->ripple) {
+        inst->ripple->tick(dt);
+    }
+    return g_webgpu->renderToCanvas(inst->scene->stage(), static_cast<uint32_t>(out_w),
+                                    static_cast<uint32_t>(out_h), dt, target)
                ? 1
                : 0;
 }

@@ -71,7 +71,8 @@ const mod = await createFluentScene();
 const inst = mod.cwrap('fs_create', 'number', ['number'])(
     mod.stringToNewUTF8(sceneYaml));
 // per frame: fs_commit_image → fs_render (CPU) or
-// fs_render_webgpu (straight into the canvas, zero readback).
+// fs_render_webgpu (straight into the canvas, zero readback);
+// fs_webgpu_add_canvas + fs_render_webgpu_to for many canvases, one device.
 // The API surface is flat: numbers, strings, buffers.
 ```
 

@@ -69,6 +69,7 @@ const inst = mod.cwrap('fs_create', 'number', ['number'])(
     mod.stringToNewUTF8(sceneYaml));
 // 毎フレーム: カメラを fs_commit_image → fs_render(CPU) か
 // fs_render_webgpu(canvas 直描画・読み戻しゼロ) — API は数値と文字列だけ
+// 複数 canvas は fs_webgpu_add_canvas + fs_render_webgpu_to (1 デバイス共有)
 ```
 
 ## どこで動くか

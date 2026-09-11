@@ -123,9 +123,25 @@ struct WebGPURenderer::Impl {
     WGPUAdapter adapter = nullptr;
     WGPUDevice device = nullptr;
     WGPUQueue queue = nullptr;
-    WGPUSurface surface = nullptr;  // the canvas; null = offscreen only
-    WGPUTextureFormat surface_format = WGPUTextureFormat_BGRA8Unorm;
-    int surface_w = 0, surface_h = 0;  // configured size
+
+    // ---- present targets (canvases) ----------------------------------------
+    // One device, any number of canvases. A target is one WebGPU surface
+    // over one <canvas>, configured lazily to the size it is drawn at.
+    // Target 0 is Options::canvas_selector (when set); addCanvas hands out
+    // the rest. A page with many small views — a camera wall with a HUD
+    // per tile — shares pipelines, atlas and caches this way instead of
+    // paying a device (and a full pipeline set) per view.
+    struct Target {
+        WGPUSurface surface = nullptr;
+        WGPUTextureFormat format = WGPUTextureFormat_Undefined;  // resolved with the adapter
+        int w = 0, h = 0;                                        // configured size
+    };
+    std::map<int, Target> targets;
+    int next_target_id = 1;
+    // present.frag against each surface format seen (usually exactly one).
+    std::map<WGPUTextureFormat, WGPURenderPipeline> present_pipes;
+    WGPUShaderModule module_fullscreen = nullptr;  // kept: late present pipelines
+    WGPUShaderModule module_present = nullptr;
 
     // ---- resources ---------------------------------------------------------
 
@@ -141,7 +157,16 @@ struct WebGPURenderer::Impl {
     // unique_ptr: acquireTransient hands out raw pointers that must stay
     // stable while the pool grows.
     std::vector<std::unique_ptr<Tex>> transient_pool;
-    Tex canvas;    // premultiplied rgba16float working target
+    // The premultiplied rgba16float working target, one per output size
+    // seen recently: targets of different sizes alternate every frame on
+    // a multi-canvas page, and recreating the texture per frame is what
+    // this pool avoids. `canvas` is the one the last frame drew into.
+    struct CanvasTex {
+        Tex tex;
+        uint64_t frame_used = 0;
+    };
+    std::vector<std::unique_ptr<CanvasTex>> canvas_pool;
+    Tex* canvas = nullptr;
     Tex out_rgba;  // rgba8 conversion target (readback path)
 
     // Async readback (one in flight).
@@ -255,20 +280,17 @@ struct WebGPURenderer::Impl {
             fail("wgpuCreateInstance failed (no WebGPU in this browser?)");
             return;
         }
+        WGPUSurface primary = nullptr;
         if (!options.canvas_selector.empty()) {
-            WGPUEmscriptenSurfaceSourceCanvasHTMLSelector sel =
-                WGPU_EMSCRIPTEN_SURFACE_SOURCE_CANVAS_HTML_SELECTOR_INIT;
-            sel.selector = view(options.canvas_selector.c_str());
-            WGPUSurfaceDescriptor sd = {};
-            sd.nextInChain = &sel.chain;
-            surface = wgpuInstanceCreateSurface(instance, &sd);
-            if (surface == nullptr) {
+            primary = createSurface(options.canvas_selector);
+            if (primary == nullptr) {
                 fail("wgpuInstanceCreateSurface failed for '" + options.canvas_selector + "'");
                 return;
             }
+            targets[0].surface = primary;
         }
         WGPURequestAdapterOptions opts = WGPU_REQUEST_ADAPTER_OPTIONS_INIT;
-        opts.compatibleSurface = surface;
+        opts.compatibleSurface = primary;
         WGPURequestAdapterCallbackInfo cb = {};
         cb.mode = WGPUCallbackMode_AllowSpontaneous;
         cb.callback = &Impl::onAdapter;
@@ -307,20 +329,67 @@ struct WebGPURenderer::Impl {
         }
         self->device = device;
         self->queue = wgpuDeviceGetQueue(device);
-        if (self->surface != nullptr) {
-            WGPUSurfaceCapabilities caps = WGPU_SURFACE_CAPABILITIES_INIT;
-            if (wgpuSurfaceGetCapabilities(self->surface, self->adapter, &caps) ==
-                    WGPUStatus_Success &&
-                caps.formatCount > 0) {
-                self->surface_format = caps.formats[0];
-            }
-            wgpuSurfaceCapabilitiesFreeMembers(caps);
+        for (auto& [_, t] : self->targets) {
+            self->resolveFormat(t);
         }
         self->createFixedResources();
         self->createPipelines();
         if (self->status == Status::Initializing) {
             self->status = Status::Ready;
         }
+    }
+
+    WGPUSurface createSurface(const std::string& selector) {
+        WGPUEmscriptenSurfaceSourceCanvasHTMLSelector sel =
+            WGPU_EMSCRIPTEN_SURFACE_SOURCE_CANVAS_HTML_SELECTOR_INIT;
+        sel.selector = view(selector.c_str());
+        WGPUSurfaceDescriptor sd = {};
+        sd.nextInChain = &sel.chain;
+        return wgpuInstanceCreateSurface(instance, &sd);
+    }
+
+    // The surface's preferred format — needs the adapter, so a target
+    // added before the device arrives resolves in onDevice.
+    void resolveFormat(Target& t) {
+        if (t.surface == nullptr || adapter == nullptr ||
+            t.format != WGPUTextureFormat_Undefined) {
+            return;
+        }
+        t.format = WGPUTextureFormat_BGRA8Unorm;
+        WGPUSurfaceCapabilities caps = WGPU_SURFACE_CAPABILITIES_INIT;
+        if (wgpuSurfaceGetCapabilities(t.surface, adapter, &caps) == WGPUStatus_Success &&
+            caps.formatCount > 0) {
+            t.format = caps.formats[0];
+        }
+        wgpuSurfaceCapabilitiesFreeMembers(caps);
+    }
+
+    int addCanvas(const std::string& selector) {
+        if (instance == nullptr || status == Status::Error) {
+            return 0;
+        }
+        WGPUSurface s = createSurface(selector);
+        if (s == nullptr) {
+            std::fprintf(stderr, "fluent_scene webgpu: addCanvas('%s') failed\n",
+                         selector.c_str());
+            return 0;
+        }
+        const int id = next_target_id++;
+        Target& t = targets[id];
+        t.surface = s;
+        resolveFormat(t);
+        return id;
+    }
+
+    void removeCanvas(int id) {
+        auto it = targets.find(id);
+        if (it == targets.end() || id == 0) {
+            return;
+        }
+        if (it->second.surface != nullptr) {
+            wgpuSurfaceRelease(it->second.surface);
+        }
+        targets.erase(it);
     }
 
     static void onDeviceLost(WGPUDevice const*, WGPUDeviceLostReason reason, WGPUStringView msg,
@@ -583,16 +652,27 @@ struct WebGPURenderer::Impl {
         pipe_blur = makePipeline(fullscreen, blur, layout_tex, kColor, nullptr, false);
         pipe_unpremul = makePipeline(fullscreen, unpremul, layout_tex,
                                      WGPUTextureFormat_RGBA8Unorm, nullptr, false);
-        if (surface != nullptr) {
-            pipe_present =
-                makePipeline(fullscreen, present, layout_tex, surface_format, nullptr, false);
-        }
+        // present.frag is built per surface format on first use
+        // (presentPipeline); its modules outlive this call.
+        module_fullscreen = fullscreen;
+        module_present = present;
 
-        for (WGPUShaderModule m : {quad, fullscreen, shape_mask, glyph_mask, mask_comp,
-                                   shape_color, image, filter, filter_state, layer_mask, blur,
-                                   composite, unpremul, present}) {
+        for (WGPUShaderModule m : {quad, shape_mask, glyph_mask, mask_comp, shape_color, image,
+                                   filter, filter_state, layer_mask, blur, composite,
+                                   unpremul}) {
             wgpuShaderModuleRelease(m);
         }
+    }
+
+    WGPURenderPipeline presentPipeline(WGPUTextureFormat format) {
+        auto it = present_pipes.find(format);
+        if (it != present_pipes.end()) {
+            return it->second;
+        }
+        WGPURenderPipeline p =
+            makePipeline(module_fullscreen, module_present, layout_tex, format, nullptr, false);
+        present_pipes[format] = p;
+        return p;
     }
 
     void destroy() {
@@ -607,7 +687,11 @@ struct WebGPURenderer::Impl {
             destroyTex(st.pong);
         }
         destroyTex(atlas_tex);
-        destroyTex(canvas);
+        for (auto& c : canvas_pool) {
+            destroyTex(c->tex);
+        }
+        canvas_pool.clear();
+        canvas = nullptr;
         destroyTex(out_rgba);
         const auto releaseBuffer = [](WGPUBuffer& b) {
             if (b != nullptr) {
@@ -642,7 +726,18 @@ struct WebGPURenderer::Impl {
         releasePipe(pipe_layer_mask);
         releasePipe(pipe_blur);
         releasePipe(pipe_unpremul);
-        releasePipe(pipe_present);
+        for (auto& [_, p] : present_pipes) {
+            releasePipe(p);
+        }
+        present_pipes.clear();
+        if (module_fullscreen != nullptr) {
+            wgpuShaderModuleRelease(module_fullscreen);
+            module_fullscreen = nullptr;
+        }
+        if (module_present != nullptr) {
+            wgpuShaderModuleRelease(module_present);
+            module_present = nullptr;
+        }
         if (points_group != nullptr) {
             wgpuBindGroupRelease(points_group);
         }
@@ -670,9 +765,12 @@ struct WebGPURenderer::Impl {
         if (sampler_linear != nullptr) {
             wgpuSamplerRelease(sampler_linear);
         }
-        if (surface != nullptr) {
-            wgpuSurfaceRelease(surface);
+        for (auto& [_, t] : targets) {
+            if (t.surface != nullptr) {
+                wgpuSurfaceRelease(t.surface);
+            }
         }
+        targets.clear();
         if (queue != nullptr) {
             wgpuQueueRelease(queue);
         }
@@ -1652,13 +1750,7 @@ struct WebGPURenderer::Impl {
         stage.advance(dt);
         ++frame_counter;
 
-        if (canvas.w != static_cast<int>(out_w) || canvas.h != static_cast<int>(out_h)) {
-            destroyTex(canvas);
-            canvas = createTex(static_cast<int>(out_w), static_cast<int>(out_h),
-                               WGPUTextureFormat_RGBA16Float,
-                               WGPUTextureUsage_RenderAttachment |
-                                   WGPUTextureUsage_TextureBinding);
-        }
+        canvas = acquireCanvas(static_cast<int>(out_w), static_cast<int>(out_h));
 
         encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
         bound_target = nullptr;
@@ -1705,11 +1797,38 @@ struct WebGPURenderer::Impl {
         const Mat23 m0 = Mat23::translation({(out_w - W * sx) * 0.5f, (out_h - H * sy) * 0.5f}) *
                          Mat23::scaling({sx, sy});
 
-        canvas.needs_clear = true;
-        ensureTarget(canvas);
-        renderLayer(canvas, stage.root(), m0, {W, H});
+        canvas->needs_clear = true;
+        ensureTarget(*canvas);
+        renderLayer(*canvas, stage.root(), m0, {W, H});
         endTarget();
         return true;
+    }
+
+    // The working target for this output size — reused across frames and
+    // across targets of the same size; sizes unseen for 60 frames go.
+    Tex* acquireCanvas(int w, int h) {
+        CanvasTex* found = nullptr;
+        for (auto it = canvas_pool.begin(); it != canvas_pool.end();) {
+            CanvasTex& c = **it;
+            if (c.tex.w == w && c.tex.h == h) {
+                found = &c;
+                ++it;
+            } else if (c.frame_used + 60 < frame_counter) {
+                destroyTex(c.tex);
+                it = canvas_pool.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        if (found == nullptr) {
+            canvas_pool.push_back(std::make_unique<CanvasTex>());
+            found = canvas_pool.back().get();
+            found->tex = createTex(w, h, WGPUTextureFormat_RGBA16Float,
+                                   WGPUTextureUsage_RenderAttachment |
+                                       WGPUTextureUsage_TextureBinding);
+        }
+        found->frame_used = frame_counter;
+        return &found->tex;
     }
 
     // Flushes CPU-side buffers, submits, and releases per-frame objects.
@@ -1734,42 +1853,55 @@ struct WebGPURenderer::Impl {
 
     // ---- present path (the reason this backend exists) ---------------------
 
-    bool renderToCanvas(Stage& stage, uint32_t out_w, uint32_t out_h, float dt) {
-        if (surface == nullptr || pipe_present == nullptr) {
-            fail("renderToCanvas without a canvas surface");
+    // A canvas that cannot present (detached, zero-sized, or a stale id)
+    // is that canvas's problem, not the device's: this reports false and
+    // leaves status() alone, so the page's other targets keep drawing.
+    bool renderToCanvas(Stage& stage, uint32_t out_w, uint32_t out_h, float dt, int target) {
+        if (status != Status::Ready) {
             return false;
         }
-        if (surface_w != static_cast<int>(out_w) || surface_h != static_cast<int>(out_h)) {
+        auto it = targets.find(target);
+        if (it == targets.end() || it->second.surface == nullptr) {
+            std::fprintf(stderr, "fluent_scene webgpu: renderToCanvas: no canvas for target %d\n",
+                         target);
+            return false;
+        }
+        Target& t = it->second;
+        resolveFormat(t);
+        WGPURenderPipeline pipe_present = presentPipeline(t.format);
+        if (t.w != static_cast<int>(out_w) || t.h != static_cast<int>(out_h)) {
             WGPUSurfaceConfiguration cfg = WGPU_SURFACE_CONFIGURATION_INIT;
             cfg.device = device;
-            cfg.format = surface_format;
+            cfg.format = t.format;
             cfg.usage = WGPUTextureUsage_RenderAttachment;
             cfg.width = out_w;
             cfg.height = out_h;
             cfg.alphaMode = WGPUCompositeAlphaMode_Premultiplied;
             cfg.presentMode = WGPUPresentMode_Fifo;
-            wgpuSurfaceConfigure(surface, &cfg);
-            surface_w = static_cast<int>(out_w);
-            surface_h = static_cast<int>(out_h);
+            wgpuSurfaceConfigure(t.surface, &cfg);
+            t.w = static_cast<int>(out_w);
+            t.h = static_cast<int>(out_h);
         }
         if (!recordScene(stage, out_w, out_h, dt)) {
             return false;
         }
 
         WGPUSurfaceTexture st = WGPU_SURFACE_TEXTURE_INIT;
-        wgpuSurfaceGetCurrentTexture(surface, &st);
+        wgpuSurfaceGetCurrentTexture(t.surface, &st);
         if (st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
             st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
             wgpuCommandEncoderRelease(encoder);
             encoder = nullptr;
-            fail("surface texture unavailable (status " +
-                 std::to_string(static_cast<int>(st.status)) + ")");
+            std::fprintf(stderr,
+                         "fluent_scene webgpu: surface texture unavailable (target %d, status %d)\n",
+                         target, static_cast<int>(st.status));
+            t.w = t.h = 0;  // reconfigure next time
             return false;
         }
         WGPUTextureView target_view = wgpuTextureCreateView(st.texture, nullptr);
         beginPass(target_view, true);
         Push push{};
-        drawFullscreen(pipe_present, texGroup(canvas.view, sampler_nearest), push);
+        drawFullscreen(pipe_present, texGroup(canvas->view, sampler_nearest), push);
         wgpuRenderPassEncoderEnd(pass);
         wgpuRenderPassEncoderRelease(pass);
         pass = nullptr;
@@ -1799,7 +1931,8 @@ struct WebGPURenderer::Impl {
     // display's, recordScene destroys/recreates the canvas texture twice
     // every frame.
     bool readbackLastFrame(uint32_t out_w, uint32_t out_h) {
-        if (readback_pending || status != Status::Ready || canvas.tex == nullptr) {
+        if (readback_pending || status != Status::Ready || canvas == nullptr ||
+            canvas->tex == nullptr) {
             return false;
         }
         encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
@@ -1836,7 +1969,7 @@ struct WebGPURenderer::Impl {
         out_rgba.needs_clear = true;
         ensureTarget(out_rgba);
         Push push{};
-        drawFullscreen(pipe_unpremul, texGroup(canvas.view, sampler), push);
+        drawFullscreen(pipe_unpremul, texGroup(canvas->view, sampler), push);
         endTarget();
 
         WGPUTexelCopyTextureInfo src = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
@@ -1895,9 +2028,16 @@ WebGPURenderer::Status WebGPURenderer::status() const { return impl_->status; }
 
 const std::string& WebGPURenderer::error() const { return impl_->error; }
 
-bool WebGPURenderer::renderToCanvas(Stage& stage, uint32_t out_w, uint32_t out_h, float dt) {
-    return impl_->renderToCanvas(stage, out_w, out_h, dt);
+bool WebGPURenderer::renderToCanvas(Stage& stage, uint32_t out_w, uint32_t out_h, float dt,
+                                    int target) {
+    return impl_->renderToCanvas(stage, out_w, out_h, dt, target);
 }
+
+int WebGPURenderer::addCanvas(const std::string& canvas_selector) {
+    return impl_->addCanvas(canvas_selector);
+}
+
+void WebGPURenderer::removeCanvas(int target) { impl_->removeCanvas(target); }
 
 bool WebGPURenderer::readbackLastFrame(uint32_t out_w, uint32_t out_h) {
     return impl_->readbackLastFrame(out_w, out_h);

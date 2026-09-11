@@ -33,7 +33,8 @@ class WebGPURenderer {
 public:
     struct Options {
         /// CSS selector of the canvas to present into (e.g. "#view").
-        /// Empty = offscreen only (readback pair still works).
+        /// Empty = no primary canvas: offscreen readback still works and
+        /// addCanvas can attach canvases later.
         std::string canvas_selector;
         /// Font file for text content; empty = probe well-known locations.
         std::string font_file;
@@ -52,10 +53,22 @@ public:
     /// Human-readable reason when status() == Error.
     const std::string& error() const;
 
-    /// Renders one frame into the configured canvas at out_w x out_h
-    /// (advancing animations by dt). Requires status() == Ready and a
-    /// canvas_selector. Returns false on failure (see error()).
-    bool renderToCanvas(Stage& stage, uint32_t out_w, uint32_t out_h, float dt);
+    /// Renders one frame into a canvas at out_w x out_h (advancing
+    /// animations by dt). Requires status() == Ready. `target` 0 is the
+    /// Options::canvas_selector canvas; any other value is an id from
+    /// addCanvas. Returns false when that canvas cannot present (stale
+    /// id, detached or zero-sized canvas) — the device and the other
+    /// targets are unaffected, so status() stays Ready.
+    bool renderToCanvas(Stage& stage, uint32_t out_w, uint32_t out_h, float dt,
+                        int target = 0);
+
+    /// Adds another canvas to present into — one device, many views. May
+    /// be called as soon as the renderer exists (before Ready). Returns
+    /// the target id for renderToCanvas, or 0 when the canvas has no
+    /// WebGPU context (already claimed by 2d/WebGL, or not in the DOM).
+    int addCanvas(const std::string& canvas_selector);
+    /// Releases a canvas from addCanvas; target 0 is not removable.
+    void removeCanvas(int target);
 
     /// Renders offscreen and starts the async pixel readback. One
     /// readback may be in flight at a time.
