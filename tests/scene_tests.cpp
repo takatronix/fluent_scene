@@ -3,6 +3,7 @@
 // structs, the §2 YAML ↔ C++ pixel-identity golden, $params animation, and
 // the design linter (§13-2).
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -522,6 +523,15 @@ layers:
     CHECK(round.ok() && fs::digest(round.doc) == scene.digest());
     CHECK(scene.nodes().size() == 4 && scene.nodes()[2].first->id == "photo" &&
           scene.nodes()[2].second == stage.find("photo"));
+    // Inspector and linter walk the edited tree like a compiled one.
+    {
+        const auto placed = fs::placeLayers(scene);
+        CHECK(std::count_if(placed.begin(), placed.end(),
+                            [](const fs::PlacedLayer& p) { return p.decl != nullptr; }) == 4);
+        CHECK(fs::inspectJson(scene, placed).find("\"photo\"") != std::string::npos);
+        CpuRenderer lint_renderer;
+        (void)fs::lint(scene, lint_renderer);
+    }
 
     Layer* p = stage.find("photo");
     Layer* caption = stage.find("caption");
