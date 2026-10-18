@@ -19,6 +19,19 @@ fluent_scene ビュー) を書いて見つかった回避策を、ライブラ�
   `presentedColor()` / `presentedBackground()` / `presentedBorder()` を描く。
   モードごとに色違いのレイヤーを4枚重ねて opacity で切り替える必要は
   もうない
+- **実行時のレイヤー追加/削除** (設計: docs/design/runtime_layers.ja.md):
+  `CompiledScene::addLayers(parent_id, fragment_yaml, animated)` が検証済み
+  の Scene 断片 (`layers` + 任意の `inputs` / `params`、`parseFragment`)
+  を宣言済みレイヤーの下に接ぎ木、`removeLayer(id, animated)` が部分木を
+  外す。`layerIds()` / `hasLayer()`。全差し替えなしで、他所のアニメー
+  ションは止まらない。足したレイヤーは param の現在値・給餌済み input の
+  最新データで始まる。拒否 (検証・コンパイル途中・予算) はシーンを一切
+  変えない。所有文書 `doc()` / `digest()` / `nodes()` は編集に追随
+- **出入りのアニメーション**: `transition` に `enter` / `exit`
+  (opacity / position / scale / rotation、既定はフェード)。効く transition
+  は自分 → 最も近い祖先 → 0.3 s フェードの順。Stage に
+  `Layer::removeWhenSettled()` (補間が終わった advance で切り離す。
+  退場中は find / ヒットテスト対象外、id は即解放)
 
 ## 0.16.1 — 2026-08-20 (Scene YAML にレイヤーマスク)
 

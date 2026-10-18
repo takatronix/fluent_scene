@@ -120,7 +120,26 @@ Stage& Stage::fit(Fit policy) {
     return *this;
 }
 
-void Stage::advance(float dt) { root_->step(dt); }
+void Stage::advance(float dt) {
+    root_->step(dt);
+    if (leaving_.empty()) {
+        return;
+    }
+    // Exits that finished detach now. remove() prunes leaving_ (an ancestor
+    // going takes its leaving descendants with it), so settle from a
+    // snapshot and only touch entries still listed.
+    std::vector<Layer*> settled;
+    for (Layer* l : leaving_) {
+        if (!l->animating()) {
+            settled.push_back(l);
+        }
+    }
+    for (Layer* l : settled) {
+        if (std::find(leaving_.begin(), leaving_.end(), l) != leaving_.end()) {
+            l->remove();
+        }
+    }
+}
 
 std::vector<std::string> Stage::drainDiagnostics() {
     std::vector<std::string> out;
@@ -217,15 +236,32 @@ void Stage::pointerCancel() {
     pointer_capture_ = nullptr;
 }
 
-void Stage::handleRemoval(const Layer* subtree_root) {
-    for (const Layer* l = pointer_capture_; l != nullptr; l = l->parent()) {
+namespace {
+
+bool within(const Layer* layer, const Layer* subtree_root) {
+    for (const Layer* l = layer; l != nullptr; l = l->parent()) {
         if (l == subtree_root) {
-            // The control is going away mid-gesture; drop the capture
-            // without delivering into a dying handler.
-            pointer_capture_ = nullptr;
-            return;
+            return true;
         }
     }
+    return false;
+}
+
+}  // namespace
+
+void Stage::releaseCapture(const Layer* subtree_root) {
+    if (within(pointer_capture_, subtree_root)) {
+        // The control is going away mid-gesture; drop the capture
+        // without delivering into a dying handler.
+        pointer_capture_ = nullptr;
+    }
+}
+
+void Stage::handleRemoval(const Layer* subtree_root) {
+    releaseCapture(subtree_root);
+    leaving_.erase(std::remove_if(leaving_.begin(), leaving_.end(),
+                                  [&](const Layer* l) { return within(l, subtree_root); }),
+                   leaving_.end());
 }
 
 void Stage::diagnose(std::string message) {
@@ -780,6 +816,9 @@ Layer& Layer::onPointer(std::function<void(const PointerEvent&)> handler) {
 }
 
 Layer* Layer::find(const std::string& name) {
+    if (leaving_) {
+        return nullptr;
+    }
     if (id_ == name) {
         return this;
     }
@@ -817,6 +856,25 @@ void Layer::remove() {
     }
 }
 
+void Layer::removeWhenSettled() {
+    if (parent_ == nullptr) {
+        warn("removeWhenSettled() on the root layer is a no-op");
+        return;
+    }
+    if (leaving_) {
+        return;
+    }
+    leaving_ = true;
+    stage_->releaseCapture(this);
+    stage_->leaving_.push_back(this);
+}
+
+bool Layer::animating() const {
+    return bounds_.animating() || position_.animating() || rotation_.animating() ||
+           scale_.animating() || opacity_.animating() || color_.animating() ||
+           background_.animating() || border_color_.animating();
+}
+
 void Layer::step(float dt) {
     bounds_.step(dt);
     position_.step(dt);
@@ -835,7 +893,7 @@ void Layer::step(float dt) {
 }
 
 Layer* Layer::hitTest(Vec2 point_in_parent, Vec2 parent_size) {
-    if (hidden_) {
+    if (hidden_ || leaving_) {
         return nullptr;
     }
     const Resolved r = resolve(parent_size);
@@ -857,7 +915,7 @@ Layer* Layer::hitTest(Vec2 point_in_parent, Vec2 parent_size) {
 
 Layer* Layer::hitTestInteractive(Vec2 point_in_parent, Vec2 parent_size,
                                  bool ancestor_interactive) {
-    if (hidden_) {
+    if (hidden_ || leaving_) {
         return nullptr;
     }
     const Resolved r = resolve(parent_size);

@@ -133,7 +133,103 @@ public:
         return doc;
     }
 
+    /// A fragment (see parseFragment in document.hpp): layers plus optional
+    /// inputs/params, validated against `host`.
+    SceneDoc parseFragment(const YamlNode& root, const SceneDoc& host) {
+        SceneDoc frag;
+        if (!root.isMapping()) {
+            error("validate.structure", root.span, "a fragment root must be a mapping");
+            return frag;
+        }
+        for (const YamlMapEntry& e : root.entries) {
+            if (e.key == "stage" || e.key == "meta") {
+                error("validate.unknown_key", e.key_span,
+                      "'" + e.key + "' belongs to the host document, not a fragment");
+            } else if (e.key != "schema" && e.key != "inputs" && e.key != "params" &&
+                       e.key != "layers") {
+                error("validate.unknown_key", e.key_span,
+                      "unknown fragment key '" + e.key +
+                          "' (expected schema, inputs, params, layers)");
+            }
+        }
+        if (root.find("schema") != nullptr) {
+            parseSchema(root, frag);
+        }
+        frag.schema = kSchemaId;
+        frag.width = host.width;
+        frag.height = host.height;
+        frag.fit = host.fit;
+
+        // The fragment's own declarations, then merged over the host's into
+        // the scope its layers resolve against.
+        SceneDoc own;
+        parseInputs(root, own);
+        parseParams(root, own);
+        SceneDoc scope;
+        scope.inputs = host.inputs;
+        scope.params = host.params;
+        for (const InputDecl& in : own.inputs) {
+            if (const InputDecl* h = host.findInput(in.name)) {
+                if (!sameInput(*h, in)) {
+                    error("validate.conflict", in.span,
+                          "input '" + in.name +
+                              "' is already declared differently by the scene "
+                              "(a fragment may only redeclare it identically)");
+                }
+                continue;
+            }
+            frag.inputs.push_back(in);
+            scope.inputs.push_back(in);
+        }
+        for (const ParamDecl& p : own.params) {
+            if (const ParamDecl* h = host.findParam(p.name)) {
+                if (!sameParam(*h, p)) {
+                    error("validate.conflict", p.span,
+                          "param '" + p.name +
+                              "' is already declared differently by the scene "
+                              "(a fragment may only redeclare it identically)");
+                }
+                continue;
+            }
+            frag.params.push_back(p);
+            scope.params.push_back(p);
+        }
+        auto byName = [](const auto& a, const auto& b) { return a.name < b.name; };
+        std::sort(scope.inputs.begin(), scope.inputs.end(), byName);
+        std::sort(scope.params.begin(), scope.params.end(), byName);
+
+        // Ids must be new to the host.
+        collectIds(host.layers);
+        parseLayers(root, scope);
+        frag.layers = std::move(scope.layers);
+        frag.layer_count = scope.layer_count;
+        frag.max_depth = scope.max_depth;
+        return frag;
+    }
+
 private:
+    static bool sameInput(const InputDecl& a, const InputDecl& b) {
+        return a.type == b.type && a.capacity == b.capacity && a.update == b.update &&
+               a.fallback == b.fallback;
+    }
+
+    static bool sameParam(const ParamDecl& a, const ParamDecl& b) {
+        return a.type == b.type && std::equal(a.def, a.def + 4, b.def) &&
+               a.def_flag == b.def_flag && a.runtime_mutable == b.runtime_mutable &&
+               a.has_animate == b.has_animate &&
+               (!a.has_animate || (a.animate_duration == b.animate_duration &&
+                                   a.animate_ease == b.animate_ease));
+    }
+
+    void collectIds(const std::vector<LayerDecl>& layers) {
+        for (const LayerDecl& l : layers) {
+            if (!l.id.empty()) {
+                seen_ids_.insert(l.id);
+            }
+            collectIds(l.sublayers);
+        }
+    }
+
     // -- diagnostics --------------------------------------------------------
 
     void error(std::string code, Span span, std::string message) {
@@ -980,9 +1076,57 @@ private:
         layer.mask = m;
     }
 
+    /// transition.enter / transition.exit: literal values of the animatable
+    /// attributes a runtime insertion starts from / an animated removal ends
+    /// at — opacity, position, scale (bare scalar allowed), rotation.
+    bool parseEdgeState(const YamlNode& n, const SceneDoc& doc, const std::string& which,
+                        std::vector<AttrDecl>& out) {
+        if (!n.isMapping()) {
+            error("validate.type", n.span,
+                  "transition." + which + " must be a mapping { opacity, position, scale, "
+                  "rotation }");
+            return false;
+        }
+        bool ok = true;
+        for (const YamlMapEntry& e : n.entries) {
+            const AttrSpec* spec = findAttrSpec(e.key);
+            if (spec == nullptr ||
+                (spec->id != AttrId::Opacity && spec->id != AttrId::Position &&
+                 spec->id != AttrId::Scale && spec->id != AttrId::Rotation)) {
+                error("validate.unknown_key", e.key_span,
+                      "unknown transition." + which + " key '" + e.key +
+                          "' (expected opacity, position, scale, rotation)");
+                ok = false;
+                continue;
+            }
+            AttrDecl attr;
+            attr.spec = spec;
+            attr.span = e.value.span;
+            if (spec->id == AttrId::Scale && e.value.isPlainScalar() && !isParamRef(e.value)) {
+                float s = 0;
+                if (!readNumber(e.value, s)) {
+                    error("validate.type", e.value.span, "scale must be a number or [sx, sy]");
+                    ok = false;
+                    continue;
+                }
+                attr.value.kind = ValueKind::Vec2;
+                attr.value.num[0] = s;
+                attr.value.num[1] = s;
+            } else if (!parseValue(e.value, spec->kind, doc, false, attr.value)) {
+                ok = false;
+                continue;
+            }
+            out.push_back(std::move(attr));
+        }
+        std::stable_sort(out.begin(), out.end(),
+                         [](const AttrDecl& a, const AttrDecl& b) { return a.spec < b.spec; });
+        return ok;
+    }
+
     void parseTransition(const YamlNode& n, const SceneDoc& doc, LayerDecl& layer) {
         if (!n.isMapping()) {
-            error("validate.type", n.span, "transition must be a mapping { duration, ease }");
+            error("validate.type", n.span,
+                  "transition must be a mapping { duration, ease, enter, exit }");
             return;
         }
         TransitionDecl t;
@@ -1001,9 +1145,15 @@ private:
                     t.ease = static_cast<Ease>(v.enum_value);
                     t.has_ease = true;
                 }
+            } else if (e.key == "enter" || e.key == "exit") {
+                std::vector<AttrDecl> attrs;
+                if (parseEdgeState(e.value, doc, e.key, attrs)) {
+                    (e.key == "enter" ? t.enter : t.exit) = std::move(attrs);
+                }
             } else {
                 error("validate.unknown_key", e.key_span,
-                      "unknown transition key '" + e.key + "' (expected duration, ease)");
+                      "unknown transition key '" + e.key +
+                          "' (expected duration, ease, enter, exit)");
             }
         }
         if (!has_duration) {
@@ -1025,6 +1175,17 @@ ParseResult parseScene(const std::string& yaml_text) {
     if (!result.diagnostics.hasErrors()) {
         Parser parser(result.diagnostics);
         result.doc = parser.parse(root);
+    }
+    result.diagnostics.sortCanonical();
+    return result;
+}
+
+ParseResult parseFragment(const std::string& yaml_text, const SceneDoc& host) {
+    ParseResult result;
+    const YamlNode root = parseYaml(yaml_text, result.diagnostics);
+    if (!result.diagnostics.hasErrors()) {
+        Parser parser(result.diagnostics);
+        result.doc = parser.parseFragment(root, host);
     }
     result.diagnostics.sortCanonical();
     return result;

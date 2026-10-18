@@ -89,7 +89,7 @@
 | 型検査・参照解決 | ここで実施（実行前に全拒否） | C++ の型システムが担う |
 | digest（並べ替え不変の指紋） | ○ | × |
 | 予算（GPU メモリ・転送量） | 宣言し、コンパイルで拒否 | 上限として受け取る |
-| 実行中の変更 | ×（文書編集→再コンパイル→原子的差し替え） | ○ `opacity()` `setImage()` `setParam()` |
+| 実行中の変更 | 画面の版替えは文書編集→再コンパイル→原子的差し替え。部品の足し引きは検証済み断片の接ぎ木 `addLayers` / `removeLayer`（[runtime_layers.ja.md](runtime_layers.ja.md)） | ○ `opacity()` `setImage()` `setParam()` |
 | ROS binding / fallback | 入力契約と fallback を宣言 | スナップショットを setter で受ける |
 | AI による編集 | ○（差分・digest・検証で安全） | ×（直接は触らせない） |
 
@@ -325,7 +325,10 @@ stage.image(depth_vis).frame({1560, 240, 320, 180}).opacity(0.8f);
 - 更新: 属性 setter はいつでも可（保持型・次フレーム反映）。データ系 content は
   `setImage / setPoints / setBoxes / setText` で差し替え。変更のないレイヤーは
   転送・再構築ともゼロコスト。
-- 削除: `remove()`（子ごと）。一時退避は `hidden(true)`。
+- 削除: `remove()`（子ごと）。一時退避は `hidden(true)`。退場アニメーションの
+  後に外すなら `removeWhenSettled()`（補間が終わった advance で切り離す）。
+  Scene 層からの足し引きは `addLayers` / `removeLayer`
+  （[runtime_layers.ja.md](runtime_layers.ja.md)）。
 - スレッド: Stage は単一スレッド所有。レンダラーとの受け渡しはフレーム境界。
 
 ## 7. content カタログ

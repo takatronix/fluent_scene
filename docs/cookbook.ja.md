@@ -294,6 +294,41 @@ scene.setParam("tint", Color{1.0f, 0.7f, 0.3f, 1});   // 0.5s かけて橙へ
 (行列) は補間されないので、動かしたい配置は position + scale (+ anchor)
 か frame/bounds で書くのが正解です。
 
+## 実行中にレイヤーを足す・消す（addLayers / removeLayer）
+
+写真やグラフを出し入れするたびに文書を作り直す必要はありません。ホスト
+文書に**枠グループ**を置いておき、そこへ Scene 断片を足します。走っている
+アニメーションや給餌済みの input はそのまま:
+
+```yaml
+# ホスト文書
+layers:
+  - id: media                      # 出し入れする中身の置き場（重なり順もここで決まる）
+    frame: [360, 40, 1520, 1000]
+    transition: { duration: 0.35, ease: ease_out,
+                  enter: { opacity: 0, scale: 0.92 },   # 現れ方
+                  exit: { opacity: 0 } }                # 消え方
+  - id: figure                     # 常に手前
+```
+
+```cpp
+// 断片: layers は必須、自前の inputs / params を宣言してよい（同名は同一宣言のみ可）
+auto r = scene.addLayers("media", R"(
+inputs: { photo: { type: image.rgba8, fallback: hide } }
+layers:
+  - id: photo
+    content: { image: { source: $inputs.photo, fit: contain } }
+)", /*animated=*/true);              // media の transition で現れる
+if (!r.ok()) { /* r.diagnostics — シーンは呼ぶ前のまま */ }
+scene.setImage("photo", view);
+
+scene.removeLayer("photo", /*animated=*/true);   // 消えていく。id はすぐ空く
+scene.layerIds();                                 // {"media", "figure"}
+```
+
+C++ でレイヤーを直接消すときの「消えてから外す」は
+`{ Transaction t(0.3f); card.opacity(0); } card.removeWhenSettled();`。
+
 ## AI に画面を書かせる（describe → validate → preview）
 
 ```bash

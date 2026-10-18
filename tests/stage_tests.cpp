@@ -127,6 +127,50 @@ void testColorTransaction() {
     CHECK(near(animMix(Color::Transparent, Color{1, 0.5f, 0, 1}, 0.5f).g, 0.5f));
 }
 
+// removeWhenSettled: the layer animates out, stays rendered but unfindable
+// and unhittable, and detaches on the advance that settles it — together
+// with a leaving descendant, and without touching an explicit remove().
+void testRemoveWhenSettled() {
+    Stage stage(100, 100);
+    auto& card = stage.group("card").frame({0, 0, 50, 50});
+    auto& inner = card.rect({0, 0, 50, 50}).id("inner");
+    inner.onPointer([](const PointerEvent&) {});
+    CHECK(stage.layerCount() == 3);
+    {
+        Transaction t(1.0f, Ease::Linear);
+        card.opacity(0);
+        inner.opacity(0.5f);
+    }
+    inner.removeWhenSettled();
+    card.removeWhenSettled();
+    CHECK(card.leaving() && stage.find("card") == nullptr && stage.find("inner") == nullptr);
+    CHECK(!stage.pointerDown({10, 10}));  // leaving layers take no pointers
+    stage.advance(0.5f);
+    CHECK(stage.layerCount() == 3 && near(card.presentedOpacity(), 0.5f));
+    stage.advance(0.5f);
+    CHECK(stage.layerCount() == 1);  // both gone, parent first, no double free
+
+    // Nothing in flight: gone on the next advance, even a zero-dt one.
+    auto& still = stage.rect({0, 0, 5, 5}).id("still");
+    still.removeWhenSettled();
+    CHECK(stage.layerCount() == 2);
+    stage.advance(0);
+    CHECK(stage.layerCount() == 1);
+
+    // remove() during the exit wins; the pending entry is forgotten.
+    auto& quick = stage.rect({0, 0, 5, 5});
+    {
+        Transaction t(1.0f);
+        quick.opacity(0);
+    }
+    quick.removeWhenSettled();
+    quick.remove();
+    stage.advance(2.0f);
+    CHECK(stage.layerCount() == 1);
+    stage.root().removeWhenSettled();  // diagnosed no-op
+    CHECK(!stage.drainDiagnostics().empty() && stage.layerCount() == 1);
+}
+
 void testHitTest() {
     Stage stage(1000, 800);
     stage.rect({0, 0, 1000, 800}).id("bg").frame({0, 0, 1000, 800});
@@ -228,6 +272,7 @@ int main() {
     testGeometry();
     testTransaction();
     testColorTransaction();
+    testRemoveWhenSettled();
     testHitTest();
     testLimits();
     testFilterTable();

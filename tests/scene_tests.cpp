@@ -450,6 +450,187 @@ layers:
     CHECK(hasCode(errorsOf("  - border: { width: $params.c }\n"), "validate.type"));
 }
 
+// Runtime tree edits (docs/design/runtime_layers.ja.md): fragments graft
+// under a declared parent with their own declarations, enter through the
+// governing transition, start at current param values and fed input data;
+// removal unbinds at once and can animate out first. Rejections change
+// nothing, and animations elsewhere keep running.
+void testRuntimeLayers() {
+    const char* host = R"(schema: fluent.scene/v1alpha2
+stage: { size: [400, 200] }
+inputs:
+  label: { type: text.utf8, update: on_change, fallback: hide }
+params:
+  tint: { type: color, default: [0, 0, 1, 1] }
+  fig_x: { type: f32, default: 0, animate: { duration: 1, ease: linear } }
+layers:
+  - id: figure
+    frame: [0, 0, 40, 40]
+    background: [0, 1, 0, 1]
+    rotation: $params.fig_x
+  - id: media
+    frame: [100, 0, 300, 200]
+    transition: { duration: 1, ease: linear,
+                  enter: { opacity: 0, scale: 0.5 }, exit: { opacity: 0 } }
+)";
+    const char* photo = R"(inputs:
+  photo: { type: image.rgba8, update: on_change, fallback: hide }
+params:
+  photo_a: { type: f32, default: 1 }
+layers:
+  - id: photo
+    opacity: $params.photo_a
+    content: { rect: { rect: [0, 0, 100, 100], color: $params.tint } }
+  - id: caption
+    content: { text: { source: $inputs.label, size: 20 } }
+)";
+    const fs::ParseResult parsed = fs::parseScene(host);
+    CHECK(parsed.ok());
+    fs::CompileResult compiled = fs::compile(parsed.doc);
+    CHECK(compiled.ok());
+    fs::CompiledScene& scene = *compiled.scene;
+    Stage& stage = scene.stage();
+    const std::string digest0 = scene.digest();
+    const uint32_t count0 = stage.layerCount();
+    CHECK(scene.layerIds() == (std::vector<std::string>{"figure", "media"}));
+
+    // Something already animating elsewhere, and state the new layers must
+    // pick up: a fed input and a param moved off its default.
+    CHECK(scene.setParam("fig_x", 90.0f));
+    stage.advance(0.25f);
+    CHECK(near(stage.find("figure")->presentedRotation(), 22.5f, 0.01f));
+    CHECK(scene.setText("label", "こんにちは"));
+    CHECK(scene.setParam("tint", Color{1, 0, 0, 1}));
+
+    fs::EditResult added = scene.addLayers("media", photo, true);
+    CHECK(added.ok());
+    for (const auto& d : added.diagnostics.items()) {
+        std::fprintf(stderr, "  %s %s\n", d.code.c_str(), d.message.c_str());
+    }
+    CHECK(added.ids == (std::vector<std::string>{"photo", "caption"}));
+    CHECK(scene.layerIds() ==
+          (std::vector<std::string>{"figure", "media", "photo", "caption"}));
+    CHECK(scene.hasLayer("photo") && !scene.hasLayer("nope"));
+    CHECK(scene.digest() != digest0 && scene.digest() == fs::digest(scene.doc()));
+    CHECK(scene.doc().findParam("photo_a") != nullptr);
+    CHECK(scene.doc().findInput("photo") != nullptr);
+    CHECK(scene.doc().layer_count == 4);
+    CHECK(stage.layerCount() == count0 + 2);
+    // The document follows the edit: the canonical form parses back and
+    // compiles to the same tree.
+    const fs::ParseResult round = fs::parseScene(fs::format(scene.doc()));
+    CHECK(round.ok() && fs::digest(round.doc) == scene.digest());
+    CHECK(scene.nodes().size() == 4 && scene.nodes()[2].first->id == "photo" &&
+          scene.nodes()[2].second == stage.find("photo"));
+
+    Layer* p = stage.find("photo");
+    Layer* caption = stage.find("caption");
+    CHECK(p != nullptr && caption != nullptr && p->parent() == stage.find("media"));
+    CHECK(near(p->colorValue().r, 1) && near(p->colorValue().b, 0));  // current tint
+    const auto* text = std::get_if<TextContent>(&caption->content());
+    CHECK(text != nullptr && text->utf8 == "こんにちは");  // replayed input
+    CHECK(!caption->hidden());                             // fallback cleared
+    // Enter through media's transition: from opacity 0 / scale 0.5.
+    CHECK(near(p->presentedOpacity(), 0) && near(p->presentedScale().x, 0.5f));
+    CHECK(near(p->opacity(), 1) && near(p->scale().x, 1));
+    stage.advance(0.5f);
+    CHECK(near(p->presentedOpacity(), 0.5f, 0.01f) && near(p->presentedScale().x, 0.75f, 0.01f));
+    // …while the figure's param animation kept its own clock.
+    CHECK(near(stage.find("figure")->presentedRotation(), 67.5f, 0.01f));
+    stage.advance(0.6f);
+    CHECK(near(p->presentedOpacity(), 1) && near(p->presentedScale().x, 1));
+
+    // Bindings of the new layers are live.
+    CHECK(scene.setParam("photo_a", 0.25f));
+    CHECK(near(p->opacity(), 0.25f));
+    CHECK(scene.setParam("tint", Color{0, 1, 0, 1}));
+    CHECK(near(p->colorValue().g, 1));
+    CpuRenderer renderer;
+    {
+        const Surface& f = renderer.render(stage, 400, 200, 0);
+        const uint8_t* px = f.pixels + 50 * f.strideBytes + 150 * 4;
+        CHECK(px[1] > 20 && px[0] < 10);  // the photo rect, green at α .25
+    }
+
+    // Rejections leave the scene untouched.
+    const std::string digest1 = scene.digest();
+    const uint32_t count1 = stage.layerCount();
+    auto rejected = [&](const char* parent, const std::string& yaml, const char* code) {
+        const fs::EditResult r = scene.addLayers(parent, yaml);
+        CHECK(!r.ok() && hasCode(r.diagnostics, code));
+        CHECK(scene.digest() == digest1 && stage.layerCount() == count1);
+    };
+    rejected("nope", "layers: [ { id: x } ]\n", "edit.reference");
+    rejected("media", "layers: [ { id: photo } ]\n", "validate.duplicate_id");
+    rejected("media", "params: { tint: { type: f32 } }\nlayers: [ {} ]\n",
+             "validate.conflict");
+    rejected("media", "stage: { size: [1, 1] }\nlayers: [ {} ]\n", "validate.unknown_key");
+    rejected("", "layers: [ { opacity: $params.missing } ]\n", "validate.reference");
+    rejected("", "layers:\n  - id: m\n    content: { rect: {} }\n    sublayers: [ { id: n } ]\n"
+                 "    mask: { source: $inputs.nope }\n",
+             "compile.reference");  // fails mid-build: rolled back
+    CHECK(!scene.hasLayer("m") && !scene.hasLayer("n"));
+    CHECK(scene.layerIds().size() == 4);
+
+    // Plain removal: gone at once, bindings with it; declarations stay.
+    CHECK(scene.removeLayer("photo"));
+    CHECK(!scene.hasLayer("photo") && stage.find("photo") == nullptr);
+    CHECK(stage.layerCount() == count1 - 1);
+    CHECK(scene.setParam("photo_a", 1.0f));        // still declared, binds nothing
+    CHECK(!scene.removeLayer("photo") && !scene.removeLayer("root"));
+    scene.drainDiagnostics();
+
+    // The same fragment adds again (identical redeclaration is fine) — and
+    // its id is free even while the old layer is still animating out.
+    CHECK(scene.removeLayer("caption", true));
+    CHECK(!scene.hasLayer("caption") && stage.find("caption") == nullptr);
+    CHECK(caption->leaving() && near(caption->opacity(), 0));
+    const uint32_t leaving_count = stage.layerCount();
+    fs::EditResult again = scene.addLayers("media", photo);
+    CHECK(again.ok());
+    CHECK(stage.find("caption") != nullptr && stage.find("caption") != caption);
+    CHECK(near(stage.find("photo")->presentedOpacity(), 1));  // not animated
+    stage.advance(0.5f);
+    CHECK(stage.layerCount() == leaving_count + 2);  // old caption still fading
+    stage.advance(0.6f);
+    CHECK(stage.layerCount() == leaving_count + 1);  // …and detached once settled
+    CHECK(scene.layerIds() ==
+          (std::vector<std::string>{"figure", "media", "photo", "caption"}));
+
+    // Removing a parent takes the added subtree with it.
+    CHECK(scene.removeLayer("media"));
+    CHECK(scene.layerIds() == (std::vector<std::string>{"figure"}));
+    CHECK(stage.layerCount() == 2 && scene.doc().layer_count == 1);
+    CHECK(scene.setParam("tint", Color{1, 1, 1, 1}));
+    stage.advance(0.1f);
+
+    // Root grafts, UI controls, and a gesture in flight on a removed control.
+    int taps = 0;
+    scene.onUiEvent([&](const fs::UiEvent&) { ++taps; });
+    CHECK(scene.addLayers("", "layers:\n  - id: go\n    frame: [200, 100, 120, 48]\n"
+                              "    content: { button: { label: OK } }\n")
+              .ok());
+    CHECK(stage.pointerDown({260, 124}));
+    CHECK(scene.removeLayer("go", true));
+    CHECK(!stage.pointerUp({260, 124}) && taps == 0);  // capture dropped, no tap
+    stage.advance(1.0f);
+    CHECK(stage.layerCount() == 2);
+
+    // transition.enter / exit round-trip through the canonical form.
+    const fs::ParseResult t = fs::parseScene(
+        "schema: fluent.scene/v1alpha2\nlayers:\n  - transition: { duration: 0.5, "
+        "exit: { scale: 0.8, opacity: 0 }, enter: { position: [1, 2] } }\n");
+    CHECK(t.ok());
+    const std::string tf = fs::format(t.doc);
+    CHECK(tf.find("enter: { position: [1, 2] }, exit: { scale: [0.8, 0.8], opacity: 0 }") !=
+          std::string::npos);
+    CHECK(fs::digest(fs::parseScene(tf).doc) == fs::digest(t.doc));
+    CHECK(hasCode(fs::parseScene("schema: fluent.scene/v1alpha2\nlayers:\n"
+                                 "  - transition: { duration: 1, enter: { blend: add } }\n")
+                      .diagnostics,
+                  "validate.unknown_key"));
+}
+
 void testLinter() {
     const char* text = R"(schema: fluent.scene/v1alpha2
 stage: { size: [640, 360] }
@@ -867,6 +1048,7 @@ int main() {
     testParamsAnimateAndInputs();
     testParamBoundGeometry();
     testParamStyleBindings();
+    testRuntimeLayers();
     testLinter();
     testInspector();
     testSceneUiControls();

@@ -118,9 +118,28 @@ std::string flowFieldMap(const std::vector<MapField>& fields) {
     return out + " }";
 }
 
+std::string flowAttrMap(const std::vector<AttrDecl>& attrs) {
+    if (attrs.empty()) {
+        return "{}";
+    }
+    std::string out = "{ ";
+    for (size_t i = 0; i < attrs.size(); ++i) {
+        out += (i != 0 ? ", " : "") + std::string(attrs[i].spec->name) + ": " +
+               flowValue(attrs[i].value);
+    }
+    return out + " }";
+}
+
 std::string flowTransition(const TransitionDecl& t) {
-    return "{ duration: " + formatNumber(t.duration) + ", ease: " +
-           enumWord(ValueKind::EnumEase, static_cast<int>(t.ease)) + " }";
+    std::string out = "{ duration: " + formatNumber(t.duration) + ", ease: " +
+                      enumWord(ValueKind::EnumEase, static_cast<int>(t.ease));
+    if (t.enter) {
+        out += ", enter: " + flowAttrMap(*t.enter);
+    }
+    if (t.exit) {
+        out += ", exit: " + flowAttrMap(*t.exit);
+    }
+    return out + " }";
 }
 
 std::string flowFilters(const std::vector<FilterDecl>& filters) {

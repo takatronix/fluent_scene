@@ -330,12 +330,32 @@ public:
     const std::string& id() const { return id_; }
 
     /// Finds a layer by id in this subtree (depth-first), or nullptr.
+    /// Layers on their way out (removeWhenSettled) are skipped.
     Layer* find(const std::string& name);
 
     /// Detaches this layer (and its whole subtree) from the tree and
     /// destroys it. The reference is dead afterwards. Removing the root is
     /// a diagnosed no-op. Prefer `hidden(true)` for temporary hiding.
     void remove();
+
+    /// Detaches this layer like remove(), but only once its own animations
+    /// have settled — Core Animation's "animate out, then remove from the
+    /// superlayer in the transaction's completion". Start the exit
+    /// animation, then call this:
+    ///
+    /// ```cpp
+    /// { Transaction t(0.3f); card.opacity(0).scale(0.9f); }
+    /// card.removeWhenSettled();   // detached by the advance that finishes it
+    /// ```
+    ///
+    /// Until then the layer keeps rendering but is out of the way: find()
+    /// skips it, it takes no pointers (a gesture it captured is dropped),
+    /// and its id is free for a replacement. With nothing in flight it goes
+    /// on the next Stage::advance. The reference stays valid until that
+    /// advance. Removing the root is a diagnosed no-op.
+    void removeWhenSettled();
+    /// True after removeWhenSettled(), while the layer animates out.
+    bool leaving() const { return leaving_; }
 
     /// The parent layer; nullptr on the root.
     Layer* parent() { return parent_; }
@@ -421,6 +441,9 @@ private:
     /// Advances animations and box smoothing for this subtree.
     void step(float dt);
 
+    /// True while any of this layer's own attributes is mid-animation.
+    bool animating() const;
+
     /// Recursive hit-test in parent coordinates (presentation geometry).
     Layer* hitTest(Vec2 point_in_parent, Vec2 parent_size);
 
@@ -476,6 +499,7 @@ private:
 
     // interaction
     std::function<void(const PointerEvent&)> pointer_handler_;
+    bool leaving_ = false;  // removeWhenSettled() pending
 };
 
 }  // namespace fluent_scene

@@ -6,6 +6,8 @@
 // the §2 "same picture from YAML and C++" contract holds by construction.
 
 #include <algorithm>
+#include <stdexcept>
+#include <unordered_set>
 
 #include "fluent_scene/fvs/compiler.hpp"
 #include "fluent_scene/transaction.hpp"
@@ -35,6 +37,7 @@ struct CompileAccess {
     static auto& maskBindings(CompiledScene& s) { return s.mask_bindings_; }
     static auto& controlBindings(CompiledScene& s) { return s.control_bindings_; }
     static auto& layerTransitions(CompiledScene& s) { return s.layer_transitions_; }
+    static auto& inputState(CompiledScene& s) { return s.input_state_; }
     static auto& buttons(CompiledScene& s) { return s.buttons_; }
     static auto& switches(CompiledScene& s) { return s.switches_; }
     static auto& sliders(CompiledScene& s) { return s.sliders_; }
@@ -261,6 +264,35 @@ public:
         return !diags_.hasErrors();
     }
 
+    /// Builds one grafted fragment layer (CompiledScene::addLayers) under
+    /// `parent`, placeholder-sized against its declared parent chain.
+    Layer* buildGrafted(Layer& parent, const LayerDecl& decl) {
+        return buildLayer(parent, decl, staticParentSizeOf(decl));
+    }
+
+    /// Placeholders a fragment may add: up to two per layer showing an
+    /// image input with the placeholder fallback (scene or fragment input).
+    uint32_t placeholderBudget(const std::vector<LayerDecl>& layers,
+                               const SceneDoc& frag) const {
+        uint32_t n = 0;
+        for (const LayerDecl& l : layers) {
+            if (l.content) {
+                if (const MapField* src = l.content->find("source")) {
+                    const InputDecl* in = frag.findInput(src->value.input);
+                    if (in == nullptr) {
+                        in = doc_.findInput(src->value.input);
+                    }
+                    if (in != nullptr && in->type == InputType::ImageRgba8 &&
+                        in->fallback == InputFallback::Placeholder) {
+                        n += 2;
+                    }
+                }
+            }
+            n += placeholderBudget(l.sublayers, frag);
+        }
+        return n;
+    }
+
 private:
     void error(std::string code, std::string message) {
         diags_.add(std::move(code), Severity::kError, Phase::kCompile, Span{},
@@ -285,10 +317,10 @@ private:
         }
     }
 
-    void buildLayer(Layer& parent, const LayerDecl& decl, Vec2 parent_size) {
+    Layer* buildLayer(Layer& parent, const LayerDecl& decl, Vec2 parent_size) {
         Layer* layer = createLayer(parent, decl);
         if (layer == nullptr) {
-            return;
+            return nullptr;
         }
         CompileAccess::nodes(scene_).emplace_back(&decl, layer);
         if (!decl.id.empty()) {
@@ -363,6 +395,7 @@ private:
         for (const LayerDecl& sub : decl.sublayers) {
             buildLayer(*layer, sub, own_size);
         }
+        return layer;
     }
 
     /// Creates the layer through the same drawing call a C++ author uses.
@@ -588,6 +621,28 @@ private:
         return size;
     }
 
+    /// The static size `target`'s parent hands down (the stage for roots).
+    Vec2 staticParentSizeOf(const LayerDecl& target) {
+        Vec2 size = {doc_.width, doc_.height};
+        findParentSize(doc_.layers, target, size, &size);
+        return size;
+    }
+
+    bool findParentSize(const std::vector<LayerDecl>& layers, const LayerDecl& target,
+                        Vec2 parent_size, Vec2* out) const {
+        for (const LayerDecl& decl : layers) {
+            if (&decl == &target) {
+                *out = parent_size;
+                return true;
+            }
+            if (findParentSize(decl.sublayers, target, staticSize(params(), decl, parent_size),
+                               out)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool findStaticSize(const std::vector<LayerDecl>& layers, const LayerDecl& target,
                         Vec2 parent_size, Vec2* out) const {
         for (const LayerDecl& decl : layers) {
@@ -668,6 +723,9 @@ bool CompiledScene::setImage(const std::string& input, const ImageView& view) {
                  (decl == nullptr ? "undeclared input" : "input is not image.rgba8"));
         return false;
     }
+    InputState& state = input_state_[input];
+    state.fed = true;
+    state.image = view;
     for (InputBinding& b : input_bindings_[input]) {
         clearFallback(b);
         b.layer->setImage(view);
@@ -688,6 +746,9 @@ bool CompiledScene::setText(const std::string& input, const std::string& utf8) {
                  (decl == nullptr ? "undeclared input" : "input is not text.utf8"));
         return false;
     }
+    InputState& state = input_state_[input];
+    state.fed = true;
+    state.text = utf8;
     for (InputBinding& b : input_bindings_[input]) {
         clearFallback(b);
         b.layer->setText(utf8);
@@ -710,6 +771,9 @@ bool CompiledScene::setPoints(const std::string& input, const std::vector<Vec2>&
         clamped.assign(points.begin(), points.begin() + decl->capacity);
         data = &clamped;
     }
+    InputState& state = input_state_[input];
+    state.fed = true;
+    state.points = *data;
     for (InputBinding& b : input_bindings_[input]) {
         clearFallback(b);
         b.layer->setPoints(*data);
@@ -733,6 +797,9 @@ bool CompiledScene::setBoxes(const std::string& input, const std::vector<Box>& b
         clamped.assign(boxes.begin(), boxes.begin() + decl->capacity);
         data = &clamped;
     }
+    InputState& state = input_state_[input];
+    state.fed = true;
+    state.boxes = *data;
     for (InputBinding& b : input_bindings_[input]) {
         clearFallback(b);
         b.layer->setBoxes(*data);
@@ -870,6 +937,442 @@ bool CompiledScene::setParam(const std::string& name, bool value) {
     v.flag = value;
     applyParam(*decl, v);
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Runtime tree edits (docs/design/runtime_layers.ja.md)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Every live layer of a subtree (placeholder parts and control internals
+/// included), root first.
+void collectSubtree(Layer& layer, std::vector<Layer*>& out) {
+    out.push_back(&layer);
+    for (const auto& child : layer.sublayers()) {
+        collectSubtree(*child, out);
+    }
+}
+
+uint32_t countDecls(const std::vector<LayerDecl>& layers) {
+    uint32_t n = 0;
+    for (const LayerDecl& l : layers) {
+        n += 1 + countDecls(l.sublayers);
+    }
+    return n;
+}
+
+uint32_t maxDepth(const std::vector<LayerDecl>& layers, uint32_t depth) {
+    uint32_t deepest = 0;
+    for (const LayerDecl& l : layers) {
+        deepest = std::max({deepest, depth, maxDepth(l.sublayers, depth + 1)});
+    }
+    return deepest;
+}
+
+/// The declared layer with this explicit id, and the vector that owns it.
+LayerDecl* findDecl(std::vector<LayerDecl>& layers, const std::string& id,
+                    std::vector<LayerDecl>** owner) {
+    for (LayerDecl& l : layers) {
+        if (!id.empty() && l.id == id) {
+            *owner = &layers;
+            return &l;
+        }
+        if (LayerDecl* hit = findDecl(l.sublayers, id, owner)) {
+            return hit;
+        }
+    }
+    return nullptr;
+}
+
+/// The model value of an edge-animatable attribute (transition enter/exit).
+Value modelValue(const Layer& layer, AttrId id) {
+    Value v;
+    switch (id) {
+        case AttrId::Opacity:
+            v.kind = ValueKind::F32;
+            v.num[0] = layer.opacity();
+            break;
+        case AttrId::Rotation:
+            v.kind = ValueKind::F32;
+            v.num[0] = layer.rotation();
+            break;
+        case AttrId::Position:
+            v.kind = ValueKind::Vec2;
+            v.num[0] = layer.position().x;
+            v.num[1] = layer.position().y;
+            break;
+        default:  // Scale
+            v.kind = ValueKind::Vec2;
+            v.num[0] = layer.scale().x;
+            v.num[1] = layer.scale().y;
+            break;
+    }
+    return v;
+}
+
+/// transition.enter / exit, or the default fade.
+std::vector<AttrDecl> edgeState(const std::optional<std::vector<AttrDecl>>& declared) {
+    if (declared) {
+        return *declared;
+    }
+    AttrDecl fade;
+    fade.spec = findAttrSpec("opacity");
+    fade.value.kind = ValueKind::F32;
+    fade.value.num[0] = 0;
+    return {fade};
+}
+
+}  // namespace
+
+TransitionDecl CompiledScene::edgeTransition(const Layer& layer) const {
+    for (const Layer* l = &layer; l != nullptr; l = l->parent()) {
+        if (auto it = layer_transitions_.find(l); it != layer_transitions_.end()) {
+            return it->second;
+        }
+    }
+    return TransitionDecl{};  // 0.3 s ease_in_out fade
+}
+
+void CompiledScene::rezipNodes(const std::vector<Layer*>& extra) {
+    // The live document layers: the ones nodes_ knew (minus whatever an
+    // edit dropped from it beforehand) plus `extra`. Decl pointers in nodes_
+    // may dangle after a graft — only the Layer side is read here.
+    std::unordered_set<const Layer*> live(extra.begin(), extra.end());
+    for (const auto& node : nodes_) {
+        live.insert(node.second);
+    }
+    nodes_.clear();
+    // Declared sublayers are appended in declaration order, and edits keep
+    // that order, so the document layers among a layer's sublayers zip 1:1
+    // with its declared sublayers (placeholder parts, control internals and
+    // layers animating out are not in `live`).
+    struct Zip {
+        static void walk(std::vector<std::pair<const LayerDecl*, Layer*>>& out,
+                         const std::unordered_set<const Layer*>& live,
+                         const std::vector<LayerDecl>& decls, const Layer& parent) {
+            size_t i = 0;
+            for (const auto& child : parent.sublayers()) {
+                if (i >= decls.size()) {
+                    break;
+                }
+                if (!live.count(child.get())) {
+                    continue;
+                }
+                out.emplace_back(&decls[i], child.get());
+                walk(out, live, decls[i].sublayers, *child);
+                ++i;
+            }
+        }
+    };
+    Zip::walk(nodes_, live, doc_.layers, stage_->root());
+}
+
+void CompiledScene::replayInputs(const std::vector<Layer*>& fresh) {
+    const std::unordered_set<const Layer*> is_fresh(fresh.begin(), fresh.end());
+    for (const auto& [name, state] : input_state_) {
+        const InputDecl* decl = doc_.findInput(name);
+        if (!state.fed || decl == nullptr) {
+            continue;
+        }
+        for (InputBinding& b : input_bindings_[name]) {
+            if (!is_fresh.count(b.layer)) {
+                continue;
+            }
+            clearFallback(b);
+            switch (decl->type) {
+                case InputType::ImageRgba8: b.layer->setImage(state.image); break;
+                case InputType::TextUtf8: b.layer->setText(state.text); break;
+                case InputType::SeqVec2: b.layer->setPoints(state.points); break;
+                case InputType::SeqDetection2D: b.layer->setBoxes(state.boxes); break;
+            }
+        }
+        for (const FilterImageBinding& b : filter_image_bindings_[name]) {
+            if (is_fresh.count(b.layer)) {
+                b.layer->setFilterImage(b.filter_index, state.image);
+            }
+        }
+        for (const MaskBinding& b : mask_bindings_[name]) {
+            if (is_fresh.count(b.layer)) {
+                b.layer->mask(state.image);
+            }
+        }
+    }
+}
+
+void CompiledScene::unbind(const std::vector<Layer*>& doomed) {
+    const std::unordered_set<const Layer*> gone(doomed.begin(), doomed.end());
+    auto drop = [&](auto& by_name) {
+        for (auto& [name, bindings] : by_name) {
+            bindings.erase(std::remove_if(bindings.begin(), bindings.end(),
+                                          [&](const auto& b) { return gone.count(b.layer); }),
+                           bindings.end());
+        }
+    };
+    drop(param_bindings_);
+    drop(input_bindings_);
+    drop(filter_image_bindings_);
+    drop(mask_bindings_);
+    // UI controls living in the subtree go now: their destructors detach
+    // the pointer handlers from layers that are still alive.
+    auto dropControls = [&](auto& controls) {
+        for (auto it = controls.begin(); it != controls.end();) {
+            if (!gone.count(&(*it)->layer())) {
+                ++it;
+                continue;
+            }
+            const void* raw = it->get();
+            for (auto& [name, bindings] : control_bindings_) {
+                bindings.erase(std::remove_if(bindings.begin(), bindings.end(),
+                                              [&](const ControlBinding& b) {
+                                                  return b.control == raw;
+                                              }),
+                               bindings.end());
+            }
+            it = controls.erase(it);
+        }
+    };
+    dropControls(buttons_);
+    dropControls(switches_);
+    dropControls(sliders_);
+    dropControls(gauges_);
+    for (auto it = layer_transitions_.begin(); it != layer_transitions_.end();) {
+        it = gone.count(it->first) ? layer_transitions_.erase(it) : std::next(it);
+    }
+}
+
+EditResult CompiledScene::addLayers(const std::string& parent_id,
+                                    const std::string& fragment_yaml, bool animated) {
+    EditResult result;
+    auto reject = [&](const char* code, std::string message) {
+        result.diagnostics.add(code, Severity::kError, Phase::kCompile, Span{},
+                               std::move(message));
+    };
+
+    // Where the layers go: a declared layer, or the root.
+    Layer* parent = &stage_->root();
+    std::vector<LayerDecl>* siblings = &doc_.layers;
+    uint32_t parent_depth = 0;
+    if (!parent_id.empty() && parent_id != "root") {
+        std::vector<LayerDecl>* owner = nullptr;
+        LayerDecl* parent_decl = findDecl(doc_.layers, parent_id, &owner);
+        parent = parent_decl != nullptr ? layerFor(parent_decl) : nullptr;
+        if (parent == nullptr) {
+            reject("edit.reference", "no declared layer '" + parent_id + "' to add under");
+            return result;
+        }
+        siblings = &parent_decl->sublayers;
+        for (const Layer* up = parent; up->parent() != nullptr; up = up->parent()) {
+            ++parent_depth;
+        }
+    }
+
+    // Validate the fragment against the scene — rejection changes nothing.
+    ParseResult parsed = parseFragment(fragment_yaml, doc_);
+    result.diagnostics = parsed.diagnostics;
+    if (!parsed.ok()) {
+        return result;
+    }
+    SceneDoc& frag = parsed.doc;
+    if (frag.layers.empty()) {
+        return result;  // nothing to add (declarations alone are not an edit)
+    }
+
+    // Resource bounds, against what the stage holds now (§15-4).
+    const StageLimits& limits = stage_->limits();
+    CompileOptions options;
+    options.limits = limits;
+    {
+        DiagnosticList scratch;
+        Builder probe(*this, doc_, options, scratch);
+        const uint32_t placeholders = probe.placeholderBudget(frag.layers, frag);
+        if (stage_->layerCount() + frag.layer_count + placeholders > limits.max_layers) {
+            reject("compile.budget",
+                   "adding " + std::to_string(frag.layer_count) + " layers (+" +
+                       std::to_string(placeholders) + " placeholders) to the " +
+                       std::to_string(stage_->layerCount()) +
+                       " on stage would exceed the limit of " +
+                       std::to_string(limits.max_layers));
+            return result;
+        }
+    }
+    if (parent_depth + frag.max_depth + 2 > limits.max_depth) {
+        reject("compile.budget", "the fragment would nest " +
+                                     std::to_string(parent_depth + frag.max_depth) +
+                                     " layers deep, over the limit of " +
+                                     std::to_string(limits.max_depth));
+        return result;
+    }
+    for (const InputDecl& in : frag.inputs) {
+        const uint32_t cap = in.type == InputType::SeqVec2          ? limits.max_points
+                             : in.type == InputType::SeqDetection2D ? limits.max_boxes
+                                                                    : 0;
+        if (cap != 0 && in.capacity > cap) {
+            reject("compile.budget", "input '" + in.name + "' declares capacity " +
+                                         std::to_string(in.capacity) +
+                                         ", over the limit of " + std::to_string(cap));
+            return result;
+        }
+    }
+
+    // Commit point. Declarations join the scene, the layers join the
+    // document, then the Stage — through the same Builder as compile().
+    const std::vector<InputDecl> inputs_before = doc_.inputs;
+    const std::vector<ParamDecl> params_before = doc_.params;
+    const uint32_t count_before = doc_.layer_count;
+    const uint32_t depth_before = doc_.max_depth;
+    auto byName = [](const auto& a, const auto& b) { return a.name < b.name; };
+    for (const InputDecl& in : frag.inputs) {
+        doc_.inputs.push_back(in);
+    }
+    std::sort(doc_.inputs.begin(), doc_.inputs.end(), byName);
+    for (const ParamDecl& p : frag.params) {
+        doc_.params.push_back(p);
+        param_values_[p.name] = paramInitialValue(p);
+    }
+    std::sort(doc_.params.begin(), doc_.params.end(), byName);
+
+    const size_t first = siblings->size();
+    for (LayerDecl& l : frag.layers) {
+        siblings->push_back(std::move(l));
+    }
+    doc_.layer_count += frag.layer_count;
+    doc_.max_depth = maxDepth(doc_.layers, 1);
+
+    const size_t known = nodes_.size();
+    const size_t under_before = parent->sublayers().size();
+    std::vector<Layer*> tops;
+    {
+        // Built layers start where they are declared — never mid-animation,
+        // even when the host calls this inside its own Transaction.
+        Transaction snap(0.0f);
+        Builder builder(*this, doc_, options, result.diagnostics);
+        try {
+            for (size_t i = first; i < siblings->size(); ++i) {
+                tops.push_back(builder.buildGrafted(*parent, (*siblings)[i]));
+            }
+        } catch (const std::length_error& e) {
+            reject("compile.budget", e.what());
+        }
+    }
+    // Everything the edit created — all of it lands under `parent`, after
+    // what was there (a partial build included).
+    std::vector<Layer*> created;
+    for (size_t i = under_before; i < parent->sublayers().size(); ++i) {
+        created.push_back(parent->sublayers()[i].get());
+    }
+    std::vector<Layer*> fresh;
+    for (Layer* top : created) {
+        collectSubtree(*top, fresh);
+    }
+    std::vector<Layer*> new_nodes;
+    for (size_t i = known; i < nodes_.size(); ++i) {
+        new_nodes.push_back(nodes_[i].second);
+    }
+
+    if (result.diagnostics.hasErrors()) {
+        // Roll back: the scene must be exactly as before the call.
+        unbind(fresh);
+        nodes_.resize(known);
+        for (Layer* top : created) {
+            top->remove();
+        }
+        siblings->erase(siblings->begin() + static_cast<std::ptrdiff_t>(first), siblings->end());
+        for (const ParamDecl& p : frag.params) {
+            param_values_.erase(p.name);
+        }
+        doc_.inputs = inputs_before;
+        doc_.params = params_before;
+        doc_.layer_count = count_before;
+        doc_.max_depth = depth_before;
+        rezipNodes({});
+        return result;
+    }
+
+    rezipNodes(new_nodes);
+    replayInputs(fresh);
+    digest_ = fvs::digest(doc_);
+
+    for (size_t i = 0; i < tops.size(); ++i) {
+        Layer& layer = *tops[i];
+        const LayerDecl& decl = (*siblings)[first + i];
+        if (!decl.id.empty()) {
+            result.ids.push_back(decl.id);
+        }
+        if (!animated) {
+            continue;
+        }
+        // Enter (§9): start at transition.enter, animate to what was built.
+        const TransitionDecl t = edgeTransition(layer);
+        for (const AttrDecl& edge : edgeState(t.enter)) {
+            const Value target = modelValue(layer, edge.spec->id);
+            {
+                Transaction snap(0.0f);
+                applyAttr(layer, edge.spec->id, edge.value);
+            }
+            Transaction animate(t.duration, t.ease);
+            applyAttr(layer, edge.spec->id, target);
+        }
+    }
+    return result;
+}
+
+bool CompiledScene::removeLayer(const std::string& id, bool animated) {
+    std::vector<LayerDecl>* owner = nullptr;
+    LayerDecl* decl = id.empty() ? nullptr : findDecl(doc_.layers, id, &owner);
+    Layer* layer = decl != nullptr ? layerFor(decl) : nullptr;
+    if (layer == nullptr) {
+        diagnose("removeLayer('" + id + "'): no declared layer with this id");
+        return false;
+    }
+    const TransitionDecl t = edgeTransition(*layer);  // before its bindings go
+
+    std::vector<Layer*> doomed;
+    collectSubtree(*layer, doomed);
+    unbind(doomed);
+    const std::unordered_set<const Layer*> gone(doomed.begin(), doomed.end());
+    nodes_.erase(std::remove_if(nodes_.begin(), nodes_.end(),
+                                [&](const auto& node) { return gone.count(node.second); }),
+                 nodes_.end());
+    doc_.layer_count -= 1 + countDecls(decl->sublayers);
+    owner->erase(owner->begin() + (decl - owner->data()));
+    doc_.max_depth = maxDepth(doc_.layers, 1);
+    rezipNodes({});
+    digest_ = fvs::digest(doc_);
+
+    if (!animated) {
+        layer->remove();
+        return true;
+    }
+    // Exit (§9): animate to transition.exit, detach once it settles. The
+    // layer keeps rendering meanwhile but is no longer the document's.
+    {
+        Transaction animate(t.duration, t.ease);
+        for (const AttrDecl& edge : edgeState(t.exit)) {
+            applyAttr(*layer, edge.spec->id, edge.value);
+        }
+    }
+    layer->removeWhenSettled();
+    return true;
+}
+
+std::vector<std::string> CompiledScene::layerIds() const {
+    std::vector<std::string> ids;
+    for (const auto& [decl, layer] : nodes_) {
+        if (!decl->id.empty()) {
+            ids.push_back(decl->id);
+        }
+    }
+    return ids;
+}
+
+bool CompiledScene::hasLayer(const std::string& id) const {
+    for (const auto& [decl, layer] : nodes_) {
+        if (!id.empty() && decl->id == id) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------

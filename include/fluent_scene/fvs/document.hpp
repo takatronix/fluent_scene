@@ -95,10 +95,16 @@ struct MaskDecl {
 };
 
 /// A §9 transition declaration: attribute changes on this layer interpolate.
+/// `enter` / `exit` say how the layer appears when added at runtime and
+/// where an animated removal takes it before it detaches
+/// (CompiledScene::addLayers / removeLayer). Unset, both default to a fade
+/// ({ opacity: 0 }).
 struct TransitionDecl {
     float duration = 0.3f;
     Ease ease = Ease::InOut;
     bool has_ease = false;  ///< Whether the document spelled the ease out.
+    std::optional<std::vector<AttrDecl>> enter;  ///< opacity/position/scale/rotation.
+    std::optional<std::vector<AttrDecl>> exit;   ///< Same keys, table order.
 };
 
 /// One node of the declared layer tree.
@@ -179,6 +185,28 @@ struct ParseResult {
 /// with `ok()` compiles into a Stage without further errors (resource limits
 /// aside, which are the compiler's CompileOptions).
 ParseResult parseScene(const std::string& yaml_text);
+
+/// Parses and validates a Scene **fragment** — layers to graft into a
+/// running document (CompiledScene::addLayers) — against its `host`:
+///
+/// ```yaml
+/// inputs: { photo: { type: image.rgba8, fallback: hide } }   # optional
+/// params: { photo_a: { type: f32, default: 1 } }             # optional
+/// layers:                                                    # required
+///   - id: photo
+///     content: { image: { source: $inputs.photo } }
+/// ```
+///
+/// References resolve against the host's declarations and the fragment's
+/// own. Declarations are scene-wide: a fragment may redeclare a host input
+/// or param only identically (that is how a fragment stays self-contained
+/// and can be added again after removal); a differing redeclaration is a
+/// `validate.conflict`. Layer ids must be new to the host. `schema` is
+/// optional (it must match when present); `stage` and `meta` belong to the
+/// host and are rejected. The result's `doc` carries only what the fragment
+/// adds: its new inputs/params (identical redeclarations dropped) and its
+/// layers, with `layer_count` / `max_depth` counted over the fragment.
+ParseResult parseFragment(const std::string& yaml_text, const SceneDoc& host);
 
 /// The canonical, reorder-invariant SHA-256 digest of a validated document
 /// (lowercase hex). Two documents that differ only in YAML mapping order,

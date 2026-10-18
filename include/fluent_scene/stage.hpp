@@ -88,7 +88,8 @@ public:
     /// @}
 
     /// Advances every implicit animation and box-smoothing filter by \p dt
-    /// seconds. Renderers call this from `render(stage, dt)`; tests may
+    /// seconds, then detaches the layers whose removeWhenSettled() exit has
+    /// finished. Renderers call this from `render(stage, dt)`; tests may
     /// call it directly to reproduce "the screen at t = 0.15 s" without
     /// rendering (§13-6). Time never advances any other way.
     void advance(float dt);
@@ -151,8 +152,11 @@ private:
     Vec2 toLocal(const Layer& target, Vec2 stage_point, Rect& bounds_out) const;
     /// Delivers a pointer event to the captured layer.
     void deliverPointer(PointerPhase phase, Vec2 p);
-    /// Clears the capture if it lies inside a subtree being removed.
+    /// Clears the capture if it lies inside a subtree being removed, and
+    /// forgets pending removeWhenSettled() entries inside it.
     void handleRemoval(const Layer* subtree_root);
+    /// Drops the pointer capture when it lies inside `subtree_root`.
+    void releaseCapture(const Layer* subtree_root);
 
     float width_;
     float height_;
@@ -164,6 +168,7 @@ private:
     std::vector<std::string> diagnostics_;
     std::function<Rect(const TextContent&)> text_measurer_;
     Layer* pointer_capture_ = nullptr;
+    std::vector<Layer*> leaving_;  // removeWhenSettled(), detach pending
 };
 
 }  // namespace fluent_scene

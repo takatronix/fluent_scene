@@ -19,9 +19,17 @@
 ///     interpolates through a Transaction; otherwise a bound layer's
 ///     `transition` applies; otherwise the change snaps.
 ///
-/// Atomic replacement (§2: validate → compile → preview → activate) is the
-/// caller's frame loop: compile the new document off to the side, then swap
-/// which CompiledScene you render at a frame boundary.
+///   - **runtime tree edits** — `addLayers` grafts a validated Scene fragment
+///     under a declared layer, `removeLayer` takes a declared subtree away
+///     (optionally animating out first). Everything else keeps running: no
+///     recompile, no reset of animations elsewhere. The owned document
+///     follows the edit, so `doc()` / `digest()` / `nodes()` always describe
+///     what is on screen. Design: docs/design/runtime_layers.ja.md.
+///
+/// Atomic replacement of the whole picture (§2: validate → compile →
+/// preview → activate) is still the caller's frame loop: compile the new
+/// document off to the side, then swap which CompiledScene you render at a
+/// frame boundary.
 
 #include <functional>
 #include <map>
@@ -49,6 +57,16 @@ struct UiEvent {
 /// diagnostics — never by throwing mid-build.
 struct CompileOptions {
     StageLimits limits{};
+};
+
+/// The outcome of a runtime tree edit (CompiledScene::addLayers). On
+/// failure nothing changed: the scene is exactly as before the call.
+struct EditResult {
+    DiagnosticList diagnostics;
+    std::vector<std::string> ids;  ///< Explicit ids of the added top-level layers.
+
+    /// True when the edit was applied.
+    bool ok() const { return !diagnostics.hasErrors(); }
 };
 
 /// A compiled, runnable Scene: the Stage plus the document's input/param
@@ -91,6 +109,40 @@ public:
     bool setParam(const std::string& name, Rect value);
     bool setParam(const std::string& name, Color value);
     bool setParam(const std::string& name, bool value);
+    /// @}
+
+    /// \name Runtime tree edits
+    /// @{
+
+    /// Grafts the layers of a Scene fragment (see parseFragment) under the
+    /// declared layer `parent_id` — appended on top of its existing
+    /// sublayers; "" (or "root") means the stage root. The fragment is
+    /// validated against this scene first; any rejection leaves the scene
+    /// untouched. New inputs/params the fragment declares join the scene
+    /// (scene-wide, they outlive the layers). New layers start at the
+    /// current param values and show the latest data of inputs already fed.
+    ///
+    /// With `animated`, each added top-level layer enters through its
+    /// transition — its own `transition`, else the nearest declaring
+    /// ancestor's, else a 0.3 s ease_in_out fade — from `transition.enter`
+    /// (default { opacity: 0 }) to its declared values.
+    EditResult addLayers(const std::string& parent_id, const std::string& fragment_yaml,
+                         bool animated = false);
+
+    /// Removes the declared layer `id` and its subtree. Its bindings
+    /// (params, inputs, UI controls) end immediately and the id is free at
+    /// once. With `animated`, the layer first animates to `transition.exit`
+    /// (default { opacity: 0 }) through the same transition lookup as
+    /// addLayers, keeps rendering meanwhile, and detaches when that settles
+    /// (Layer::removeWhenSettled). Returns false (with a diagnostic) for an
+    /// unknown id or the root.
+    bool removeLayer(const std::string& id, bool animated = false);
+
+    /// Explicit ids of the declared layers, in tree (compositing) order.
+    std::vector<std::string> layerIds() const;
+    /// True when a declared layer has this id.
+    bool hasLayer(const std::string& id) const;
+
     /// @}
 
     /// Installs the single UI event handler (§10-4): every declared
@@ -156,8 +208,26 @@ private:
     friend struct CompileAccess;
     CompiledScene() = default;
 
+    /// The latest data fed to an input, so layers added later start with it.
+    struct InputState {
+        bool fed = false;
+        ImageView image{};
+        std::string text;
+        std::vector<Vec2> points;
+        std::vector<Box> boxes;
+    };
+
     void diagnose(std::string message);
     void applyParam(const ParamDecl& decl, const Value& value);
+    /// Re-derives nodes_ from doc_ and the live tree after an edit.
+    void rezipNodes(const std::vector<Layer*>& extra);
+    /// Feeds already-fed inputs into bindings on `fresh` layers.
+    void replayInputs(const std::vector<Layer*>& fresh);
+    /// Drops every binding and control that lives in `doomed`.
+    void unbind(const std::vector<Layer*>& doomed);
+    /// The transition that governs `layer` entering/leaving (own, else
+    /// nearest declaring ancestor, else the default fade).
+    TransitionDecl edgeTransition(const Layer& layer) const;
 
     SceneDoc doc_;
     std::string digest_;
@@ -171,6 +241,7 @@ private:
     std::map<std::string, std::vector<MaskBinding>> mask_bindings_;
     std::map<std::string, std::vector<ControlBinding>> control_bindings_;
     std::map<const Layer*, TransitionDecl> layer_transitions_;
+    std::map<std::string, InputState> input_state_;
     std::vector<std::string> diagnostics_;
 
     // Declared UI controls (§10). The objects carry the behavior; their
