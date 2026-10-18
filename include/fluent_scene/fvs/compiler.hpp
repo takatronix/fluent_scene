@@ -88,6 +88,7 @@ public:
     /// @{
     bool setParam(const std::string& name, float value);
     bool setParam(const std::string& name, Vec2 value);
+    bool setParam(const std::string& name, Rect value);
     bool setParam(const std::string& name, Color value);
     bool setParam(const std::string& name, bool value);
     /// @}

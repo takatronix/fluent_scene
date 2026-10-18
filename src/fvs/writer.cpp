@@ -291,6 +291,7 @@ std::string format(const SceneDoc& doc) {
             switch (p.type) {
                 case ParamType::F32: out += formatNumber(p.def[0]); break;
                 case ParamType::Vec2: out += numSeq(p.def, 2); break;
+                case ParamType::Rect: out += numSeq(p.def, 4); break;
                 case ParamType::Color: out += numSeq(p.def, 4); break;
                 case ParamType::Bool: out += p.def_flag ? "true" : "false"; break;
             }

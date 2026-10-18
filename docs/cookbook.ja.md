@@ -248,6 +248,33 @@ layers:
 compiled.scene->setParam("hud_alpha", 0.0f);   // 0.3s かけてフェードアウト
 ```
 
+param の型は `f32 | vec2 | rect | color | bool`。配置も param で動かせます —
+`scale` は f32 param なら縦横同率（`scale: 0.5` の糖衣と同じ）、vec2 なら
+軸ごと。`frame` / `bounds` は rect param:
+
+```yaml
+params:
+  zoom:  { type: f32, default: 1 }
+  place: { type: rect, default: [40, 40, 640, 360],
+           animate: { duration: 0.4, ease: ease_in_out } }
+layers:
+  - id: figure
+    position: [960, 540]
+    scale: $params.zoom
+    transition: { duration: 0.4, ease: ease_in_out }   # zoom の変更も補間
+  - id: media
+    frame: $params.place                               # 位置と大きさを一度に
+```
+
+```cpp
+scene.setParam("zoom", 0.3f);                          // 0.4s かけて縮む
+scene.setParam("place", Rect{360, 40, 1520, 1000});    // 0.4s かけて広がる
+```
+
+レイアウト遷移のたびに文書を作り直す必要はありません。`transform`
+(行列) は補間されないので、動かしたい配置は position + scale (+ anchor)
+か frame/bounds で書くのが正解です。
+
 ## AI に画面を書かせる（describe → validate → preview）
 
 ```bash

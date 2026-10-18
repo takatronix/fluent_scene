@@ -305,6 +305,8 @@ bool parseParamType(const std::string& word, ParamType& out) {
         out = ParamType::F32;
     } else if (word == "vec2") {
         out = ParamType::Vec2;
+    } else if (word == "rect") {
+        out = ParamType::Rect;
     } else if (word == "color") {
         out = ParamType::Color;
     } else if (word == "bool") {
@@ -319,10 +321,22 @@ const char* paramTypeName(ParamType type) {
     switch (type) {
         case ParamType::F32: return "f32";
         case ParamType::Vec2: return "vec2";
+        case ParamType::Rect: return "rect";
         case ParamType::Color: return "color";
         case ParamType::Bool: return "bool";
     }
     return "?";
+}
+
+ValueKind paramValueKind(ParamType type) {
+    switch (type) {
+        case ParamType::F32: return ValueKind::F32;
+        case ParamType::Vec2: return ValueKind::Vec2;
+        case ParamType::Rect: return ValueKind::Rect;
+        case ParamType::Color: return ValueKind::Color;
+        case ParamType::Bool: return ValueKind::Bool;
+    }
+    return ValueKind::F32;
 }
 
 }  // namespace fluent_scene::fvs

@@ -178,6 +178,42 @@ private:
 
     // -- typed value parsing ------------------------------------------------
 
+    static bool isParamRef(const YamlNode& n) {
+        return n.isPlainScalar() && n.scalar.rfind("$params.", 0) == 0;
+    }
+
+    /// Resolves a `$params.<name>` node against `kind`. `uniform_scale`
+    /// additionally lets an f32 param drive a Vec2 slot as [s, s] — the
+    /// param-bound face of `scale`'s bare-scalar shorthand.
+    bool parseParamRef(const YamlNode& n, ValueKind kind, const SceneDoc& doc,
+                       bool uniform_scale, Value& out) {
+        out = Value{};
+        out.kind = kind;
+        const std::string name = n.scalar.substr(8);
+        const ParamDecl* p = doc.findParam(name);
+        if (p == nullptr) {
+            error("validate.reference", n.span, "undeclared param '" + name + "'");
+            return false;
+        }
+        const bool matches = (kind == ValueKind::F32 && p->type == ParamType::F32) ||
+                             (kind == ValueKind::Vec2 && p->type == ParamType::Vec2) ||
+                             (kind == ValueKind::Rect && p->type == ParamType::Rect) ||
+                             (kind == ValueKind::Color && p->type == ParamType::Color) ||
+                             (kind == ValueKind::Bool && p->type == ParamType::Bool) ||
+                             (uniform_scale && kind == ValueKind::Vec2 &&
+                              p->type == ParamType::F32);
+        if (!matches) {
+            error("validate.type", n.span,
+                  "param '" + name + "' has type " + paramTypeName(p->type) + " but a " +
+                      (uniform_scale ? std::string("f32 or vec2") : toString(kind)) +
+                      " is required here");
+            return false;
+        }
+        out.param = name;
+        return true;
+    }
+
+
     /// Parses `n` as `kind` into `out`. When `allow_param` and the node is a
     /// `$params.<name>` scalar of a matching type, the reference is stored
     /// instead. Emits its own diagnostics; returns false on failure.
@@ -186,30 +222,13 @@ private:
         out = Value{};
         out.kind = kind;
 
-        if (n.isPlainScalar() && n.scalar.rfind("$params.", 0) == 0) {
+        if (isParamRef(n)) {
             if (!allow_param) {
                 error("validate.reference", n.span,
                       "$params references are not allowed here");
                 return false;
             }
-            const std::string name = n.scalar.substr(8);
-            const ParamDecl* p = doc.findParam(name);
-            if (p == nullptr) {
-                error("validate.reference", n.span, "undeclared param '" + name + "'");
-                return false;
-            }
-            const bool matches = (kind == ValueKind::F32 && p->type == ParamType::F32) ||
-                                 (kind == ValueKind::Vec2 && p->type == ParamType::Vec2) ||
-                                 (kind == ValueKind::Color && p->type == ParamType::Color) ||
-                                 (kind == ValueKind::Bool && p->type == ParamType::Bool);
-            if (!matches) {
-                error("validate.type", n.span,
-                      "param '" + name + "' has type " + paramTypeName(p->type) +
-                          " but a " + toString(kind) + " is required here");
-                return false;
-            }
-            out.param = name;
-            return true;
+            return parseParamRef(n, kind, doc, false, out);
         }
 
         switch (kind) {
@@ -510,7 +529,7 @@ private:
                     if (!f.value.isPlainScalar() ||
                         !parseParamType(f.value.scalar, decl.type)) {
                         error("validate.type", f.value.span,
-                              "param type must be f32 | vec2 | color | bool");
+                              "param type must be f32 | vec2 | rect | color | bool");
                     } else {
                         has_type = true;
                     }
@@ -566,10 +585,7 @@ private:
             }
             if (default_node != nullptr) {
                 Value v;
-                const ValueKind kind = decl.type == ParamType::F32     ? ValueKind::F32
-                                       : decl.type == ParamType::Vec2  ? ValueKind::Vec2
-                                       : decl.type == ParamType::Color ? ValueKind::Color
-                                                                       : ValueKind::Bool;
+                const ValueKind kind = paramValueKind(decl.type);
                 if (parseValue(*default_node, kind, doc, false, v)) {
                     decl.def[0] = v.num[0];
                     decl.def[1] = v.num[1];
@@ -670,6 +686,12 @@ private:
                     if (!parseFieldMap(e.value, borderFields(), doc, attr.map)) {
                         continue;
                     }
+                } else if (spec->id == AttrId::Scale && isParamRef(e.value)) {
+                    // scale: $params.<name> — a vec2 param, or an f32 param
+                    // applied as [s, s] (the shorthand, bound).
+                    if (!parseParamRef(e.value, ValueKind::Vec2, doc, true, attr.value)) {
+                        continue;
+                    }
                 } else if (spec->id == AttrId::Scale && e.value.isPlainScalar()) {
                     // A bare scalar s promotes to [s, s].
                     float s = 0;
@@ -684,7 +706,8 @@ private:
                 } else {
                     const bool bindable =
                         spec->kind == ValueKind::F32 || spec->kind == ValueKind::Vec2 ||
-                        spec->kind == ValueKind::Color || spec->kind == ValueKind::Bool;
+                        spec->kind == ValueKind::Rect || spec->kind == ValueKind::Color ||
+                        spec->kind == ValueKind::Bool;
                     if (!parseValue(e.value, spec->kind, doc, bindable, attr.value)) {
                         continue;
                     }

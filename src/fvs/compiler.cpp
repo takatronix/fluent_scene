@@ -48,10 +48,11 @@ struct CompileAccess {
 namespace {
 
 /// The value an attribute starts at when bound to `$params.<name>`: the
-/// param's declared default, typed like the attribute expects.
-Value paramInitialValue(const ParamDecl& p, ValueKind kind) {
+/// param's declared default, typed like the param (applyAttr adapts an f32
+/// to a uniform scale).
+Value paramInitialValue(const ParamDecl& p) {
     Value v;
-    v.kind = kind;
+    v.kind = paramValueKind(p.type);
     v.num[0] = p.def[0];
     v.num[1] = p.def[1];
     v.num[2] = p.def[2];
@@ -69,7 +70,14 @@ void applyAttr(Layer& layer, AttrId id, const Value& v) {
         case AttrId::Anchor: layer.anchor(v.num[0], v.num[1]); break;
         case AttrId::Frame: layer.frame(v.rect()); break;
         case AttrId::Rotation: layer.rotation(v.num[0]); break;
-        case AttrId::Scale: layer.scale(v.num[0], v.num[1]); break;
+        case AttrId::Scale:
+            // An f32 param bound to scale is the [s, s] shorthand.
+            if (v.kind == ValueKind::F32) {
+                layer.scale(v.num[0]);
+            } else {
+                layer.scale(v.num[0], v.num[1]);
+            }
+            break;
         case AttrId::Transform:
             layer.transform(Mat23{v.mat[0], v.mat[1], v.mat[2], v.mat[3], v.mat[4], v.mat[5]});
             break;
@@ -134,15 +142,26 @@ void applyStyle(Layer& layer, const MapField& f) {
     }
 }
 
+/// A declared Rect attribute's starting value: the literal, or the bound
+/// param's default.
+Rect declaredRect(const SceneDoc& doc, const AttrDecl& attr) {
+    if (!attr.value.param.empty()) {
+        if (const ParamDecl* p = doc.findParam(attr.value.param)) {
+            return {p->def[0], p->def[1], p->def[2], p->def[3]};
+        }
+    }
+    return attr.value.rect();
+}
+
 /// The statically-resolvable size of a declared layer, for placeholder
 /// layout: declared frame/bounds win; image and grid content fill the
 /// parent; everything else does not matter for placeholders.
-Vec2 staticSize(const LayerDecl& decl, Vec2 parent_size) {
+Vec2 staticSize(const SceneDoc& doc, const LayerDecl& decl, Vec2 parent_size) {
     if (const AttrDecl* a = decl.find(AttrId::Bounds)) {
-        return {a->value.num[2], a->value.num[3]};
+        return declaredRect(doc, *a).size();
     }
     if (const AttrDecl* a = decl.find(AttrId::Frame)) {
-        return {a->value.num[2], a->value.num[3]};
+        return declaredRect(doc, *a).size();
     }
     return parent_size;
 }
@@ -234,7 +253,7 @@ private:
                 applyMapAttr(*layer, attr);
             } else if (!attr.value.param.empty()) {
                 const ParamDecl* p = doc_.findParam(attr.value.param);
-                applyAttr(*layer, attr.spec->id, paramInitialValue(*p, kind));
+                applyAttr(*layer, attr.spec->id, paramInitialValue(*p));
                 CompileAccess::paramBindings(scene_)[p->name].push_back(
                     {layer, attr.spec->id});
             } else {
@@ -278,7 +297,7 @@ private:
             CompileAccess::layerTransitions(scene_)[layer] = *decl.transition;
         }
 
-        const Vec2 own_size = staticSize(decl, parent_size);
+        const Vec2 own_size = staticSize(doc_, decl, parent_size);
         for (const LayerDecl& sub : decl.sublayers) {
             buildLayer(*layer, sub, own_size);
         }
@@ -393,7 +412,7 @@ private:
         CompiledScene* scene = &scene_;
         const std::string name = c.spec->name;
         const AttrDecl* frame_attr = decl.find(AttrId::Frame);
-        const Rect frame = frame_attr != nullptr ? frame_attr->value.rect() : Rect{};
+        const Rect frame = frame_attr != nullptr ? declaredRect(doc_, *frame_attr) : Rect{};
 
         // The event id: the declared id, or the auto id assigned later —
         // resolved lazily at fire time from the control's layer.
@@ -507,10 +526,10 @@ private:
         return size;
     }
 
-    static bool findStaticSize(const std::vector<LayerDecl>& layers, const LayerDecl& target,
-                               Vec2 parent_size, Vec2* out) {
+    bool findStaticSize(const std::vector<LayerDecl>& layers, const LayerDecl& target,
+                        Vec2 parent_size, Vec2* out) const {
         for (const LayerDecl& decl : layers) {
-            const Vec2 own = staticSize(decl, parent_size);
+            const Vec2 own = staticSize(doc_, decl, parent_size);
             if (&decl == &target) {
                 *out = own;
                 return true;
@@ -738,6 +757,23 @@ bool CompiledScene::setParam(const std::string& name, Vec2 value) {
     v.kind = ValueKind::Vec2;
     v.num[0] = value.x;
     v.num[1] = value.y;
+    applyParam(*decl, v);
+    return true;
+}
+
+bool CompiledScene::setParam(const std::string& name, Rect value) {
+    const ParamDecl* decl = nullptr;
+    std::string why;
+    if (!paramGate(doc_, name, ParamType::Rect, decl, why)) {
+        diagnose("setParam('" + name + "'): " + why);
+        return false;
+    }
+    Value v;
+    v.kind = ValueKind::Rect;
+    v.num[0] = value.x;
+    v.num[1] = value.y;
+    v.num[2] = value.w;
+    v.num[3] = value.h;
     applyParam(*decl, v);
     return true;
 }

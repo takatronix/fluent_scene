@@ -135,7 +135,7 @@ struct InputDecl {
 struct ParamDecl {
     std::string name;
     ParamType type = ParamType::F32;
-    float def[4] = {0, 0, 0, 0};  ///< F32 [0]; Vec2 [0..1]; Color [0..3].
+    float def[4] = {0, 0, 0, 0};  ///< F32 [0]; Vec2 [0..1]; Rect/Color [0..3].
     bool def_flag = false;        ///< Bool default.
     bool runtime_mutable = true;
     bool has_animate = false;     ///< Whether setParam interpolates.

@@ -142,8 +142,9 @@ enum class InputFallback {
     Hold,         ///< Nothing is drawn for data-less content; no placeholder.
 };
 
-/// The declared type of a runtime parameter.
-enum class ParamType { F32, Vec2, Color, Bool };
+/// The declared type of a runtime parameter. `rect` drives `bounds` /
+/// `frame`; an `f32` may also drive `scale` uniformly.
+enum class ParamType { F32, Vec2, Rect, Color, Bool };
 
 /// Parses an input type spelling ("image.rgba8", "sequence<vec2, 128>").
 /// `capacity` is the declared N for sequences (0 otherwise).
@@ -152,11 +153,14 @@ bool parseInputType(const std::string& text, InputType& type, uint32_t& capacity
 /// The canonical spelling of an input type (with capacity for sequences).
 std::string inputTypeName(InputType type, uint32_t capacity);
 
-/// Parses a param type word (f32 | vec2 | color | bool).
+/// Parses a param type word (f32 | vec2 | rect | color | bool).
 bool parseParamType(const std::string& word, ParamType& out);
 
 /// The canonical spelling of a param type.
 const char* paramTypeName(ParamType type);
+
+/// The value kind a param of `type` carries (its default's YAML shape).
+ValueKind paramValueKind(ParamType type);
 
 /// The schema identifier this implementation accepts.
 inline constexpr const char* kSchemaId = "fluent.scene/v1alpha2";

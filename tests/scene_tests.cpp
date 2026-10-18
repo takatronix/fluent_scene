@@ -283,6 +283,92 @@ layers:
     CHECK(!scene.drainDiagnostics().empty());
 }
 
+// Geometry bound to params (scale / frame / bounds): the shorthand keeps
+// working, an f32 param scales uniformly, a vec2 param per axis, a rect param
+// drives frame — and every one of them animates through transition/animate.
+void testParamBoundGeometry() {
+    const char* text = R"(schema: fluent.scene/v1alpha2
+params:
+  zoom:   { type: f32, default: 0.5 }
+  stretch: { type: vec2, default: [2, 3] }
+  place:  { type: rect, default: [10, 20, 100, 50],
+            animate: { duration: 1, ease: linear } }
+layers:
+  - id: a
+    scale: $params.zoom
+    transition: { duration: 1, ease: linear }
+    content: { rect: { size: [10, 10] } }
+  - id: b
+    scale: $params.stretch
+    content: { rect: { size: [10, 10] } }
+  - id: c
+    scale: 1.5
+    content: { rect: { size: [10, 10] } }
+  - id: d
+    frame: $params.place
+    background: [1, 0, 0, 1]
+)";
+    const fs::ParseResult parsed = fs::parseScene(text);
+    CHECK(parsed.ok());
+    for (const auto& d : parsed.diagnostics.items()) {
+        std::fprintf(stderr, "  %s %s\n", d.code.c_str(), d.message.c_str());
+    }
+    // Canonical form keeps the references; it round-trips to the same digest.
+    const std::string once = fs::format(parsed.doc);
+    CHECK(once.find("scale: $params.zoom") != std::string::npos);
+    CHECK(once.find("frame: $params.place") != std::string::npos);
+    CHECK(once.find("type: rect, default: [10, 20, 100, 50]") != std::string::npos);
+    const fs::ParseResult re = fs::parseScene(once);
+    CHECK(re.ok());
+    CHECK(fs::digest(re.doc) == fs::digest(parsed.doc));
+
+    fs::CompileResult compiled = fs::compile(parsed.doc);
+    CHECK(compiled.ok());
+    fs::CompiledScene& scene = *compiled.scene;
+    Stage& stage = scene.stage();
+    Layer* a = stage.find("a");
+    Layer* b = stage.find("b");
+    Layer* c = stage.find("c");
+    Layer* d = stage.find("d");
+    CHECK(a && b && c && d);
+    CHECK(near(a->scale().x, 0.5f) && near(a->scale().y, 0.5f));
+    CHECK(near(b->scale().x, 2.0f) && near(b->scale().y, 3.0f));
+    CHECK(near(c->scale().x, 1.5f) && near(c->scale().y, 1.5f));
+    CHECK(near(d->frame().x, 10) && near(d->frame().w, 100) && near(d->frame().h, 50));
+
+    // f32 scale animates through the layer's transition, uniformly.
+    CHECK(scene.setParam("zoom", 1.5f));
+    stage.advance(0.5f);
+    CHECK(near(a->presentedScale().x, 1.0f, 0.01f) && near(a->presentedScale().y, 1.0f, 0.01f));
+    stage.advance(0.6f);
+    CHECK(near(a->presentedScale().x, 1.5f));
+
+    // vec2 scale without transition snaps.
+    CHECK(scene.setParam("stretch", Vec2{1, 1}));
+    CHECK(near(b->presentedScale().x, 1.0f) && near(b->presentedScale().y, 1.0f));
+
+    // rect frame animates through the param's animate declaration.
+    CHECK(scene.setParam("place", Rect{110, 20, 200, 50}));
+    stage.advance(0.5f);
+    CHECK(near(d->presentedBounds().w, 150, 0.5f));
+    stage.advance(0.6f);
+    CHECK(near(d->presentedBounds().w, 200) && near(d->frame().x, 110));
+    CHECK(!scene.setParam("place", Vec2{0, 0}));  // type gate
+    scene.drainDiagnostics();
+
+    // Rejections: wrong param types for scale and frame.
+    auto errorsOf = [](const std::string& body) {
+        return fs::parseScene("schema: fluent.scene/v1alpha2\nparams:\n"
+                              "  on: { type: bool }\n  p: { type: vec2 }\n"
+                              "layers:\n" + body)
+            .diagnostics;
+    };
+    CHECK(hasCode(errorsOf("  - scale: $params.on\n"), "validate.type"));
+    CHECK(hasCode(errorsOf("  - frame: $params.p\n"), "validate.type"));
+    CHECK(hasCode(errorsOf("  - scale: $params.missing\n"), "validate.reference"));
+    CHECK(hasCode(errorsOf("  - scale: big\n"), "validate.type"));
+}
+
 void testLinter() {
     const char* text = R"(schema: fluent.scene/v1alpha2
 stage: { size: [640, 360] }
@@ -698,6 +784,7 @@ int main() {
     testTableDefaultsMatchCpp();
     testYamlCppParity();
     testParamsAnimateAndInputs();
+    testParamBoundGeometry();
     testLinter();
     testInspector();
     testSceneUiControls();

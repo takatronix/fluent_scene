@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.17.0 — 2026-10-19 (Kepler stage 向け: 配置の param 化・実行時のレイヤー追加/削除)
+
+Kepler の stage (音声アシスタント UI の中央をまるごと占める1枚の
+fluent_scene ビュー) を書いて見つかった回避策を、ライブラリ側で不要にする:
+
+- **scale / frame / bounds の `$params` 束縛**: `scale: $params.x` が
+  パースできなかった (スカラー糖衣の分岐が `$params` 判定より先に走って
+  いた)。f32 param は縦横同率 (`scale: 0.5` 糖衣の束縛版)、vec2 param は
+  軸ごと。新しい param 型 **`rect`** で `frame` / `bounds` を束縛
+  (`setParam(name, Rect)`)。いずれも `animate` / `transition` で補間される
+  — レイアウト遷移のたびに文書を作り直さなくてよい
+
 ## 0.16.1 — 2026-08-20 (Scene YAML にレイヤーマスク)
 
 M1 で C++/C ABI だけだったレイヤーマスクを文書からも書けるように:

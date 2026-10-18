@@ -171,7 +171,7 @@ std::string describeJson() {
     out += "  \"input_types\": [\"image.rgba8\", \"text.utf8\", \"sequence<vec2, N>\", "
            "\"sequence<detection2d, N>\"],\n";
     out += "  \"input_fallbacks\": [\"placeholder\", \"hide\", \"hold\"],\n";
-    out += "  \"param_types\": [\"f32\", \"vec2\", \"color\", \"bool\"],\n";
+    out += "  \"param_types\": [\"f32\", \"vec2\", \"rect\", \"color\", \"bool\"],\n";
 
     const StageLimits limits{};
     out += "  \"limits\": {\"max_layers\": " + std::to_string(limits.max_layers) +
