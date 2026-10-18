@@ -4,11 +4,16 @@
 # WebGPU backend is compiled in too, its WGSL machine-translated from the
 # same GLSL the Vulkan backend embeds — never hand-ported.
 #
-#   source ~/emsdk/emsdk_env.sh && ./wasm/build.sh [--cjk] [--webgpu]
+#   source ~/emsdk/emsdk_env.sh && ./wasm/build.sh [--jp|--latin|--cjk] [--webgpu]
 #
-# --cjk embeds NotoSansCJK (~19 MB) for Japanese text; the default embeds
-# DejaVuSans (~750 KB, Latin) to keep the module small. The font lands on
-# the virtual FS at a path the renderer's candidate list already probes.
+# One font is embedded, landing on the virtual FS at a path the renderer's
+# candidate list (kFontSearch, src/text_atlas.cpp) already probes:
+#   --jp     (default) wasm/fonts/NotoSansJP-subset.otf, ~1 MB: Noto Sans
+#            CJK JP cut to kana, JIS level-1 + joyo/jinmeiyo kanji, CJK
+#            punctuation, ASCII/Latin-1 (wasm/fonts/make_jp_subset.py)
+#   --latin  DejaVuSans (~750 KB, Latin only; Japanese draws hollow boxes)
+#   --cjk    the whole NotoSansCJK collection (~19 MB, every CJK glyph)
+# The Noto fonts carry their OFL text into wasm/dist/OFL.txt.
 #
 # --webgpu runs the glslc → naga pipe (host tools; robot image has both):
 # each backend/vulkan/shaders source compiles with -DFS_WEBGPU (push
@@ -18,15 +23,22 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-FONT=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+FONT=jp
 WEBGPU=0
 for arg in "$@"; do
   case "$arg" in
-    --cjk) FONT=/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc ;;
+    --jp) FONT=jp ;;
+    --latin) FONT=latin ;;
+    --cjk) FONT=cjk ;;
     --webgpu) WEBGPU=1 ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
+case $FONT in  # source@virtual-FS path
+  jp) EMBED=wasm/fonts/NotoSansJP-subset.otf@/usr/share/fonts/opentype/noto/NotoSansCJKjp-Regular.otf ;;
+  latin) EMBED=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf@/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf ;;
+  cjk) EMBED=/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc@/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc ;;
+esac
 
 EXTRA_SRC=()
 EXTRA_FLAGS=()
@@ -69,11 +81,15 @@ em++ -O2 -std=c++17 -msimd128 -I include \
   src/fvs/describe.cpp src/fvs/linter.cpp src/fvs/inspector.cpp \
   wasm/api.cpp "${EXTRA_SRC[@]}" \
   --use-port=freetype --use-port=harfbuzz \
-  --embed-file "$FONT@$FONT" \
+  --embed-file "$EMBED" \
   "${EXTRA_FLAGS[@]}" \
   -sALLOW_MEMORY_GROWTH=1 \
   -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createFluentScene \
   -sEXPORTED_RUNTIME_METHODS=cwrap,HEAPU8,HEAPF32,stringToNewUTF8 \
   -sENVIRONMENT=web,node \
   -o wasm/dist/fluent_scene.mjs
+# OFL 1.1 §2: each copy of the font travels with its copyright and license.
+if [[ $FONT != latin ]]; then
+  cp wasm/fonts/OFL.txt wasm/dist/OFL.txt
+fi
 ls -la wasm/dist/

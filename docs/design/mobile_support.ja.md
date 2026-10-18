@@ -82,4 +82,6 @@ WebGPU→CPU 自動フォールバック、viewport meta、lsd.html は portrait
   iOS 26 Safari（2025/9〜）。それ以前は CPU レンダラにフォールバック
   （1 LSB パリティ検証済み）
 - face/gaze/lsd デモは MediaPipe を CDN から読むためオフラインでは顔系のみ不動
-- CJK フォント版（約 21 MB）はモバイルには重い。サブセット化が必要
+- ~~CJK フォント版（約 21 MB）はモバイルには重い。サブセット化が必要~~
+  → **済**: 既定ビルドは Noto Sans CJK JP のサブセット（約 1.0 MB、JIS 第1水準
+  ＋常用・人名用漢字）を埋め込む。`wasm/fonts/` と wasm/README.md 参照
