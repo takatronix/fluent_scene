@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <variant>
@@ -161,35 +162,73 @@ void blendPixel(float* dst, Color src, float alpha, Blend mode) {
 // Multi-part content (polyline joints, dashes, markers, grids) must not
 // double-blend where parts overlap, so parts accumulate max-coverage into a
 // mask over the content's target bbox, and the mask composites once.
+//
+// Only what parts actually touch is ever initialized or composited: each row
+// keeps the span its parts wrote, so a long thin path whose bbox is most of
+// the frame costs its own pixels, not the bbox's.
 struct Mask {
     IRect box;
-    std::vector<float> cov;
+    std::unique_ptr<float[]> cov;  // row-major over box; valid inside spans only
+    std::vector<int> span_x0, span_x1;  // per row, half-open; empty when x0 >= x1
 
     void reset(IRect b) {
         box = b;
-        cov.assign(static_cast<size_t>(std::max(0, b.x1 - b.x0)) *
-                       static_cast<size_t>(std::max(0, b.y1 - b.y0)),
-                   0.0f);
+        const int w = std::max(0, b.x1 - b.x0);
+        const int h = std::max(0, b.y1 - b.y0);
+        cov.reset(new float[static_cast<size_t>(w) * static_cast<size_t>(h)]);
+        span_x0.assign(static_cast<size_t>(h), 0);
+        span_x1.assign(static_cast<size_t>(h), 0);
     }
     float* at(int x, int y) {
-        return cov.data() + static_cast<size_t>(y - box.y0) * (box.x1 - box.x0) + (x - box.x0);
+        return cov.get() + static_cast<size_t>(y - box.y0) * (box.x1 - box.x0) + (x - box.x0);
+    }
+    // Makes [x0, x1) of row y writable: zero-fills what the row's span did
+    // not cover yet and grows the span (callers stay inside box).
+    void touch(int y, int x0, int x1) {
+        if (x0 >= x1) {
+            return;
+        }
+        const size_t row = static_cast<size_t>(y - box.y0);
+        int& s0 = span_x0[row];
+        int& s1 = span_x1[row];
+        if (s0 >= s1) {
+            std::fill(at(x0, y), at(x0, y) + (x1 - x0), 0.0f);
+            s0 = x0;
+            s1 = x1;
+            return;
+        }
+        if (x0 < s0) {
+            std::fill(at(x0, y), at(s0, y), 0.0f);
+            s0 = x0;
+        }
+        if (x1 > s1) {
+            std::fill(at(s1, y), at(x1, y), 0.0f);
+            s1 = x1;
+        }
     }
 };
+
+// The part of `local_bbox` (+pad px) a part may write, clipped to the mask.
+IRect partBox(const Mask& mask, const Mat23& fwd, Rect local_bbox, float pad, int w, int h) {
+    IRect r = targetBBox(fwd, local_bbox, pad, w, h);
+    r.x0 = std::max(r.x0, mask.box.x0);
+    r.y0 = std::max(r.y0, mask.box.y0);
+    r.x1 = std::min(r.x1, mask.box.x1);
+    r.y1 = std::min(r.y1, mask.box.y1);
+    return r;
+}
 
 // Rasterizes one part: evaluates `coverage(local)` over the target bbox of
 // `local_bbox` and max-accumulates into the mask.
 template <typename CoverageFn>
 void rasterizePart(Mask& mask, const Mat23& inv, const Mat23& fwd, Rect local_bbox, float pad,
                    int w, int h, CoverageFn coverage) {
-    IRect r = targetBBox(fwd, local_bbox, pad, w, h);
-    r.x0 = std::max(r.x0, mask.box.x0);
-    r.y0 = std::max(r.y0, mask.box.y0);
-    r.x1 = std::min(r.x1, mask.box.x1);
-    r.y1 = std::min(r.y1, mask.box.y1);
+    const IRect r = partBox(mask, fwd, local_bbox, pad, w, h);
     if (r.empty()) {
         return;
     }
     for (int y = r.y0; y < r.y1; ++y) {
+        mask.touch(y, r.x0, r.x1);
         for (int x = r.x0; x < r.x1; ++x) {
             const Vec2 local = inv.apply({x + 0.5f, y + 0.5f});
             const float c = coverage(gv(local));
@@ -202,11 +241,12 @@ void rasterizePart(Mask& mask, const Mat23& inv, const Mat23& fwd, Rect local_bb
 }
 
 void compositeMask(Buf& target, const Mask& mask, Color color, float alpha, Blend mode) {
+    const int stride = mask.box.x1 - mask.box.x0;
     for (int y = mask.box.y0; y < mask.box.y1; ++y) {
-        for (int x = mask.box.x0; x < mask.box.x1; ++x) {
-            const float c =
-                mask.cov[static_cast<size_t>(y - mask.box.y0) * (mask.box.x1 - mask.box.x0) +
-                         (x - mask.box.x0)];
+        const size_t row = static_cast<size_t>(y - mask.box.y0);
+        const float* cov = mask.cov.get() + row * stride - mask.box.x0;
+        for (int x = mask.span_x0[row]; x < mask.span_x1[row]; ++x) {
+            const float c = cov[x];
             if (c > 0) {
                 blendPixel(target.at(x, y), color, alpha * c, mode);
             }
@@ -497,27 +537,145 @@ void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext,
     g_filter_state = nullptr;
 }
 
+// One polygon edge's contribution to polygonDistance: the squared distance
+// to the edge, and whether the point's +x ray crosses it (sign toggle).
+// Shared by the brute-force and the culled fill so both compute bit-equal
+// distances and signs.
+inline void polygonEdge(vec2 vi, vec2 vj, vec2 p, float& d2, bool& toggle) {
+    const vec2 e = vj - vi;
+    const vec2 w = p - vi;
+    const float t = glsl::clamp(glsl::dot(w, e) / std::max(glsl::dot(e, e), 1e-12f), 0.0f, 1.0f);
+    const vec2 b = w - e * t;
+    d2 = std::min(d2, glsl::dot(b, b));
+    const bool c0 = p.y >= vi.y;
+    const bool c1 = p.y < vj.y;
+    const bool c2 = e.x * w.y > e.y * w.x;
+    toggle = (c0 && c1 && c2) || (!c0 && !c1 && !c2);
+}
+
 // Signed distance to a polygon (negative inside, any winding; per-edge math
 // mirrors sd_segment — the loop is renderer structure, per shapes_shared.h).
 float polygonDistance(const std::vector<Vec2>& pts, vec2 p) {
     float d2 = 1e30f;
     float sign = 1.0f;
     for (size_t i = 0, j = pts.size() - 1; i < pts.size(); j = i++) {
-        const vec2 vi = gv(pts[i]);
-        const vec2 vj = gv(pts[j]);
-        const vec2 e = vj - vi;
-        const vec2 w = p - vi;
-        const float t = glsl::clamp(glsl::dot(w, e) / std::max(glsl::dot(e, e), 1e-12f), 0.0f, 1.0f);
-        const vec2 b = w - e * t;
-        d2 = std::min(d2, glsl::dot(b, b));
-        const bool c0 = p.y >= vi.y;
-        const bool c1 = p.y < vj.y;
-        const bool c2 = e.x * w.y > e.y * w.x;
-        if ((c0 && c1 && c2) || (!c0 && !c1 && !c2)) {
+        bool toggle = false;
+        polygonEdge(gv(pts[i]), gv(pts[j]), p, d2, toggle);
+        if (toggle) {
             sign = -sign;
         }
     }
     return sign * std::sqrt(d2);
+}
+
+}  // namespace
+
+namespace detail {
+// Test seam (not API): forces the brute-force polygon fill so stage_tests
+// can prove rasterizePolygonFill bit-identical to it.
+bool g_cpu_polygon_reference = false;
+}  // namespace detail
+
+namespace {
+
+// Filled-polygon coverage, sd_fill(polygonDistance(p), aa) at every pixel of
+// the part box — but costing ~pixels × nearby edges instead of pixels × all
+// edges (a 240-edge waveform band went from ~35 ms to ~1 ms at 900×800).
+//
+// Needs an axis-aligned `inv` (no rotation/skew), so each target row maps to
+// one local y; callers fall back to rasterizePart otherwise. Per row, then
+// per chunk of kChunk pixels:
+//   - distance: only edges whose bbox, padded by `near` (local units, ≥ aa),
+//     overlaps the chunk can be closer than `near`; farther edges cannot
+//     change sd_fill, which saturates beyond aa/2. The minimum over the near
+//     edges is therefore the exact minimum wherever it matters.
+//   - sign: an edge toggles only when it straddles the row (c0/c1 depend on
+//     y alone). A straddling edge that is not near lies wholly left or right
+//     of the chunk, so it toggles exactly when it lies to the right — counted
+//     once per chunk. Near edges are evaluated per pixel with the same
+//     predicate as polygonDistance.
+// Every evaluated value is the brute-force one: output is bit-identical.
+void rasterizePolygonFill(Mask& mask, const Mat23& inv, const Mat23& fwd,
+                          const std::vector<Vec2>& pts, Rect local_bbox, float pad_px, float aa,
+                          int w, int h) {
+    const IRect r = partBox(mask, fwd, local_bbox, pad_px, w, h);
+    if (r.empty()) {
+        return;
+    }
+    constexpr int kChunk = 16;
+    const float near = 2.0f * aa;
+    struct Edge {
+        vec2 vi, vj;
+        float x0, x1, y0, y1;  // bbox padded by `near`
+    };
+    std::vector<Edge> edges;
+    edges.reserve(pts.size());
+    for (size_t i = 0, j = pts.size() - 1; i < pts.size(); j = i++) {
+        Edge e{gv(pts[i]), gv(pts[j]), 0, 0, 0, 0};
+        e.x0 = std::min(e.vi.x, e.vj.x) - near;
+        e.x1 = std::max(e.vi.x, e.vj.x) + near;
+        e.y0 = std::min(e.vi.y, e.vj.y) - near;
+        e.y1 = std::max(e.vi.y, e.vj.y) + near;
+        edges.push_back(e);
+    }
+    std::vector<const Edge*> row_near, row_cross, chunk_near;
+    for (int y = r.y0; y < r.y1; ++y) {
+        const float ly = inv.apply({r.x0 + 0.5f, y + 0.5f}).y;  // the row's local y
+        row_near.clear();
+        row_cross.clear();
+        for (const Edge& e : edges) {
+            if (ly < e.y0 || ly > e.y1) {
+                continue;
+            }
+            row_near.push_back(&e);
+            const bool c0 = ly >= e.vi.y;
+            const bool c1 = ly < e.vj.y;
+            if (c0 == c1) {
+                row_cross.push_back(&e);  // straddles: may toggle the sign
+            }
+        }
+        if (row_cross.empty() && row_near.empty()) {
+            continue;  // outside: coverage 0, nothing to write
+        }
+        for (int cx = r.x0; cx < r.x1; cx += kChunk) {
+            const int cx1 = std::min(cx + kChunk, r.x1);
+            const float lxa = inv.apply({cx + 0.5f, y + 0.5f}).x;
+            const float lxb = inv.apply({cx1 - 0.5f, y + 0.5f}).x;
+            const float lx0 = std::min(lxa, lxb);
+            const float lx1 = std::max(lxa, lxb);
+            chunk_near.clear();
+            for (const Edge* e : row_near) {
+                if (e->x1 >= lx0 && e->x0 <= lx1) {
+                    chunk_near.push_back(e);
+                }
+            }
+            bool far_odd = false;  // far straddling edges to the right
+            for (const Edge* e : row_cross) {
+                if (e->x0 > lx1) {
+                    far_odd = !far_odd;
+                }
+            }
+            if (chunk_near.empty() && !far_odd) {
+                continue;  // wholly outside this chunk
+            }
+            mask.touch(y, cx, cx1);
+            for (int x = cx; x < cx1; ++x) {
+                const vec2 p = gv(inv.apply({x + 0.5f, y + 0.5f}));
+                float d2 = 1e30f;
+                bool odd = far_odd;
+                for (const Edge* e : chunk_near) {
+                    bool toggle = false;
+                    polygonEdge(e->vi, e->vj, p, d2, toggle);
+                    odd ^= toggle;
+                }
+                const float c = shapes::sd_fill((odd ? -1.0f : 1.0f) * std::sqrt(d2), aa);
+                if (c > 0) {
+                    float* m = mask.at(x, y);
+                    *m = std::max(*m, c);
+                }
+            }
+        }
+    }
 }
 
 }  // namespace
@@ -642,6 +800,9 @@ struct CpuRenderer::Impl {
                 if (th > 0) {
                     strokeSegs(dashSegments(pathSegments(c->points, true), layer.dashValue()),
                                layer.capValue());
+                } else if (inv.b == 0 && inv.c == 0 && !detail::g_cpu_polygon_reference) {
+                    rasterizePolygonFill(mask, inv, m, c->points, layer.contentBounds(), pad_px,
+                                         aa, target.w, target.h);
                 } else {
                     const auto& pts = c->points;
                     part(layer.contentBounds(), 0, [&](vec2 p) {
@@ -880,6 +1041,7 @@ struct CpuRenderer::Impl {
             const float u_span = q.u1 - q.u0;
             const float v_span = q.v1 - q.v0;
             for (int y = box.y0; y < box.y1; ++y) {
+                mask.touch(y, box.x0, box.x1);
                 for (int x = box.x0; x < box.x1; ++x) {
                     const Vec2 local = inv.apply({x + 0.5f, y + 0.5f});
                     const float fx = (local.x - lq.x) / lq.w;

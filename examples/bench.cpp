@@ -1,11 +1,17 @@
 // bench — frames-per-second of both backends on a representative robot HUD
-// (camera image + detections + shadowed panel + filtered PiP) at 1080p.
+// (camera image + detections + shadowed panel + filtered PiP) at 1080p, then
+// the CPU renderer on long thin paths: a voice-meter waveform (one filled
+// polygon + two polylines, 120 samples each, as Kepler's stage draws it) at
+// 900×800, and a long diagonal polyline — the cases whose cost used to grow
+// with bbox pixels × segments.
 //
 //   ./bench [frames]        (default 60; first frame excluded as warmup)
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -72,12 +78,88 @@ double benchOne(const char* name, Renderer& renderer, int frames) {
     return ms;
 }
 
+// Times `frames` renders of `stage` (after one warmup) and prints a row.
+double timeRenders(const char* name, Renderer& renderer, Stage& stage, int frames,
+                   const std::function<void(int)>& update) {
+    double total_ms = 0;
+    for (int i = 0; i < frames + 1; ++i) {
+        update(i);
+        const auto t0 = std::chrono::steady_clock::now();
+        renderer.render(stage, 1.0f / 30.0f);
+        const auto t1 = std::chrono::steady_clock::now();
+        if (i > 0) {
+            total_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
+        }
+    }
+    const double ms = total_ms / frames;
+    std::printf("%-14s %7.2f ms/frame  (%6.1f fps)  %.0fx%.0f\n", name, ms, 1000.0 / ms,
+                stage.width(), stage.height());
+    return ms;
+}
+
+// The voice meter of Kepler's stage: 920×100 at the bottom of a 900×800-ish
+// view, N = 120 samples, a translucent filled band between the upper and
+// lower envelopes plus both edges stroked at 2.5.
+void benchWave(Renderer& renderer, int frames) {
+    constexpr int kN = 120;
+    constexpr float kL = 40, kW = 820, kY = 700, kH = 90;
+    Stage stage(900, 800);
+    auto& fill = stage.polygon({}).color({0.47f, 0.59f, 1.0f, 0.22f});
+    auto& up = stage.polyline({}).color({0.47f, 0.59f, 1.0f, 0.85f}).thickness(2.5f);
+    auto& down = stage.polyline({}).color({0.47f, 0.59f, 1.0f, 0.85f}).thickness(2.5f);
+    std::vector<Vec2> u(kN + 1), d(kN + 1), band;
+    auto update = [&](int t) {
+        for (int i = 0; i <= kN; ++i) {
+            const float x = kL + kW * i / kN;
+            const float a = 0.5f + 0.5f * std::sin(i * 0.37f + t * 0.2f) *
+                                       std::sin(i * 0.05f + t * 0.07f);
+            u[i] = {x, kY + kH * 0.5f - a * kH * 0.45f};
+            d[i] = {x, kY + kH * 0.5f + a * kH * 0.45f};
+        }
+        band.assign(u.begin(), u.end());
+        band.insert(band.end(), d.rbegin(), d.rend());
+        fill.setPoints(band);
+        up.setPoints(u);
+        down.setPoints(d);
+    };
+    timeRenders("cpu wave", renderer, stage, frames, update);
+    up.hidden(true);
+    down.hidden(true);
+    timeRenders("cpu wave fill", renderer, stage, frames, update);
+    fill.hidden(true);
+    up.hidden(false);
+    down.hidden(false);
+    timeRenders("cpu wave lines", renderer, stage, frames, update);
+}
+
+// One long diagonal path across 1080p: 240 short segments along a slanted
+// sine, so the content bbox is nearly the whole frame.
+void benchDiagonal(Renderer& renderer, int frames) {
+    Stage stage(1920, 1080);
+    auto& path = stage.polyline({}).thickness(3).color(Color::Orange);
+    std::vector<Vec2> pts(241);
+    timeRenders("cpu diagonal", renderer, stage, frames, [&](int t) {
+        for (size_t i = 0; i < pts.size(); ++i) {
+            const float k = static_cast<float>(i) / (pts.size() - 1);
+            pts[i] = {40 + 1840 * k, 1040 - 1000 * k + 30 * std::sin(k * 40 + t * 0.1f)};
+        }
+        path.setPoints(pts);
+    });
+    path.hidden(true);  // the per-frame floor: clear + output conversion
+    timeRenders("cpu empty", renderer, stage, frames, [](int) {});
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     const int frames = argc > 1 ? std::atoi(argv[1]) : 60;
     CpuRenderer cpu;
     const double cpu_ms = benchOne("cpu", cpu, std::max(frames / 10, 3));
+    {
+        CpuRenderer paths;
+        benchWave(paths, std::max(frames / 4, 5));
+        benchDiagonal(paths, std::max(frames / 4, 5));
+    }
 #ifdef FS_HAVE_VULKAN
     try {
         VulkanRenderer gpu;

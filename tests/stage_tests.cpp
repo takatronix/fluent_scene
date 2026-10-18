@@ -13,6 +13,10 @@
 
 using namespace fluent_scene;
 
+namespace fluent_scene::detail {
+extern bool g_cpu_polygon_reference;  // cpu_renderer.cpp test seam
+}
+
 namespace {
 
 int g_failures = 0;
@@ -171,6 +175,73 @@ void testRemoveWhenSettled() {
     CHECK(!stage.drainDiagnostics().empty() && stage.layerCount() == 1);
 }
 
+// The CPU renderer's culled polygon fill (near-edge distance + far-edge
+// parity per row chunk) must be bit-identical to the brute-force
+// sd_fill(polygonDistance) it replaces — random, self-intersecting and
+// degenerate outlines, under scale / mirror / fractional output sizes.
+void testPolygonFillExact() {
+    uint32_t seed = 12345;
+    auto rnd = [&] {
+        seed = seed * 1664525u + 1013904223u;
+        return static_cast<float>(seed >> 8) / static_cast<float>(1u << 24);
+    };
+    struct Case {
+        uint32_t out_w, out_h;
+        Vec2 scale;
+    };
+    const Case cases[] = {{300, 200, {1, 1}},     {333, 217, {1, 1}},  {300, 200, {1.37f, 0.8f}},
+                          {300, 200, {-1, 1}},    {300, 200, {1, -1.5f}}, {91, 67, {2.5f, 2.5f}}};
+    int checked = 0;
+    for (int shape = 0; shape < 6; ++shape) {
+        std::vector<Vec2> pts;
+        if (shape == 0) {  // a waveform band, like the voice meter
+            for (int i = 0; i <= 60; ++i) {
+                pts.push_back({20 + 4.3f * i, 100 - 40 * rnd()});
+            }
+            for (int i = 60; i >= 0; --i) {
+                pts.push_back({20 + 4.3f * i, 100 + 40 * rnd()});
+            }
+        } else if (shape == 1) {  // a spiky star
+            for (int i = 0; i < 48; ++i) {
+                const float a = i * 6.2831853f / 48;
+                const float r = (i % 2 ? 30 : 90) + 10 * rnd();
+                pts.push_back({150 + r * std::cos(a), 100 + r * std::sin(a)});
+            }
+        } else if (shape == 2) {  // self-intersecting scribble
+            for (int i = 0; i < 40; ++i) {
+                pts.push_back({10 + 280 * rnd(), 10 + 180 * rnd()});
+            }
+        } else if (shape == 3) {  // degenerate: repeats, collinear, horizontal runs
+            pts = {{20, 20}, {20, 20}, {120, 20}, {220, 20}, {220, 20.5f}, {220, 180},
+                   {120, 180}, {120, 100}, {120, 100}, {20, 180}};
+        } else if (shape == 4) {  // sub-pixel sliver
+            pts = {{10, 50}, {290, 50.3f}, {290, 50.9f}, {10, 50.4f}};
+        } else {  // vertices exactly on pixel centers and edges
+            pts = {{10.5f, 10.5f}, {200.5f, 10.5f}, {100, 150}, {150, 150}, {10, 190}};
+        }
+        for (const Case& c : cases) {
+            Stage stage(300, 200);
+            stage.group()
+                .bounds({0, 0, 300, 200})
+                .position(150, 100)
+                .scale(c.scale.x, c.scale.y)
+                .polygon(pts)
+                .color({0.9f, 0.6f, 0.2f, 0.8f});
+            CpuRenderer fast;
+            CpuRenderer reference;
+            const Surface& a = fast.render(stage, c.out_w, c.out_h, 0);
+            std::vector<uint8_t> got(a.pixels, a.pixels + a.strideBytes * a.height);
+            detail::g_cpu_polygon_reference = true;
+            const Surface& b = reference.render(stage, c.out_w, c.out_h, 0);
+            detail::g_cpu_polygon_reference = false;
+            CHECK(a.strideBytes == b.strideBytes &&
+                  std::memcmp(got.data(), b.pixels, got.size()) == 0);
+            ++checked;
+        }
+    }
+    CHECK(checked == 36);
+}
+
 void testHitTest() {
     Stage stage(1000, 800);
     stage.rect({0, 0, 1000, 800}).id("bg").frame({0, 0, 1000, 800});
@@ -277,6 +348,7 @@ int main() {
     testLimits();
     testFilterTable();
     testRenderDeterminism();
+    testPolygonFillExact();
     if (g_failures == 0) {
         std::printf("all stage_tests passed\n");
         return 0;
