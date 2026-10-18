@@ -19,6 +19,7 @@
 // system CJK font (goldens are generated on the robot's own image); when no
 // font is available that scene is skipped with a notice.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
