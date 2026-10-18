@@ -28,6 +28,7 @@ struct CompileAccess {
     static std::string& digestRef(CompiledScene& s) { return s.digest_; }
     static std::unique_ptr<Stage>& stage(CompiledScene& s) { return s.stage_; }
     static auto& nodes(CompiledScene& s) { return s.nodes_; }
+    static auto& paramValues(CompiledScene& s) { return s.param_values_; }
     static auto& paramBindings(CompiledScene& s) { return s.param_bindings_; }
     static auto& inputBindings(CompiledScene& s) { return s.input_bindings_; }
     static auto& filterImageBindings(CompiledScene& s) { return s.filter_image_bindings_; }
@@ -92,62 +93,96 @@ void applyAttr(Layer& layer, AttrId id, const Value& v) {
     }
 }
 
-void applyMapAttr(Layer& layer, const AttrDecl& attr) {
+void setShadowField(Shadow& s, const FieldSpec& field, const Value& v) {
+    const std::string name = field.name;
+    if (name == "offset") {
+        s.offset = v.vec2();
+    } else if (name == "radius") {
+        s.radius = v.num[0];
+    } else if (name == "color") {
+        s.color = v.color();
+    } else if (name == "opacity") {
+        s.opacity = v.num[0];
+    }
+}
+
+void setBorderField(Border& b, const FieldSpec& field, const Value& v) {
+    const std::string name = field.name;
+    if (name == "width") {
+        b.width = v.num[0];
+    } else if (name == "color") {
+        b.color = v.color();
+    }
+}
+
+/// Applies a shadow/border map; `value` resolves each field (a literal, or
+/// a bound param's current value).
+template <typename Resolve>
+void applyMapAttr(Layer& layer, const AttrDecl& attr, Resolve value) {
     if (attr.spec->id == AttrId::Shadow) {
         Shadow s{};
         for (const MapField& f : attr.map) {
-            const std::string name = f.spec->name;
-            if (name == "offset") {
-                s.offset = f.value.vec2();
-            } else if (name == "radius") {
-                s.radius = f.value.num[0];
-            } else if (name == "color") {
-                s.color = f.value.color();
-            } else if (name == "opacity") {
-                s.opacity = f.value.num[0];
-            }
+            setShadowField(s, *f.spec, value(f.value));
         }
         layer.shadow(s);
     } else if (attr.spec->id == AttrId::Border) {
         Border b{};
         for (const MapField& f : attr.map) {
-            const std::string name = f.spec->name;
-            if (name == "width") {
-                b.width = f.value.num[0];
-            } else if (name == "color") {
-                b.color = f.value.color();
-            }
+            setBorderField(b, *f.spec, value(f.value));
         }
         layer.border(b);
     }
 }
 
 /// Applies a shared style field (color/thickness/…) via its Layer setter.
-void applyStyle(Layer& layer, const MapField& f) {
-    const std::string name = f.spec->name;
+void applyStyle(Layer& layer, const FieldSpec& field, const Value& v) {
+    const std::string name = field.name;
     if (name == "color") {
-        layer.color(f.value.color());
+        layer.color(v.color());
     } else if (name == "thickness") {
-        layer.thickness(f.value.num[0]);
+        layer.thickness(v.num[0]);
     } else if (name == "dash") {
-        layer.dash(f.value.num[0]);
+        layer.dash(v.num[0]);
     } else if (name == "cap") {
-        layer.cap(static_cast<Cap>(f.value.enum_value));
+        layer.cap(static_cast<Cap>(v.enum_value));
     } else if (name == "corner_radius") {
-        layer.cornerRadius(f.value.num[0]);
+        layer.cornerRadius(v.num[0]);
     } else if (name == "smoothing") {
-        layer.smoothing(f.value.num[0]);
+        layer.smoothing(v.num[0]);
     } else if (name == "show_label") {
-        layer.showLabel(f.value.flag);
+        layer.showLabel(v.flag);
     }
 }
 
-/// A declared Rect attribute's starting value: the literal, or the bound
-/// param's default.
-Rect declaredRect(const SceneDoc& doc, const AttrDecl& attr) {
+/// Writes one param value through one binding (build pass and setParam).
+void applyBinding(const CompiledScene::ParamBinding& b, const Value& v) {
+    using Target = CompiledScene::ParamBinding::Target;
+    switch (b.target) {
+        case Target::Attr: applyAttr(*b.layer, b.attr, v); break;
+        case Target::Style: applyStyle(*b.layer, *b.field, v); break;
+        case Target::ShadowField: {
+            Shadow s = b.layer->shadowValue().value_or(Shadow{});
+            setShadowField(s, *b.field, v);
+            b.layer->shadow(s);
+            break;
+        }
+        case Target::BorderField: {
+            Border border = b.layer->borderValue().value_or(Border{});
+            setBorderField(border, *b.field, v);
+            b.layer->border(border);
+            break;
+        }
+    }
+}
+
+using ParamValues = std::map<std::string, Value>;
+
+/// A declared Rect attribute's value now: the literal, or the bound param's
+/// current value.
+Rect declaredRect(const ParamValues& params, const AttrDecl& attr) {
     if (!attr.value.param.empty()) {
-        if (const ParamDecl* p = doc.findParam(attr.value.param)) {
-            return {p->def[0], p->def[1], p->def[2], p->def[3]};
+        if (auto it = params.find(attr.value.param); it != params.end()) {
+            return it->second.rect();
         }
     }
     return attr.value.rect();
@@ -156,12 +191,12 @@ Rect declaredRect(const SceneDoc& doc, const AttrDecl& attr) {
 /// The statically-resolvable size of a declared layer, for placeholder
 /// layout: declared frame/bounds win; image and grid content fill the
 /// parent; everything else does not matter for placeholders.
-Vec2 staticSize(const SceneDoc& doc, const LayerDecl& decl, Vec2 parent_size) {
+Vec2 staticSize(const ParamValues& params, const LayerDecl& decl, Vec2 parent_size) {
     if (const AttrDecl* a = decl.find(AttrId::Bounds)) {
-        return declaredRect(doc, *a).size();
+        return declaredRect(params, *a).size();
     }
     if (const AttrDecl* a = decl.find(AttrId::Frame)) {
-        return declaredRect(doc, *a).size();
+        return declaredRect(params, *a).size();
     }
     return parent_size;
 }
@@ -211,6 +246,11 @@ public:
             }
         }
 
+        // Every param starts at its declared default.
+        for (const ParamDecl& p : doc_.params) {
+            CompileAccess::paramValues(scene_)[p.name] = paramInitialValue(p);
+        }
+
         auto stage = std::make_unique<Stage>(doc_.width, doc_.height, options_.limits);
         stage->fit(doc_.fit);
         CompileAccess::stage(scene_) = std::move(stage);
@@ -227,6 +267,24 @@ private:
                    std::move(message));
     }
 
+    const ParamValues& params() const { return CompileAccess::paramValues(scene_); }
+
+    /// A declared value as it applies now: the literal, or the bound
+    /// param's current value.
+    Value resolve(const Value& v) const {
+        if (v.param.empty()) {
+            return v;
+        }
+        return params().at(v.param);
+    }
+
+    /// Registers `binding` when `v` is a `$params` reference.
+    void bind(const Value& v, const CompiledScene::ParamBinding& binding) {
+        if (!v.param.empty()) {
+            CompileAccess::paramBindings(scene_)[v.param].push_back(binding);
+        }
+    }
+
     void buildLayer(Layer& parent, const LayerDecl& decl, Vec2 parent_size) {
         Layer* layer = createLayer(parent, decl);
         if (layer == nullptr) {
@@ -237,27 +295,31 @@ private:
             layer->id(decl.id);
         }
 
-        // Content style fields (explicit only — creation defaults stand).
+        // Content style fields (explicit only — creation defaults stand;
+        // $params refs start at the param's current value).
+        using Target = CompiledScene::ParamBinding::Target;
         if (decl.content) {
             for (const MapField& f : decl.content->fields) {
                 if (f.spec->is_style) {
-                    applyStyle(*layer, f);
+                    applyStyle(*layer, *f.spec, resolve(f.value));
+                    bind(f.value, {layer, AttrId::Opacity, Target::Style, f.spec});
                 }
             }
         }
 
-        // Attributes (table order; $params refs start at the param default).
+        // Attributes (table order).
         for (const AttrDecl& attr : decl.attrs) {
             const ValueKind kind = attr.spec->kind;
             if (kind == ValueKind::MapShadow || kind == ValueKind::MapBorder) {
-                applyMapAttr(*layer, attr);
-            } else if (!attr.value.param.empty()) {
-                const ParamDecl* p = doc_.findParam(attr.value.param);
-                applyAttr(*layer, attr.spec->id, paramInitialValue(*p));
-                CompileAccess::paramBindings(scene_)[p->name].push_back(
-                    {layer, attr.spec->id});
+                applyMapAttr(*layer, attr, [&](const Value& v) { return resolve(v); });
+                const Target target =
+                    kind == ValueKind::MapShadow ? Target::ShadowField : Target::BorderField;
+                for (const MapField& f : attr.map) {
+                    bind(f.value, {layer, attr.spec->id, target, f.spec});
+                }
             } else {
-                applyAttr(*layer, attr.spec->id, attr.value);
+                applyAttr(*layer, attr.spec->id, resolve(attr.value));
+                bind(attr.value, {layer, attr.spec->id});
             }
         }
 
@@ -297,7 +359,7 @@ private:
             CompileAccess::layerTransitions(scene_)[layer] = *decl.transition;
         }
 
-        const Vec2 own_size = staticSize(doc_, decl, parent_size);
+        const Vec2 own_size = staticSize(params(), decl, parent_size);
         for (const LayerDecl& sub : decl.sublayers) {
             buildLayer(*layer, sub, own_size);
         }
@@ -412,7 +474,7 @@ private:
         CompiledScene* scene = &scene_;
         const std::string name = c.spec->name;
         const AttrDecl* frame_attr = decl.find(AttrId::Frame);
-        const Rect frame = frame_attr != nullptr ? declaredRect(doc_, *frame_attr) : Rect{};
+        const Rect frame = frame_attr != nullptr ? declaredRect(params(), *frame_attr) : Rect{};
 
         // The event id: the declared id, or the auto id assigned later —
         // resolved lazily at fire time from the control's layer.
@@ -434,7 +496,7 @@ private:
             if (const MapField* on = c.find("on")) {
                 if (!on->value.param.empty()) {
                     const ParamDecl* p = doc_.findParam(on->value.param);
-                    raw->setOn(p->def_flag, false);
+                    raw->setOn(resolve(on->value).flag, false);
                     CompileAccess::controlBindings(scene_)[p->name].push_back(
                         {CompiledScene::ControlBinding::Kind::SwitchOn, raw});
                 } else {
@@ -453,7 +515,7 @@ private:
             if (const MapField* value = c.find("value")) {
                 if (!value->value.param.empty()) {
                     bound = doc_.findParam(value->value.param);
-                    initial = bound->def[0];
+                    initial = resolve(value->value).num[0];
                 } else {
                     initial = value->value.num[0];
                 }
@@ -483,7 +545,7 @@ private:
         if (const MapField* value = c.find("value")) {
             if (!value->value.param.empty()) {
                 const ParamDecl* p = doc_.findParam(value->value.param);
-                raw->setValue(p->def[0]);
+                raw->setValue(resolve(value->value).num[0]);
                 CompileAccess::controlBindings(scene_)[p->name].push_back(
                     {CompiledScene::ControlBinding::Kind::GaugeValue, raw});
             } else {
@@ -529,7 +591,7 @@ private:
     bool findStaticSize(const std::vector<LayerDecl>& layers, const LayerDecl& target,
                         Vec2 parent_size, Vec2* out) const {
         for (const LayerDecl& decl : layers) {
-            const Vec2 own = staticSize(doc_, decl, parent_size);
+            const Vec2 own = staticSize(params(), decl, parent_size);
             if (&decl == &target) {
                 *out = own;
                 return true;
@@ -694,18 +756,19 @@ void CompiledScene::applyParam(const ParamDecl& decl, const Value& value) {
                 break;
         }
     }
+    param_values_[decl.name] = value;
     for (const ParamBinding& b : param_bindings_[decl.name]) {
         // Animation priority (§9): the param's animate declaration, else the
         // layer's transition, else snap.
         if (decl.has_animate) {
             Transaction t(decl.animate_duration, decl.animate_ease);
-            applyAttr(*b.layer, b.attr, value);
+            applyBinding(b, value);
         } else if (auto it = layer_transitions_.find(b.layer);
                    it != layer_transitions_.end()) {
             Transaction t(it->second.duration, it->second.ease);
-            applyAttr(*b.layer, b.attr, value);
+            applyBinding(b, value);
         } else {
-            applyAttr(*b.layer, b.attr, value);
+            applyBinding(b, value);
         }
     }
 }

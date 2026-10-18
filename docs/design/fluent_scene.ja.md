@@ -388,8 +388,9 @@ params:
                animate: { duration: 0.3, ease: ease_in_out } }  # setParam が曲線で効く
 ```
 
-- 補間対象（L0）: opacity / position / scale / rotation / frame。色・フィルタ
-  パラメータは L1。イージング: linear / ease_in / ease_out / ease_in_out
+- 補間対象（L0）: opacity / position / scale / rotation / frame。色（content の
+  color・background・既存 border の color）は 0.17 で追加 — 乗算済み α で混ぜる
+  ので透明からのフェードインでも色相が濁らない。フィルタパラメータは L1。イージング: linear / ease_in / ease_out / ease_in_out
   （spring は将来）。
 - 実装原理: 属性は「目標値 + 現在値 + 曲線」を持ち、レンダラーがフレーム dt で
   現在値を進める。データ側の補間（boxes の smoothing）は別系統として維持。

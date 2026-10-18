@@ -56,11 +56,18 @@ namespace {
 constexpr const char* kPhaseNames = "";  // (diagnostics carry Phase enums)
 
 /// Content fields that accept a `$params` reference (§10: UI control state
-/// bound to a parameter). Everything else stays literal.
+/// bound to a parameter). Shared style keys bind too (see parseContent);
+/// the rest of a content's fields stay literal.
 bool fieldBindable(const std::string& content, const std::string& field) {
     return (content == "switch" && field == "on") ||
            (content == "slider" && field == "value") ||
            (content == "gauge" && field == "value");
+}
+
+/// Value kinds a `$params` reference can stand in for.
+bool kindBindable(ValueKind kind) {
+    return kind == ValueKind::F32 || kind == ValueKind::Vec2 || kind == ValueKind::Rect ||
+           kind == ValueKind::Color || kind == ValueKind::Bool;
 }
 
 /// UI prefabs that live in the layer's declared frame (§10-1).
@@ -368,7 +375,9 @@ private:
             MapField field;
             field.spec = spec;
             field.span = e.value.span;
-            if (!parseValue(e.value, spec->kind, doc, false, field.value)) {
+            // shadow/border fields bind like attributes (a tint param
+            // recolors the border too).
+            if (!parseValue(e.value, spec->kind, doc, kindBindable(spec->kind), field.value)) {
                 ok = false;
                 continue;
             }
@@ -704,11 +713,8 @@ private:
                     attr.value.num[0] = s;
                     attr.value.num[1] = s;
                 } else {
-                    const bool bindable =
-                        spec->kind == ValueKind::F32 || spec->kind == ValueKind::Vec2 ||
-                        spec->kind == ValueKind::Rect || spec->kind == ValueKind::Color ||
-                        spec->kind == ValueKind::Bool;
-                    if (!parseValue(e.value, spec->kind, doc, bindable, attr.value)) {
+                    if (!parseValue(e.value, spec->kind, doc, kindBindable(spec->kind),
+                                    attr.value)) {
                         continue;
                     }
                 }
@@ -785,7 +791,10 @@ private:
                 MapField field;
                 field.spec = field_spec;
                 field.span = f.value.span;
-                const bool bindable = fieldBindable(spec->name, field_spec->name);
+                // Shared style keys (color, thickness, …) bind like
+                // attributes; content geometry stays literal.
+                const bool bindable = fieldBindable(spec->name, field_spec->name) ||
+                                      (field_spec->is_style && kindBindable(field_spec->kind));
                 if (!parseValue(f.value, field_spec->kind, doc, bindable, field.value)) {
                     continue;
                 }

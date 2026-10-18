@@ -271,6 +271,25 @@ scene.setParam("zoom", 0.3f);                          // 0.4s かけて縮む
 scene.setParam("place", Rect{360, 40, 1520, 1000});    // 0.4s かけて広がる
 ```
 
+色も param で塗り替えられます。content のスタイルキー（`color` /
+`thickness` / `dash` / `corner_radius` …）と `border` / `shadow` の各フィールドは
+`$params` を受け付け、色は `transition` / `animate` で補間されます —
+モードごとに色違いのレイヤーを重ねて opacity で切り替える必要はありません:
+
+```yaml
+params:
+  tint: { type: color, default: [0.47, 0.59, 1, 1],
+          animate: { duration: 0.5, ease: ease_in_out } }
+layers:
+  - content: { polyline: { source: $inputs.wave, color: $params.tint, thickness: 2.5 } }
+  - frame: [0, 0, 148, 148]
+    border: { width: 2, color: $params.tint }
+```
+
+```cpp
+scene.setParam("tint", Color{1.0f, 0.7f, 0.3f, 1});   // 0.5s かけて橙へ
+```
+
 レイアウト遷移のたびに文書を作り直す必要はありません。`transform`
 (行列) は補間されないので、動かしたい配置は position + scale (+ anchor)
 か frame/bounds で書くのが正解です。

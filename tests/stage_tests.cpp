@@ -95,6 +95,38 @@ void testTransaction() {
     CHECK(near(r.presentedOpacity(), 0.5f));  // starts where it was
 }
 
+// Colors are animatable (§9 L1): content color, background, and an existing
+// border's color retarget from the presentation value; outside a
+// Transaction they snap as before.
+void testColorTransaction() {
+    Stage stage(100, 100);
+    auto& r = stage.rect({0, 0, 10, 10}).color(Color{0, 0, 1, 1}).background(Color::Black);
+    r.border(2, Color::Black);
+    CHECK(near(r.presentedColor().b, 1));
+    {
+        Transaction t(1.0f, Ease::Linear);
+        r.color(Color{1, 0, 0, 1}).background(Color::White).border(4, Color::White);
+    }
+    CHECK(near(r.colorValue().r, 1) && near(r.presentedColor().r, 0));
+    CHECK(near(r.borderValue()->width, 4));  // width snaps
+    stage.advance(0.5f);
+    CHECK(near(r.presentedColor().r, 0.5f) && near(r.presentedColor().b, 0.5f));
+    CHECK(near(r.presentedBackground().g, 0.5f));
+    CHECK(near(r.presentedBorder()->color.g, 0.5f));
+    stage.advance(0.5f);
+    CHECK(near(r.presentedColor().r, 1) && near(r.presentedColor().b, 0));
+    // A border added inside a Transaction appears at its color (nothing to
+    // animate from).
+    auto& s = stage.rect({0, 0, 10, 10});
+    {
+        Transaction t(1.0f, Ease::Linear);
+        s.border(1, Color{1, 0, 0, 1});
+    }
+    CHECK(near(s.presentedBorder()->color.r, 1));
+    // Premultiplied mix: Transparent → opaque orange keeps the hue.
+    CHECK(near(animMix(Color::Transparent, Color{1, 0.5f, 0, 1}, 0.5f).g, 0.5f));
+}
+
 void testHitTest() {
     Stage stage(1000, 800);
     stage.rect({0, 0, 1000, 800}).id("bg").frame({0, 0, 1000, 800});
@@ -195,6 +227,7 @@ void testRenderDeterminism() {
 int main() {
     testGeometry();
     testTransaction();
+    testColorTransaction();
     testHitTest();
     testLimits();
     testFilterTable();

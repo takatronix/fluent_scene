@@ -11,6 +11,14 @@ fluent_scene ビュー) を書いて見つかった回避策を、ライブラ�
   軸ごと。新しい param 型 **`rect`** で `frame` / `bounds` を束縛
   (`setParam(name, Rect)`)。いずれも `animate` / `transition` で補間される
   — レイアウト遷移のたびに文書を作り直さなくてよい
+- **色の param 束縛と色の補間**: content のスタイルキー (`color` /
+  `thickness` / `dash` / `corner_radius` / `smoothing` / `show_label`) と
+  `border` / `shadow` の各フィールドが `$params` を受け付ける。Layer の
+  content color・background・既存 border の color が補間対象になった
+  (§9 で L1 としていた項目。乗算済み α で混ぜる)。レンダラー3種は
+  `presentedColor()` / `presentedBackground()` / `presentedBorder()` を描く。
+  モードごとに色違いのレイヤーを4枚重ねて opacity で切り替える必要は
+  もうない
 
 ## 0.16.1 — 2026-08-20 (Scene YAML にレイヤーマスク)
 

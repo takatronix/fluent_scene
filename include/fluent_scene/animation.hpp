@@ -35,6 +35,16 @@ inline Rect animMix(const Rect& a, const Rect& b, float t) {
     return {animMix(a.x, b.x, t), animMix(a.y, b.y, t),
             animMix(a.w, b.w, t), animMix(a.h, b.h, t)};
 }
+/// Colors mix premultiplied, so fading in from Transparent (black at α 0)
+/// never passes through a darkened tint — the hue holds while α grows.
+inline Color animMix(const Color& a, const Color& b, float t) {
+    const float alpha = animMix(a.a, b.a, t);
+    if (alpha <= 0.0f) {
+        return {0, 0, 0, 0};
+    }
+    return {animMix(a.r * a.a, b.r * b.a, t) / alpha, animMix(a.g * a.a, b.g * b.a, t) / alpha,
+            animMix(a.b * a.a, b.b * b.a, t) / alpha, alpha};
+}
 /// @}
 
 /// One animatable attribute: model value, presentation value, and the curve

@@ -214,14 +214,15 @@ public:
     float maskFeatherValue() const { return mask_feather_; }
 
     /// A border stroked along the clip shape (corner radius included).
+    /// Its color animates (§9) once the layer has a border; the width snaps.
     Layer& border(const Border& b = Border{});
     Layer& border(float width, Color c) { return border(Border{width, c}); }
     const std::optional<Border>& borderValue() const { return border_; }
 
     /// A background plate behind the content, filling bounds (with
-    /// cornerRadius). Transparent by default.
+    /// cornerRadius). Transparent by default. Animatable.
     Layer& background(Color c);
-    Color backgroundValue() const { return background_; }
+    Color backgroundValue() const { return background_.target(); }
 
     /// Blend mode against what is behind this layer (default Normal).
     Layer& blend(Blend mode);
@@ -233,8 +234,9 @@ public:
     /// @{
 
     /// Content color (shapes, text, box outlines). Default white.
+    /// Animatable (mixed premultiplied).
     Layer& color(Color c);
-    Color colorValue() const { return color_; }
+    Color colorValue() const { return color_.target(); }
 
     /// Stroke width in logical units; 0 fills closed shapes.
     Layer& thickness(float logical_units);
@@ -374,6 +376,10 @@ public:
     Rect presentedBounds() const;
     float presentedRotation() const { return rotation_.value(); }
     Vec2 presentedScale() const { return scale_.value(); }
+    Color presentedColor() const { return color_.value(); }
+    Color presentedBackground() const { return background_.value(); }
+    /// The border with its presented color (nullopt without a border).
+    std::optional<Border> presentedBorder() const;
 
     /// The layer's resolved geometry against a given parent size:
     /// effective bounds and the local→parent affine transform, using
@@ -452,17 +458,18 @@ private:
     bool hidden_ = false;
     bool masks_to_bounds_ = false;
     float corner_radius_ = 0;
-    Color background_ = Color::Transparent;
+    Animated<Color> background_{Color::Transparent};
     Blend blend_ = Blend::Normal;
     std::optional<Shadow> shadow_;
     std::optional<Border> border_;
+    Animated<Color> border_color_;  // border_->color's model/presentation
     std::vector<Filter> filters_;
     ImageView mask_{};
     bool mask_invert_ = false;
     float mask_feather_ = 0;
 
     // content style
-    Color color_ = Color::White;
+    Animated<Color> color_{Color::White};
     float thickness_ = 0;
     float dash_ = 0;
     Cap cap_ = Cap::Round;

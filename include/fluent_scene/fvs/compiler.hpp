@@ -114,10 +114,14 @@ public:
     /// surface; the linter walks this).
     const std::vector<std::pair<const LayerDecl*, Layer*>>& nodes() const { return nodes_; }
 
-    /// One `$params` attribute binding (compiler bookkeeping).
+    /// One `$params` binding (compiler bookkeeping): a layer attribute, a
+    /// content style key, or one field of the shadow/border map.
     struct ParamBinding {
+        enum class Target { Attr, Style, ShadowField, BorderField };
         Layer* layer;
-        AttrId attr;
+        AttrId attr;                       ///< Target::Attr only.
+        Target target = Target::Attr;
+        const FieldSpec* field = nullptr;  ///< Style/ShadowField/BorderField.
     };
     /// One `$inputs` content binding with its fallback presentation
     /// (compiler bookkeeping).
@@ -160,6 +164,7 @@ private:
     std::unique_ptr<Stage> stage_;
     std::vector<std::pair<const LayerDecl*, Layer*>> nodes_;
 
+    std::map<std::string, Value> param_values_;  ///< Current value per param.
     std::map<std::string, std::vector<ParamBinding>> param_bindings_;
     std::map<std::string, std::vector<InputBinding>> input_bindings_;
     std::map<std::string, std::vector<FilterImageBinding>> filter_image_bindings_;

@@ -1214,7 +1214,7 @@ struct WebGPURenderer::Impl {
         }
         const float aa = 1.0f / scale;
         const float th = layer.thickness();
-        const Color color = layer.colorValue();
+        const Color color = layer.presentedColor();
         const Blend mode = layer.blendMode();
         const float pad_px = (th * 0.5f + 2.0f) * scale;
 
@@ -1389,14 +1389,14 @@ struct WebGPURenderer::Impl {
         if (!needs_offscreen) {
             const Blend mode = layer.blendMode();
             drawRoundedRect(target, r.bounds, layer.cornerRadius(), 0, m,
-                            layer.backgroundValue(), opacity, mode);
+                            layer.presentedBackground(), opacity, mode);
             drawContent(target, layer, r.bounds, m, opacity);
             for (const auto& child : layer.sublayers()) {
                 renderLayer(target, *child, m, r.bounds.size());
             }
-            if (layer.borderValue()) {
+            if (const std::optional<Border> border = layer.presentedBorder()) {
                 drawRoundedRect(target, r.bounds, layer.cornerRadius(),
-                                layer.borderValue()->width, m, layer.borderValue()->color,
+                                border->width, m, border->color,
                                 opacity, mode);
             }
             return;
@@ -1420,15 +1420,15 @@ struct WebGPURenderer::Impl {
         ensureTarget(*buf);  // clears
         const Mat23 mb = Mat23::scaling({scale, scale}) * Mat23::translation({-ext.x, -ext.y});
 
-        drawRoundedRect(*buf, r.bounds, layer.cornerRadius(), 0, mb, layer.backgroundValue(),
+        drawRoundedRect(*buf, r.bounds, layer.cornerRadius(), 0, mb, layer.presentedBackground(),
                         1.0f, Blend::Normal);
         drawContent(*buf, layer, r.bounds, mb, 1.0f);
         for (const auto& child : layer.sublayers()) {
             renderLayer(*buf, *child, mb, r.bounds.size());
         }
-        if (layer.borderValue()) {
-            drawRoundedRect(*buf, r.bounds, layer.cornerRadius(), layer.borderValue()->width,
-                            mb, layer.borderValue()->color, 1.0f, Blend::Normal);
+        if (const std::optional<Border> border = layer.presentedBorder()) {
+            drawRoundedRect(*buf, r.bounds, layer.cornerRadius(), border->width,
+                            mb, border->color, 1.0f, Blend::Normal);
         }
 
         // Filters: ping-pong through transients (fullscreen passes).

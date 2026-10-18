@@ -197,7 +197,7 @@ inline Rect contentExtent(const Layer& layer, Rect resolved_bounds, const TextMe
 inline Rect subtreeExtent(const Layer& layer, Vec2 parent_size, const TextMeasure& measure) {
     const Layer::Resolved r = layer.resolve(parent_size);
     Rect ext = contentExtent(layer, r.bounds, measure);
-    if (layer.backgroundValue().a > 0 || layer.borderValue().has_value() ||
+    if (layer.presentedBackground().a > 0 || layer.borderValue().has_value() ||
         layer.masksToBounds()) {
         ext = rectUnion(ext, r.bounds);
     }

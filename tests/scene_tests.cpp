@@ -369,6 +369,87 @@ layers:
     CHECK(hasCode(errorsOf("  - scale: big\n"), "validate.type"));
 }
 
+// Color params (§9 L1): content style keys and shadow/border fields bind to
+// $params; colors interpolate premultiplied through transition/animate.
+void testParamStyleBindings() {
+    const char* text = R"(schema: fluent.scene/v1alpha2
+stage: { size: [200, 100] }
+params:
+  tint: { type: color, default: [0, 0, 1, 1] }
+  edge: { type: color, default: [0, 0, 0, 0] }
+  width: { type: f32, default: 4 }
+layers:
+  - id: wave
+    transition: { duration: 1, ease: linear }
+    content: { polyline: { points: [[10, 50], [190, 50]], color: $params.tint,
+                           thickness: $params.width } }
+  - id: plate
+    frame: [0, 0, 40, 40]
+    background: $params.edge
+    border: { width: 2, color: $params.tint }
+)";
+    const fs::ParseResult parsed = fs::parseScene(text);
+    CHECK(parsed.ok());
+    for (const auto& d : parsed.diagnostics.items()) {
+        std::fprintf(stderr, "  %s %s\n", d.code.c_str(), d.message.c_str());
+    }
+    const std::string once = fs::format(parsed.doc);
+    CHECK(once.find("color: $params.tint") != std::string::npos);
+    CHECK(fs::digest(fs::parseScene(once).doc) == fs::digest(parsed.doc));
+
+    fs::CompileResult compiled = fs::compile(parsed.doc);
+    CHECK(compiled.ok());
+    fs::CompiledScene& scene = *compiled.scene;
+    Stage& stage = scene.stage();
+    Layer* wave = stage.find("wave");
+    Layer* plate = stage.find("plate");
+    CHECK(wave && plate);
+    CHECK(near(wave->colorValue().b, 1) && near(wave->thickness(), 4));
+    CHECK(plate->borderValue() && near(plate->borderValue()->color.b, 1));
+
+    // The polyline's transition interpolates its color; the plate (no
+    // transition) snaps its border color.
+    CHECK(scene.setParam("tint", Color{1, 0, 0, 1}));
+    CHECK(near(wave->colorValue().r, 1));               // model value: the target
+    CHECK(near(wave->presentedColor().b, 1));           // presentation: not yet
+    CHECK(near(plate->presentedBorder()->color.r, 1));  // snapped
+    stage.advance(0.5f);
+    CHECK(near(wave->presentedColor().r, 0.5f, 0.01f) &&
+          near(wave->presentedColor().b, 0.5f, 0.01f));
+    stage.advance(0.6f);
+    CHECK(near(wave->presentedColor().r, 1) && near(wave->presentedColor().b, 0));
+    CHECK(scene.setParam("width", 8.0f));
+    CHECK(near(wave->thickness(), 8));
+
+    // Premultiplied mixing: fading in from transparent keeps the hue.
+    {
+        Transaction t(1.0f, Ease::Linear);
+        plate->background(Color{1, 0.5f, 0, 1});
+    }
+    stage.advance(0.5f);
+    const Color mid = plate->presentedBackground();
+    CHECK(near(mid.a, 0.5f, 0.01f) && near(mid.r, 1, 0.01f) && near(mid.g, 0.5f, 0.01f));
+    stage.advance(0.6f);
+
+    // The renderer draws the presented color: the line is red now.
+    CpuRenderer renderer;
+    const Surface& frame = renderer.render(stage, 200, 100, 0);
+    const uint8_t* px = frame.pixels + 50 * frame.strideBytes + 100 * 4;
+    CHECK(px[0] > 200 && px[2] < 40);
+
+    // Style keys reject the wrong param type; content geometry stays literal.
+    auto errorsOf = [](const std::string& body) {
+        return fs::parseScene("schema: fluent.scene/v1alpha2\nparams:\n"
+                              "  c: { type: color }\n  f: { type: f32 }\nlayers:\n" + body)
+            .diagnostics;
+    };
+    CHECK(hasCode(errorsOf("  - content: { circle: { radius: 4, color: $params.f } }\n"),
+                  "validate.type"));
+    CHECK(hasCode(errorsOf("  - content: { circle: { radius: $params.f } }\n"),
+                  "validate.reference"));
+    CHECK(hasCode(errorsOf("  - border: { width: $params.c }\n"), "validate.type"));
+}
+
 void testLinter() {
     const char* text = R"(schema: fluent.scene/v1alpha2
 stage: { size: [640, 360] }
@@ -785,6 +866,7 @@ int main() {
     testYamlCppParity();
     testParamsAnimateAndInputs();
     testParamBoundGeometry();
+    testParamStyleBindings();
     testLinter();
     testInspector();
     testSceneUiControls();

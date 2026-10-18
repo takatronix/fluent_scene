@@ -562,12 +562,26 @@ Layer& Layer::maskFeather(float logical) {
 }
 
 Layer& Layer::border(const Border& b) {
+    if (border_) {
+        setAttr(border_color_, b.color);  // an existing border recolors smoothly
+    } else {
+        border_color_.snap(b.color);      // a new one appears at its color
+    }
     border_ = b;
     return *this;
 }
 
+std::optional<Border> Layer::presentedBorder() const {
+    if (!border_) {
+        return std::nullopt;
+    }
+    Border b = *border_;
+    b.color = border_color_.value();
+    return b;
+}
+
 Layer& Layer::background(Color c) {
-    background_ = c;
+    setAttr(background_, c);
     return *this;
 }
 
@@ -577,7 +591,7 @@ Layer& Layer::blend(Blend mode) {
 }
 
 Layer& Layer::color(Color c) {
-    color_ = c;
+    setAttr(color_, c);
     return *this;
 }
 
@@ -809,6 +823,9 @@ void Layer::step(float dt) {
     rotation_.step(dt);
     scale_.step(dt);
     opacity_.step(dt);
+    color_.step(dt);
+    background_.step(dt);
+    border_color_.step(dt);
     if (auto* boxes = std::get_if<BoxesContent>(&content_)) {
         smoothBoxes(*boxes, dt);
     }
