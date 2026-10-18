@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <fluent_scene/cpu_renderer.hpp>
@@ -49,7 +50,9 @@ struct FsInstance {
     // persistent buffer, then commits by pointer. No _malloc juggling.
     std::map<std::string, std::vector<float>> floats;
     std::unique_ptr<fx::Ripple> ripple;
+    Layer* ripple_target = nullptr;  // so a removal can retire the ripple first
     std::string events_json;  // UI events since the last drain
+    std::string text_out;     // fs_layer_ids / fs_diagnostics return buffer
     int last_w = 0, last_h = 0, last_stride = 0;
 };
 
@@ -316,6 +319,7 @@ int fs_attach_ripple(FsInstance* inst, const char* layer_id, int max_waves) {
         style.max_waves = static_cast<uint32_t>(max_waves);
     }
     inst->ripple = std::make_unique<fx::Ripple>(*target, style);
+    inst->ripple_target = target;
     return 1;
 }
 
@@ -331,6 +335,123 @@ int fs_set_param_bool(FsInstance* inst, const char* name, int v) {
 EMSCRIPTEN_KEEPALIVE
 int fs_set_param_vec2(FsInstance* inst, const char* name, float x, float y) {
     return inst->scene->setParam(name, Vec2{x, y}) ? 1 : 0;
+}
+/// A `color` param, components 0-1 (straight alpha). Bound colors
+/// interpolate through the param's animate / the layer's transition.
+EMSCRIPTEN_KEEPALIVE
+int fs_set_param_color(FsInstance* inst, const char* name, float r, float g, float b,
+                       float a) {
+    return inst->scene->setParam(name, Color{r, g, b, a}) ? 1 : 0;
+}
+/// A `rect` param ([x, y, w, h] — frame / bounds), in logical units.
+EMSCRIPTEN_KEEPALIVE
+int fs_set_param_rect(FsInstance* inst, const char* name, float x, float y, float w,
+                      float h) {
+    return inst->scene->setParam(name, Rect{x, y, w, h}) ? 1 : 0;
+}
+
+/// Feeds a declared `text.utf8` input — every text layer bound to it
+/// (`content: { text: { source: $inputs.<name> } }`) shows the string.
+/// The input path: type-checked against the declaration, fallback cleared.
+EMSCRIPTEN_KEEPALIVE
+int fs_set_text(FsInstance* inst, const char* input, const char* utf8) {
+    if (inst == nullptr || input == nullptr) {
+        return 0;
+    }
+    return inst->scene->setText(input, utf8 != nullptr ? utf8 : "") ? 1 : 0;
+}
+
+/// Replaces the text of one text layer by id (a literal `text:` layer) —
+/// the layer-id path, like fs_layer_set_filter. Returns 0 when the id is
+/// unknown or the layer has no text content.
+EMSCRIPTEN_KEEPALIVE
+int fs_layer_set_text(FsInstance* inst, const char* layer_id, const char* utf8) {
+    Layer* target = inst->scene->stage().find(layer_id);
+    if (target == nullptr || !std::holds_alternative<TextContent>(target->content())) {
+        return 0;
+    }
+    target->setText(utf8 != nullptr ? utf8 : "");
+    return 1;
+}
+
+/// Grafts the layers of a Scene fragment (`layers:` plus optional
+/// `inputs:` / `params:` — see docs/design/runtime_layers.ja.md) under the
+/// declared layer `parent_id` ("" = the stage root), on top of its
+/// sublayers. `animated` != 0 enters them through the governing transition
+/// (transition.enter, default a fade). Returns 1, or 0 with fs_error()
+/// carrying the diagnostics — the scene is then exactly as before.
+EMSCRIPTEN_KEEPALIVE
+int fs_add_layers(FsInstance* inst, const char* parent_id, const char* yaml_utf8,
+                  int animated) {
+    g_error.clear();
+    if (inst == nullptr) {
+        return 0;
+    }
+    const fvs::EditResult r = inst->scene->addLayers(parent_id != nullptr ? parent_id : "",
+                                                     yaml_utf8 != nullptr ? yaml_utf8 : "",
+                                                     animated != 0);
+    if (!r.ok()) {
+        for (const auto& d : r.diagnostics.items()) {
+            if (d.span.begin_line > 0) {
+                g_error += "line " + std::to_string(d.span.begin_line) + ": ";
+            }
+            g_error += "[" + d.code + "] " + d.message + "\n";
+        }
+        return 0;
+    }
+    return 1;
+}
+
+/// Removes the declared layer `id` and its subtree. `animated` != 0 lets it
+/// animate to transition.exit (default a fade) before it detaches; its id
+/// is free at once either way. Returns 0 for an unknown id.
+EMSCRIPTEN_KEEPALIVE
+int fs_remove_layer(FsInstance* inst, const char* id, int animated) {
+    if (inst == nullptr || id == nullptr || !inst->scene->hasLayer(id)) {
+        return 0;
+    }
+    // A ripple on the doomed subtree restores its target's filters on
+    // destruction — retire it while the target is still alive.
+    if (inst->ripple) {
+        const Layer* doomed = inst->scene->stage().find(id);
+        for (const Layer* l = inst->ripple_target; l != nullptr; l = l->parent()) {
+            if (l == doomed) {
+                inst->ripple.reset();
+                inst->ripple_target = nullptr;
+                break;
+            }
+        }
+    }
+    return inst->scene->removeLayer(id, animated != 0) ? 1 : 0;
+}
+
+/// The declared layer ids in tree (compositing) order, one per line.
+/// Borrowed until the next call on this instance.
+EMSCRIPTEN_KEEPALIVE
+const char* fs_layer_ids(FsInstance* inst) {
+    inst->text_out.clear();
+    for (const std::string& id : inst->scene->layerIds()) {
+        inst->text_out += id + "\n";
+    }
+    return inst->text_out.c_str();
+}
+
+/// 1 when a declared layer has this id.
+EMSCRIPTEN_KEEPALIVE
+int fs_has_layer(FsInstance* inst, const char* id) {
+    return inst != nullptr && id != nullptr && inst->scene->hasLayer(id) ? 1 : 0;
+}
+
+/// Runtime diagnostics since the last call (why a setter returned 0: an
+/// undeclared input, a type mismatch, a clamp …), one per line, then
+/// clears. Borrowed until the next call on this instance.
+EMSCRIPTEN_KEEPALIVE
+const char* fs_diagnostics(FsInstance* inst) {
+    inst->text_out.clear();
+    for (const std::string& d : inst->scene->drainDiagnostics()) {
+        inst->text_out += d + "\n";
+    }
+    return inst->text_out.c_str();
 }
 
 /// Live filter tweaking by public name: updates the parameter slots of the

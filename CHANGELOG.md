@@ -32,6 +32,14 @@ fluent_scene ビュー) を書いて見つかった回避策を、ライブラ�
   は自分 → 最も近い祖先 → 0.3 s フェードの順。Stage に
   `Layer::removeWhenSettled()` (補間が終わった advance で切り離す。
   退場中は find / ヒットテスト対象外、id は即解放)
+- **wasm ABI**: `fs_add_layers(inst, parent_id, yaml, animated)` /
+  `fs_remove_layer(inst, id, animated)` / `fs_layer_ids(inst)` /
+  `fs_has_layer(inst, id)`、`fs_set_param_color(inst, name, r, g, b, a)` /
+  `fs_set_param_rect(inst, name, x, y, w, h)`、`fs_set_text(inst, input,
+  utf8)` (text.utf8 input) / `fs_layer_set_text(inst, layer_id, utf8)`、
+  `fs_diagnostics(inst)` (setter が 0 を返した理由)。ラベルを Canvas2D で
+  描いて画像として流し込む必要はもうない。headless 検証
+  `wasm/tests/stage_api.test.mjs` (CPU 画素まで確認)
 
 ## 0.16.1 — 2026-08-20 (Scene YAML にレイヤーマスク)
 

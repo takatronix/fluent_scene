@@ -20,6 +20,82 @@ python3 -m http.server -d wasm/dist 8792   # then open /index.html
 - Parity: a scene rendered in node matches the native CPU renderer to
   within 1 LSB (float rounding across ISAs).
 
+## Driving a scene from JS — params, text, layers
+
+Everything is a flat C call; wrap what you use with `cwrap`. Strings are
+UTF-8, returns are `1` (applied) or `0` (rejected — `fs_error()` for
+`fs_create` / `fs_add_layers`, `fs_diagnostics(inst)` for the setters).
+
+```js
+const cw = (n, r, a) => mod.cwrap(n, r, a);
+const fs = {
+  create:       cw('fs_create', 'number', ['string']),
+  error:        cw('fs_error', 'string', []),
+  diagnostics:  cw('fs_diagnostics', 'string', ['number']),
+  setF32:       cw('fs_set_param_f32', 'number', ['number', 'string', 'number']),
+  setVec2:      cw('fs_set_param_vec2', 'number', ['number', 'string', 'number', 'number']),
+  setColor:     cw('fs_set_param_color', 'number', ['number', 'string', 'number', 'number', 'number', 'number']),
+  setRect:      cw('fs_set_param_rect', 'number', ['number', 'string', 'number', 'number', 'number', 'number']),
+  setText:      cw('fs_set_text', 'number', ['number', 'string', 'string']),
+  layerSetText: cw('fs_layer_set_text', 'number', ['number', 'string', 'string']),
+  addLayers:    cw('fs_add_layers', 'number', ['number', 'string', 'string', 'number']),
+  removeLayer:  cw('fs_remove_layer', 'number', ['number', 'string', 'number']),
+  layerIds:     cw('fs_layer_ids', 'string', ['number']),
+  hasLayer:     cw('fs_has_layer', 'number', ['number', 'string']),
+};
+```
+
+| call | does |
+|---|---|
+| `fs_set_param_f32 / _vec2 / _bool (inst, name, …)` | write a declared param; bound attributes follow, through its `animate` or the layer's `transition` |
+| `fs_set_param_color(inst, name, r, g, b, a)` | a `color` param (0-1, straight α). Binds `background`, content `color`, `border.color`, … — colors interpolate |
+| `fs_set_param_rect(inst, name, x, y, w, h)` | a `rect` param, for `frame` / `bounds` |
+| `fs_set_text(inst, input, utf8)` | feed a `text.utf8` input (every text layer with `source: $inputs.<input>`) |
+| `fs_layer_set_text(inst, layer_id, utf8)` | replace the text of one literal text layer by id |
+| `fs_add_layers(inst, parent_id, yaml, animated)` | graft a Scene fragment (`layers:` + optional `inputs:` / `params:`) under a declared layer (`""` = root); `animated` enters through `transition.enter` (default a fade) |
+| `fs_remove_layer(inst, id, animated)` | remove a declared layer and its subtree; `animated` leaves through `transition.exit` first. The id is free at once |
+| `fs_layer_ids(inst)` / `fs_has_layer(inst, id)` | declared ids, one per line in tree order / one check |
+| `fs_diagnostics(inst)` | why the last setters returned 0, one per line (drains) |
+
+`scale` binds an `f32` param (uniform) or a `vec2` param, so layout moves
+are a param write, not a new document:
+
+```yaml
+params:
+  zoom:  { type: f32, default: 1 }
+  tint:  { type: color, default: [0.47, 0.59, 1, 1], animate: { duration: 0.5, ease: ease_in_out } }
+  place: { type: rect, default: [360, 40, 1520, 1000] }
+inputs:
+  state: { type: text.utf8, update: on_change, fallback: hide }
+layers:
+  - id: figure
+    position: [500, 500]
+    scale: $params.zoom
+    transition: { duration: 0.4, ease: ease_in_out }
+    border: { width: 2, color: $params.tint }
+  - id: media                                  # slot for content that comes and goes
+    frame: $params.place
+    transition: { duration: 0.35, ease: ease_out,
+                  enter: { opacity: 0, scale: 0.92 }, exit: { opacity: 0 } }
+  - content: { text: { source: $inputs.state, position: [24, 24], size: 28 } }
+```
+
+```js
+fs.setF32(inst, 'zoom', 0.3);                       // the figure shrinks (0.4 s)
+fs.setColor(inst, 'tint', 1, 0.7, 0.3, 1);          // …and turns amber (0.5 s)
+fs.setText(inst, 'state', '考え中…');
+fs.addLayers(inst, 'media', `
+inputs: { photo: { type: image.rgba8, update: on_change, fallback: hide } }
+layers:
+  - id: photo
+    content: { image: { source: $inputs.photo, fit: contain } }`, 1) || console.error(fs.error());
+// then fs_image_buffer / fs_commit_image(inst, 'photo', w, h) as usual
+fs.removeLayer(inst, 'photo', 1);                   // fades out, detaches when done
+```
+
+Design notes: [docs/design/runtime_layers.ja.md](../docs/design/runtime_layers.ja.md).
+Headless checks: `node wasm/tests/stage_api.test.mjs`, `node wasm/tests/boxes_abi.test.mjs`.
+
 ## Fonts
 
 The renderer shapes text with one face: the first file it finds in
