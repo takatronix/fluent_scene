@@ -130,7 +130,11 @@ golden テストが3バックエンドを同じ基準画像に対して検証し
   （`Transaction t(0.3f, Ease::InOut)`）。時間は `render(stage, dt)` の dt
   でしか進まないため、**t=0.15s の画面をバイト単位で再現**できる
 - **保持型** — 毎フレームは変更データの差し替えだけ
-  （`setImage / setText / setBoxes / opacity()`）
+  （`setImage / setText / setBoxes / opacity()`）。コンパイル済み Scene も
+  生きたまま: `$params` で配置と色（`scale` / `frame` / `color` / `border` …、
+  補間つき）を動かし、`addLayers` / `removeLayer` で検証済みの Scene 断片を
+  接ぎ木・撤去できる。出入りはレイヤーの `transition` で演出 — 再コンパイル
+  なし、他は何もリセットされない
 - **UI コントロール** — `ui::Button` / `ui::Switch` / `ui::Slider` /
   `ui::Segmented` / `ui::Gauge` / `ui::Dropdown`。入力は
   `stage.pointerDown/Move/Up` への注入だけ — Web のクリックもタッチも

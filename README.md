@@ -136,7 +136,11 @@ three backends to the same reference images.
   (`Transaction t(0.3f, Ease::InOut)`). Time only advances through
   `render(stage, dt)`, so **the screen at t = 0.15 s is byte-reproducible**
 - **Retained mode** — per frame you only swap changed data
-  (`setImage / setText / setBoxes / opacity()`)
+  (`setImage / setText / setBoxes / opacity()`). A compiled Scene stays
+  live too: `$params` drive geometry and colors (`scale`, `frame`,
+  `color`, `border` … — interpolated), and `addLayers` / `removeLayer`
+  graft or take away validated Scene fragments, entering and leaving
+  through the layer's `transition` — no recompile, nothing else resets
 - **UI controls** — `ui::Button` / `ui::Switch` / `ui::Slider` /
   `ui::Segmented` / `ui::Gauge` / `ui::Dropdown`. Input is three calls —
   `stage.pointerDown/Move/Up` — and web clicks, touches, and VR rays all
