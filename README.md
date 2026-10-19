@@ -28,6 +28,7 @@ server-side processing; video never leaves your tab.
 | [filter studio](https://takatronix.github.io/fluent_scene/edit.html) | Node-graph compositor — stack multiple inputs with rotation/blend, split person from background (MediaPipe → layer mask) to style each side separately, tune all 47 filters; ask the AI for "old camcorder footage" or "ink-wash the background only" and watch it wire itself (built-in offline composer, or your own Claude / OpenAI-compatible key — stored in localStorage only). Share links & Scene YAML export |
 | [filter lab](https://takatronix.github.io/fluent_scene/filters.html) | All 47 filters on the live webcam, one chip each — the single-source GLSL∩C++ catalog, live |
 | [Playground](https://takatronix.github.io/fluent_scene/) | The whole library running locally in a tab (CPU wasm, portrait effects) |
+| [liquid](https://takatronix.github.io/fluent_scene/liquid.html) | A living liquid — Kepler's Liquid figure as ONE filter: raymarched metaball in iridescent metal, inner currents, vapour. Idle / listening / thinking / speaking, pointer, tap splash and 🎤 all drive Scene $params (time runs by itself on dt) |
 | [beauty](https://takatronix.github.io/fluent_scene/beauty.html) | Beauty filter — variance-gated skin smoothing, skin-scoped whitening, 3D LUT; webcam wipe comparison |
 | [lsd](https://takatronix.github.io/fluent_scene/lsd.html) | The LSD filter — time-driven psychedelia, closed-eye visuals via webcam ([how it works](https://takatronix.github.io/fluent_scene/lsd_report.html)) |
 | [gaze](https://takatronix.github.io/fluent_scene/gaze.html) | Gaze focus — a MediaPipe landmarker driving Scene parameters |
@@ -112,11 +113,12 @@ three backends to the same reference images.
 - **CALayer-style attributes** — frame / position / anchor / rotation /
   scale / opacity / shadow / border / background / cornerRadius /
   masksToBounds / blend. One coordinate system: top-left origin, +y down
-- **54 filters** — blur / bilateral / color_transform / toon / halftone /
+- **55 filters** — blur / bilateral / color_transform / toon / halftone /
   ripple / beauty (smoothing + whitening + NR) / lut (3D LUT) / lsd /
   bokeh (polygonal iris) / oilpaint (Kuwahara) / ntsc + crt (real composite
   modulation → tube, after MAME ntsc.fx BSD-3, Lottes PD, Cathode-Retro MIT)
-  / fractal (endless KIFS flight) /
+  / fractal (endless KIFS flight) / liquid (a living liquid figure — Kepler's
+  Liquid, [design](docs/design/liquid.ja.md)) /
   notebook (pencil sketch, after [flockaroo's XtVGD1](https://www.shadertoy.com/view/XtVGD1),
   CC BY-NC-SA — that one filter is **non-commercial**; everything else stays
   MIT) / the art-style family: anime (cel shading + XDoG ink lines) /

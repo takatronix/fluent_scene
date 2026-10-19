@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.18.0 — 2026-10-19 (liquid: Kepler の Liquid を filter に / filter の 12 スロット・Clock・$params 束縛)
+
+Kepler の顔 "Liquid" を fluent_scene を通して描けるようにした
+(設計: docs/design/liquid.ja.md、デモ: wasm/liquid.html)。
+
+- **`liquid` filter (FS_LIQUID = 55)**: raymarch のメタボールの液体。
+  虹彩のある濡れた金属 (スタジオ環境の反射 + 薄膜の色ずれ + 2つの
+  ハイライト)、屈折して見える内側の光の流れ (gyroid シート)、縁の SSS、
+  蒸気 (2位相の flow map)、bloom の解析的な代用。気分は listen / think /
+  speak の重みで、残りが idle。level で膨らんで脈打ち、話すと飛沫を
+  飛ばす。ポインタに寄って触手を伸ばし、splash (タップからの経過秒) で
+  衝撃波・5粒の飛沫・蒸気リングが出る。hue / size / quality も持つ。
+  生成系なので出力 α は液体のもので、背景は透明。時間の純関数で、
+  静と動の固定時計2本の「結果」を混ぜる (位相を積分しないので、
+  何時間経っても状態変化で位相が跳ばない)
+- **filter スロット 5 → 12** (`kFilterSlots`): GPU は push block の
+  pa / pb / px2、本体の入口は `fs_apply(mode, uv, pa, pb, pc)`。既存
+  filter の本体と golden は不変
+- **`FilterUnit::Clock`**: `Layer::step` が dt を足す自走スロット。値を
+  設定するとそこから数え直す (`time` にホストのループが要らない、
+  `splash = 0` がタップ)。describe / fs_filters_json は unit `"clock"`
+- **filter パラメータの `$params` 束縛**: `filters: [ { liquid: { level:
+  $params.level } } ]`。param の `animate` で補間する
+  (`Layer::setFilterParam(index, slot, v)` は Transaction の中なら補間)。
+  fmt は literal と参照を表順に並べて往復する
+- **wasm**: `fs_layer_set_filter_param(inst, layer, filter, param, value,
+  duration)` (任意のスロットを名前で指定。duration > 0 で補間)。
+  `fs_layer_set_filter` で filter を新しく追加するとき、スロット 5 以降は
+  表の既定値になる
+- **CPU**: liquid の quality < 0.75 は粗い格子 (stride 2–4) + 双線形補間
+- tests: golden `liquid` (6 タイル。Vulkan は通常の GPU 許容で通過)、
+  stage_tests (Clock / 補間 / 粗い経路)、scene_tests (filter パラメータの
+  束縛・fmt 往復・拒否)、`wasm/tests/liquid_abi.test.mjs`
+
 ## 0.17.0 — 2026-10-19 (Kepler stage 向け: 配置の param 化・実行時のレイヤー追加/削除)
 
 Kepler の stage (音声アシスタント UI の中央をまるごと占める1枚の

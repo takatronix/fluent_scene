@@ -102,6 +102,39 @@ stage.image(cam).filter(Pixelart().colors(4));               // ドット絵
 パラメータ設計（何を 5 slot に残したか）は
 [docs/design/art_filters.ja.md](design/art_filters.ja.md)。
 
+## 生きている液体（liquid — 音声アシスタントの顔）
+
+Kepler の "Liquid" を filter 1枚で描けます。不透明な `background` を
+持つレイヤーに掛けると、その矩形の中で液体が下の絵の上に浮きます
+(背景は透明)。`time` と `splash` は dt で自走するので、ホスト側の
+ループは要りません。
+
+```yaml
+params:
+  listen: { type: f32, default: 0, animate: { duration: 1.2, ease: ease_in_out } }
+  think:  { type: f32, default: 0, animate: { duration: 1.2, ease: ease_in_out } }
+  speak:  { type: f32, default: 0, animate: { duration: 1.2, ease: ease_in_out } }
+  level:  { type: f32, default: 0 }
+  splash: { type: f32, default: 9 }
+layers:
+  - frame: [0, 0, 1280, 720]
+    background: [0, 0, 0, 1]
+    filters:
+      - liquid: { listen: $params.listen, think: $params.think,
+                  speak: $params.speak, level: $params.level, splash: $params.splash }
+```
+
+```cpp
+scene.setParam("speak", 1.0f);   // 気分は重み (残りが idle)。animate で混ざる
+scene.setParam("level", mic);    // 声の大きさ 0–1
+scene.setParam("splash", 0.0f);  // タップ: 経過秒を 0 から数え直す
+```
+
+ポインタは `pointer_x` / `pointer_y` (レイヤー座標) と `pointer` (存在
+0–1)、色は `hue`、大きさは `size`、重さは `quality` で調整します。CPU は
+quality < 0.75 のとき粗い格子で描きます。設計は
+[design/liquid.ja.md](design/liquid.ja.md)、デモは `wasm/liquid.html`。
+
 ## メーター / ゲージ
 
 ```cpp

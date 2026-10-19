@@ -27,6 +27,7 @@ wasm ビルドです。サーバー処理はなく、映像はタブの外に出
 | [filter studio](https://takatronix.github.io/fluent_scene/edit.html) | ノードグラフの映像合成エディタ — 複数入力を回転・ブレンドで重ね、人物抽出(MediaPipe→レイヤーマスク)で背景だけ別フィルタ、47フィルタを自由に配線。「昔のカメラみたいに」「背景だけ水墨画に」とAIに頼むと自動で配線される（内蔵オフラインAI、または自分のClaude / OpenAI互換キー。キーはlocalStorageのみ）。共有リンク・Scene YAML書き出し付き |
 | [filter lab](https://takatronix.github.io/fluent_scene/filters.html) | 全47フィルタをWebカメラでワンタップ切替 — 単一ソースGLSL∩C++のカタログ実演 |
 | [プレイグラウンド](https://takatronix.github.io/fluent_scene/) | ライブラリ一式が手元のタブで動く（CPU wasm・ポートレート演出付き） |
+| [liquid](https://takatronix.github.io/fluent_scene/liquid.html) | 生きている液体 — Kepler の Liquid を filter 1枚で。raymarch メタボールの虹彩メタル + 内側の光 + 蒸気。待機/聞く/考える/話す・ポインタ・タップ・🎤 を全部 Scene の $params で駆動 (時間は dt で自走) |
 | [beauty](https://takatronix.github.io/fluent_scene/beauty.html) | 美顔フィルタ — 磨皮(分散ゲートWiener)+肌限定美白+3D LUT、Webカメラでワイプ比較 |
 | [lsd](https://takatronix.github.io/fluent_scene/lsd.html) | LSD フィルタ — 時間駆動のサイケデリア、閉眼幻視対応（[解説レポート](https://takatronix.github.io/fluent_scene/lsd_report.html)） |
 | [gaze](https://takatronix.github.io/fluent_scene/gaze.html) | 視線フォーカス — MediaPipe landmarker が Scene パラメータを駆動 |
@@ -108,11 +109,12 @@ golden テストが3バックエンドを同じ基準画像に対して検証し
 - **CALayer 準拠の属性** — frame / position / anchor / rotation / scale /
   opacity / shadow / border / background / cornerRadius / masksToBounds /
   blend。左上原点・+y 下の**1座標系のみ**（反転スイッチは存在しない）
-- **フィルタ 54種** — blur / bilateral / color_transform / toon / halftone /
+- **フィルタ 55種** — blur / bilateral / color_transform / toon / halftone /
   ripple / beauty（磨皮+美白+NR） / lut（3D LUT） / lsd /
   bokeh（多角形絞り） / oilpaint（Kuwahara油絵） / ntsc + crt（コンポジット
   信号の実変調→ブラウン管。MAME ntsc.fx BSD-3 / Lottes PD / Cathode-Retro
-  MIT 系譜） / fractal（無限KIFS飛行） /
+  MIT 系譜） / fractal（無限KIFS飛行） / liquid（生きている液体 —
+  Kepler の Liquid、[docs/design/liquid.ja.md](docs/design/liquid.ja.md)） /
   notebook（鉛筆スケッチ、[flockaroo XtVGD1](https://www.shadertoy.com/view/XtVGD1)
   移植・CC BY-NC-SA につき**この1本のみ非商用限定**、他は MIT のまま）/
   アート様式ファミリー: anime（セル影+XDoG線画）/ watercolor（Bousseau
