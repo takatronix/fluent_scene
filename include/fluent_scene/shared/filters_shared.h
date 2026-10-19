@@ -2725,7 +2725,12 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc, vec4 pd) {
                          (pow(max(dot(rf, vec3(0.6097, 0.3049, -0.7622)), 0.0), 30.0) * 0.3);
                 glass += vec3(1.0, 0.96, 0.92) * (fl * fl * 0.9 * ndv);
                 lcol = mix(lcol, glass, pearl);
-                lalpha = mix(lalpha, 0.8 + 0.2 * thin, pearl);
+                // the glass's edge fades over a few pixels (more at low quality:
+                // the CPU's coarse grid, upscaled) into the miss rim's 0.3, so
+                // a low-resolution silhouette doesn't stair
+                float pxu = 2.0 * max(FS_TEXEL.x, FS_TEXEL.y) / (size * quality);
+                float edge_w = clamp(sqrt(3.0 * pxu / max(q.r0, 0.1)), 0.06, 0.7);
+                lalpha = mix(lalpha, mix(0.3, 0.8 + 0.2 * thin, smoothstep(0.0, edge_w, ndv)), pearl);
             }
         } else {
             // a glow that hugs the real (moving) silhouette
@@ -2789,6 +2794,10 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc, vec4 pd) {
     }
     float reach_v = 1.0 / (1.0 + v_out * 2.0);
     float band = exp(-e * 5.0 * reach_v) * smoothstep(0.0, 0.05, e);
+    if (pearl > 0.0) {
+        // the haze runs up to the glass (no dark seam round the silhouette)
+        band = mix(band, exp(-e * 5.0 * reach_v), pearl);
+    }
     float ang = atan(fp.y, fp.x) + t * 0.15;
     vec3 vcol = c0 * (0.5 + 0.5 * cos(ang)) + c1 * (0.5 + 0.5 * cos(ang - 2.094)) +
                 c2 * (0.5 + 0.5 * cos(ang + 2.094));

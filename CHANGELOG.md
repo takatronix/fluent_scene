@@ -14,7 +14,9 @@
 - **filter スロット 12 → 16** (`kFilterSlots`): filter パスでは push block の
   `color` (filter では未使用だった) がスロット 12–15 を運ぶ。本体の入口は
   `fs_apply(mode, uv, pa, pb, pc, pd)`。既存 filter と golden は不変
-- tests: golden `liquid_pearl` (4 タイル、liquid と同じ許容。Vulkan max_diff 57)
+- 縁: 体の α は最後の数画素 (低い quality ほど広く) で 0.3 へ下がり、霞は
+  シルエットまで届く — CPU の粗い格子を拡大しても縁が階段にならない
+- tests: golden `liquid_pearl` (4 タイル、liquid と同じ許容。Vulkan max_diff 21)
 - demo: `wasm/liquid.html` の ⚙ に「真珠」スライダ、`?pearl=1`
 
 ## 0.18.0 — 2026-10-19 (liquid: Kepler の Liquid を filter に / filter の 12 スロット・Clock・$params 束縛)
