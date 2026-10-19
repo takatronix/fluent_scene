@@ -2329,6 +2329,7 @@ struct FsLiquid {
     vec4 lobe[4];
     vec4 drop[8];
     vec4 reach;
+    vec4 neck;
     vec4 ptr;
     vec3 shift;
     float r0;
@@ -2373,9 +2374,10 @@ float fs_lq_map(vec3 pw, FS_LQ_IN q) {
             d = fs_lq_smin(d, length(p - fs_lq_xyz(q.drop[i])) - q.drop[i].w, 0.15);
         }
     }
-    // the strand that reaches after the pointer, joined by a wide neck
+    // the strand that reaches after the pointer: a neck and a tip
     if (q.reach.w > 0.001) {
-        d = fs_lq_smin(d, length(p - fs_lq_xyz(q.reach)) - q.reach.w, 0.26);
+        d = fs_lq_smin(d, length(p - fs_lq_xyz(q.neck)) - q.neck.w, 0.2);
+        d = fs_lq_smin(d, length(p - fs_lq_xyz(q.reach)) - q.reach.w, 0.2);
     }
     // big slow folds that keep changing the silhouette (calm clock only)
     float wf = q.time * 1.0;
@@ -2605,6 +2607,8 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc) {
     q.reach = vec4(pu.x * reach_d - sh.x, pu.y * reach_d - sh.y, -0.18,
                    (0.085 + 0.03 * sin(t * 2.3)) * presence *
                        smoothstep(0.0, 1.0, (pr - q.r0 * 0.6) * 3.0));
+    // a neck halfway out turns the reaching blob into a strand
+    q.neck = vec4(q.reach.x * 0.62, q.reach.y * 0.62, -0.12, q.reach.w * 0.8);
     q.ptr = vec4(pp.x - sh.x, pp.y - sh.y, 0.0,
                  presence * (1.0 - smoothstep(0.0, 1.0, (pr - 0.9) * 2.0)));
 
