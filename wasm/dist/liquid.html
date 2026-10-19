@@ -108,8 +108,8 @@ const vw = Math.max(320, innerWidth), vh = Math.max(320, innerHeight);
 // the stage takes the screen's aspect; long side 1280
 const STAGE_W = portrait ? Math.round(1280 * vw / vh / 4) * 4 : 1280;
 const STAGE_H = portrait ? 1280 : Math.round(1280 * vh / vw / 4) * 4;
-// the figure: about 40% of the short side across (more on phones)
-const SIZE0 = portrait ? 1.25 : 1.1;
+// the figure: about a third of the short side across (more on phones)
+const SIZE0 = portrait ? 1.15 : 0.95;
 const SCENE = `
 schema: fluent.scene/v1alpha2
 stage: { size: [${STAGE_W}, ${STAGE_H}] }

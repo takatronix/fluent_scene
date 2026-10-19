@@ -2354,26 +2354,6 @@ float fs_lq_smin(float a, float b, float k) {
     return mix(b, a, h) - k * h * (1.0 - h);
 }
 
-// 3D value noise over the lsd hash (lattice z folded into the 2D hash).
-float fs_lq_hash3(vec3 p) { return fs_lsd_hash(vec2(p.x + p.z * 57.0, p.y - p.z * 113.0)); }
-
-float fs_lq_vnoise3(vec3 p) {
-    vec3 ip = floor(p);
-    vec3 f = p - ip;
-    vec3 s = f * f * (vec3(3.0) - f * 2.0);
-    float a = fs_lq_hash3(ip);
-    float b = fs_lq_hash3(ip + vec3(1.0, 0.0, 0.0));
-    float c = fs_lq_hash3(ip + vec3(0.0, 1.0, 0.0));
-    float d = fs_lq_hash3(ip + vec3(1.0, 1.0, 0.0));
-    float e = fs_lq_hash3(ip + vec3(0.0, 0.0, 1.0));
-    float g = fs_lq_hash3(ip + vec3(1.0, 0.0, 1.0));
-    float h = fs_lq_hash3(ip + vec3(0.0, 1.0, 1.0));
-    float k = fs_lq_hash3(ip + vec3(1.0, 1.0, 1.0));
-    float lo = mix(mix(a, b, s.x), mix(c, d, s.x), s.y);
-    float hi = mix(mix(e, g, s.x), mix(h, k, s.x), s.y);
-    return mix(lo, hi, s.z);
-}
-
 // Travelling skin waves at phase w (two scales).
 float fs_lq_waves(vec3 p, float w) {
     float v = sin(p.x * 4.7 + w) * sin(p.y * 4.1 - w * 0.8) * sin(p.z * 4.4 + w * 1.2);
@@ -2717,36 +2697,49 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc) {
     if (lalpha > 0.0) {
         e = 0.0;
     }
+    // Wisps: curled smoke advected out of the silhouette by a flow field
+    // (outward drift + vortex), two phases of a looping flow map so it
+    // streams forever without a phase drift — speed changes just stretch
+    // the loop, never jump. Each phase reseeds while its weight is zero.
     vec2 dir2 = fp / r;
-    float tw = v_swirl * 2.5 * e + t * 0.12;
-    float cs = cos(tw);
-    float ss = sin(tw);
-    vec2 dv = vec2(cs * dir2.x - ss * dir2.y, ss * dir2.x + cs * dir2.y);
-    // wisps peel off the silhouette and drift out: noise in (direction,
-    // distance − drift), curl-like domain warp, ridged into filaments
-    float reach_v = 1.0 / (1.0 + v_out * 2.5);
-    vec3 nq = vec3(dv.x * 2.2, dv.y * 2.2, e * 4.0 * reach_v - t * 0.45);
-    vec3 warp = vec3(fs_lq_vnoise3(nq * 0.7 + vec3(0.0, t * 0.09, 3.0)),
-                     fs_lq_vnoise3(nq * 0.7 + vec3(5.2, 1.3, t * 0.13)), 0.0) - vec3(0.5, 0.5, 0.0);
-    vec3 wq = nq + warp * (1.6 + 1.2 * v_swirl);
-    float n1 = fs_lq_vnoise3(wq);
-    float n2 = fs_lq_vnoise3(wq * 2.1 + vec3(1.7, 9.2, 4.4));
-    float ridge = 1.0 - abs(n1 * 2.0 - 1.0);
-    float fil = ridge * ridge * ridge * (0.55 + 0.45 * n2);
-    float patchy = smoothstep(0.3, 0.75, n1 * 0.6 + n2 * 0.4);
-    float band = exp(-e * 7.0 * reach_v) * smoothstep(0.0, 0.05, e);
+    vec2 vel = dir2 * (0.10 + v_out * 0.55) + vec2(-dir2.y, dir2.x) * (v_swirl * 0.55 + 0.04);
+    float fp0 = t / 2.0 - floor(t / 2.0);
+    float fp1 = fp0 + 0.5 - floor(fp0 + 0.5);
+    float wa = 1.0 - abs(1.0 - 2.0 * fp0);
+    float sa0 = floor(t / 2.0);
+    float sa1 = floor(t / 2.0 + 0.5) + 37.0;
+    float dens = 0.0;
+    float fil = 0.0;
+    for (int k = 0; k < 2; ++k) {
+        float ph = k == 0 ? fp0 : fp1;
+        float sd = k == 0 ? sa0 : sa1;
+        float wk = k == 0 ? wa : 1.0 - wa;
+        vec2 qv = (fp - vel * (ph * 1.2)) * 1.9 + vec2(sd * 7.31, sd * 3.17);
+        vec2 wv = vec2(fs_lsd_vnoise(qv * 0.55 + vec2(1.7, 4.2 + t * 0.05)),
+                       fs_lsd_vnoise(qv * 0.55 + vec2(8.3 - t * 0.04, 2.8))) - vec2(0.5);
+        vec2 q3 = qv + wv * (2.8 + 1.5 * v_swirl);
+        vec2 wv2 = vec2(fs_lsd_vnoise(q3 * 1.3 + vec2(3.3, 0.7)),
+                        fs_lsd_vnoise(q3 * 1.3 + vec2(6.1, 9.4))) - vec2(0.5);
+        q3 = q3 + wv2 * 0.9;
+        float n = fs_lsd_vnoise(q3) * 0.65 + fs_lsd_vnoise(q3 * 2.03 + vec2(5.1)) * 0.35;
+        float ridge = 1.0 - abs(n * 2.0 - 1.0);
+        dens += smoothstep(0.5, 0.9, n) * wk;
+        fil += ridge * ridge * ridge * ridge * wk;
+    }
+    float reach_v = 1.0 / (1.0 + v_out * 2.0);
+    float band = exp(-e * 5.0 * reach_v) * smoothstep(0.0, 0.05, e);
     float ang = atan(fp.y, fp.x) + t * 0.15;
     vec3 vcol = c0 * (0.5 + 0.5 * cos(ang)) + c1 * (0.5 + 0.5 * cos(ang - 2.094)) +
                 c2 * (0.5 + 0.5 * cos(ang + 2.094));
-    vec3 vap_raw = vcol * (band * (fil * 1.1 + patchy * 0.18) * v_inj);
+    vec3 vap_raw = vcol * (band * (fil * 1.25 + dens * 0.3) * v_inj);
     float fr_r = 0.4 + (1.0 - fl) * 0.45;
     float ring = (r - fr_r) * 9.0;
-    vap_raw += mix(c1, vec3(1.0), 0.4) * (exp(-ring * ring) * fl * 1.6 * (0.4 + 0.6 * fil));
+    vap_raw += mix(c1, vec3(1.0), 0.4) * (exp(-ring * ring) * fl * 1.6 * (0.4 + 0.6 * dens));
 
     // ---- 3. bloom (an analytic stand-in for the blurred mips) ------------
     // outside: a halo that hugs the silhouette; inside: the bright parts
     float lmax = max(lcol.x, max(lcol.y, lcol.z));
-    vec3 halo = mix(c1, c2, 0.35) * (exp(-e * 9.0) * 0.16 + exp(-e * 3.5) * 0.05) *
+    vec3 halo = mix(c1, c2, 0.35) * (exp(-e * 10.0) * 0.13 + exp(-e * 3.5) * 0.03) *
                 (1.0 - lalpha);
     vec3 bl = halo + lcol * (0.25 * smoothstep(0.3, 0.9, lmax));
     float lit = 0.35 + 1.8 * (exp(-e * 4.0) * 0.4);
@@ -2760,7 +2753,7 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc) {
     col = vec3(1.0) - exp(col * -1.15);
     // fade out well before the layer's edge (no square cut)
     vec2 eu = abs(uv - vec2(0.5)) * 2.0;
-    float edge = (1.0 - smoothstep(0.86, 1.0, max(eu.x, eu.y))) * (1.0 - smoothstep(0.85, 1.45, r));
+    float edge = (1.0 - smoothstep(0.72, 1.0, max(eu.x, eu.y))) * (1.0 - smoothstep(0.8, 1.4, r));
     col = col * edge;
     alpha *= edge;
     // grain + dither, kept inside alpha
