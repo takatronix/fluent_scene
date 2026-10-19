@@ -136,11 +136,15 @@ struct WebGPURenderer::Impl {
         WGPUTextureFormat format = WGPUTextureFormat_Undefined;
         bool in_use = false;      // transient-pool bookkeeping
         bool needs_clear = true;  // first ensureTarget clears
+        uint64_t frame_used = 0;  // transient pool: last frame that acquired it
     };
 
     // unique_ptr: acquireTransient hands out raw pointers that must stay
     // stable while the pool grows.
     std::vector<std::unique_ptr<Tex>> transient_pool;
+    // A size steady layers reacquire every frame survives; an animation's
+    // in-between sizes go a few frames later instead of piling up.
+    static constexpr uint64_t kTransientGraceFrames = 4;
     Tex canvas;    // premultiplied rgba16float working target
     Tex out_rgba;  // rgba8 conversion target (readback path)
 
@@ -829,6 +833,7 @@ struct WebGPURenderer::Impl {
             if (!t->in_use && t->w == w && t->h == h && t->format == format) {
                 t->in_use = true;
                 t->needs_clear = true;
+                t->frame_used = frame_counter;
                 return t.get();
             }
         }
@@ -836,6 +841,7 @@ struct WebGPURenderer::Impl {
             w, h, format, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding)));
         transient_pool.back()->in_use = true;
         transient_pool.back()->needs_clear = true;
+        transient_pool.back()->frame_used = frame_counter;
         return transient_pool.back().get();
     }
 
@@ -1692,6 +1698,7 @@ struct WebGPURenderer::Impl {
             } else {
                 ++it;
             }
+        }
         for (auto it = state_cache.begin(); it != state_cache.end();) {
             if (it->second.frame_used + 1 < frame_counter) {
                 destroyTex(it->second.ping);
@@ -1701,7 +1708,17 @@ struct WebGPURenderer::Impl {
                 ++it;
             }
         }
-        }
+        // Transient pool: drop offscreen extents no layer asked for in a while
+        // (an animated scale asks for a new size every frame — see the Vulkan
+        // renderer). All transients were released after the previous submit.
+        transient_pool.erase(
+            std::remove_if(transient_pool.begin(), transient_pool.end(),
+                           [&](std::unique_ptr<Tex>& t) {
+                               if (t->in_use || t->frame_used + kTransientGraceFrames >= frame_counter) return false;
+                               destroyTex(*t);
+                               return true;
+                           }),
+            transient_pool.end());
 
         // Logical canvas → output mapping (identical to the CPU reference).
         const float W = stage.width();

@@ -172,11 +172,15 @@ struct VulkanRenderer::Impl {
         VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
         bool in_use = false;      // transient-pool bookkeeping
         bool needs_clear = true;  // first beginTarget clears
+        uint64_t frame_used = 0;  // transient pool: last frame that acquired it
     };
 
     // unique_ptr: acquireTransient hands out raw pointers that must stay
     // stable while the pool grows.
     std::vector<std::unique_ptr<Image>> transient_pool;
+    // A size steady layers reacquire every frame survives; an animation's
+    // in-between sizes go a few frames later instead of piling up.
+    static constexpr uint64_t kTransientGraceFrames = 4;
     Image canvas;    // premultiplied RGBA16F working target
     Image out_rgba;  // RGBA8 conversion target
     Buffer readback;
@@ -892,6 +896,7 @@ struct VulkanRenderer::Impl {
             if (!t->in_use && t->w == w && t->h == h && t->format == format) {
                 t->in_use = true;
                 t->needs_clear = true;
+                t->frame_used = frame_counter;
                 return t.get();
             }
         }
@@ -900,6 +905,7 @@ struct VulkanRenderer::Impl {
                         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)));
         transient_pool.back()->in_use = true;
         transient_pool.back()->needs_clear = true;
+        transient_pool.back()->frame_used = frame_counter;
         return transient_pool.back().get();
     }
 
@@ -1832,6 +1838,19 @@ struct VulkanRenderer::Impl {
                 ++it;
             }
         }
+        // Same sweep for the transient pool. Offscreen extents follow the
+        // layers' on-screen size, so an animated scale asks for a new size
+        // every frame; without this the pool kept every one of them forever
+        // (aspa_ui camera_compositor: 29 GB after 3 days of PiP swaps).
+        // All transients were released after the previous frame's fence.
+        transient_pool.erase(
+            std::remove_if(transient_pool.begin(), transient_pool.end(),
+                           [&](std::unique_ptr<Image>& t) {
+                               if (t->in_use || t->frame_used + kTransientGraceFrames >= frame_counter) return false;
+                               destroyImage(*t);
+                               return true;
+                           }),
+            transient_pool.end());
 
         // Logical canvas → output mapping (identical to the CPU reference).
         const float W = stage.width();
