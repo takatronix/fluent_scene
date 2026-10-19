@@ -30,7 +30,9 @@ Kepler の顔 "Liquid" を fluent_scene を通して描けるようにした
   `fs_layer_set_filter` で filter を新しく追加するとき、スロット 5 以降は
   表の既定値になる
 - **CPU**: liquid の quality < 0.75 は粗い格子 (stride 2–4) + 双線形補間
-- tests: golden `liquid` (6 タイル。Vulkan は通常の GPU 許容で通過)、
+- tests: golden `liquid` (6 タイル。CPU はビット一致。Vulkan は max_diff 48 で、
+  シルエット1画素の当たり/外れの入れ替わり分として max_diff だけ 96 に緩め、
+  over_ratio は通常のガード)、
   stage_tests (Clock / 補間 / 粗い経路)、scene_tests (filter パラメータの
   束縛・fmt 往復・拒否)、`wasm/tests/liquid_abi.test.mjs`
 

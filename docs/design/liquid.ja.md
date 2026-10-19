@@ -91,7 +91,7 @@ Kepler は状態ごとに位相の速度が違い (例: 葉の移動 idle 0.22 /
 
 | Kepler | liquid (1パス) |
 |---|---|
-| 1. raymarch の液体 (環境反射・薄膜・2つのハイライト・屈折した内側の光・縁の SSS) | 同じ式のまま。SDF に「首 + 先端」の触手 (ポインタへ伸びる) と飛沫を足した |
+| 1. raymarch の液体 (環境反射・薄膜・2つのハイライト・屈折した内側の光・縁の SSS) | 同じ式のまま。SDF に「首 + 先端」の触手 (ポインタへ伸びる) と飛沫を足した。外れたレイでも最接近距離が1–2画素以内なら縁の色を少し載せる (AA。quality が低いほど幅を広げるので、CPU の粗い格子でも縁が階段にならない) |
 | 2. 蒸気: フィードバックテクスチャで curl-noise 移流 | §4 の flow map (2D value noise の二重 domain warp + ridge の筋)。シルエットまでの距離は march の最接近距離を使い、外側の球の推定へ滑らかに渡す |
 | 3. bloom (1/2・1/4 解像度のガウス) | 解析的な代用: シルエットに沿う halo + 液体の明部の自己発光 |
 | 4. 合成・トーンマップ・grain | 同じ。grain とジッターのハッシュには**整数ピクセル座標**を使う (補間 uv を入れると入力の誤差が 10³ 倍に増幅され、CPU/GPU が合わない) |
@@ -110,8 +110,12 @@ golden は t の任意の時刻を直接描けます。
   通らず、quality を step 数に使います
 - golden `liquid` は 6 タイルです (t=0 の idle、各気分 + level、ポインタの
   触手、splash 0.35 s + hue、quality 0.76 + size 0.8)。**CPU は golden と
-  ビット一致し、Vulkan (RTX 5090) は通常の GPU 許容 (max_diff 48 / 1%) で
-  max_diff 38 で通ります**。lsd/fractal のような waiver は要りませんでした
+  ビット一致し、Vulkan (RTX 5090) は max_diff 48 / over_ratio 0.75% です**。
+  ずれるのはシルエット上の1画素だけで、「かすめて当たった (α 0.3)」と
+  「AA の縁で外れた」が丸め誤差で入れ替わります。そのため liquid だけ
+  max_diff を 96 に緩め、over_ratio (±2 を超える画素の割合) は通常の
+  ガード (CPU 0.2% / GPU 1%) のまま残します。lsd/fractal のように
+  max_diff 255 の全面 waiver にはしていません
 - WebGPU は headless Chromium (SwiftShader) で `?snap=1` の読み戻しを使い、
   CPU と並べて目視で確認しました (`webgpu.html` の自己検証も PASS)
 

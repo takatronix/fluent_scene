@@ -345,10 +345,12 @@ void sceneFractal(Renderer& r) {
     g_over_ratio_limit = saved_ratio;
 }
 
-// Liquid raymarches a smooth metaball (no chaos), but it is generative and
-// its surface hit is a threshold: rounding drift moves a silhouette pixel
-// or a march's stopping step — the standard GPU tolerance holds. Tiles: the
-// static idle frame (t=0), each mood with level, the pointer strand, a
+// Liquid raymarches a smooth metaball (no chaos), but its surface hit is a
+// threshold: rounding drift flips a lone silhouette pixel between "grazing
+// hit" and "antialiased miss" (or moves a droplet's edge by one), so it
+// takes a per-feature max_diff (96) while over_ratio — the share of pixels
+// off by > 2 — keeps the backend's normal guard (CPU 0.2%, GPU 1%). Tiles:
+// the static idle frame (t=0), each mood with level, the pointer strand, a
 // splash in flight (shockwave, droplets, vapour ring) with a hue turn, and a
 // smaller step budget at a smaller size (quality 0.76 keeps the CPU at full
 // resolution; its coarse path is CPU-only and covered by stage_tests). Each
@@ -367,7 +369,10 @@ void sceneLiquid(Renderer& r) {
         Liquid().time(3.0f).splash(0.35f).hue(40.0f).think(0.5f).speak(0.5f));
     stage.image(view).frame({330, 160, 140, 130}).filter(
         Liquid().time(9.7f).listen(0.3f).quality(0.76f).size(0.8f));
+    const int saved_limit = g_max_diff_limit;
+    g_max_diff_limit = 96;
     checkScene("liquid", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
 }
 
 // Oilpaint picks the least-variant of four quadrants — a hard selection, so

@@ -369,7 +369,9 @@ void testFilterClockAndAnim() {
 
 // The liquid on the CPU: a figure with its own alpha on a transparent
 // ground, and the coarse path (quality < 0.75: one raymarch per block,
-// bilinear upsample) still the same picture as full resolution.
+// bilinear upsample) still the same picture as full resolution. The mean
+// difference also carries what quality changes on purpose (a 28-step march
+// instead of 48, a wider antialiased rim), hence 8/255 rather than ~0.
 void testLiquidCpu() {
     std::vector<uint8_t> opaque(4 * 4 * 4, 255);
     const ImageView src{4, 4, opaque.data(), 0};
@@ -396,8 +398,8 @@ void testLiquidCpu() {
         sum += std::abs(static_cast<int>(full[i]) - static_cast<int>(coarse[i]));
     }
     const double mean = sum / full.size();
-    CHECK(mean < 6.0);
-    if (mean >= 6.0) {
+    CHECK(mean < 8.0);
+    if (mean >= 8.0) {
         std::fprintf(stderr, "  liquid coarse mean diff %.2f\n", mean);
     }
 }

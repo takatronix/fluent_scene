@@ -2622,6 +2622,7 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc) {
     float env = t * 0.14;
     vec3 lcol = vec3(0.0);
     float lalpha = 0.0;
+    float rim_a = 0.0;
     float min_d = 9.0;
     float b = dot(ro, rd);
     float hh = b * b - dot(ro, ro) + 1.15 * 1.15;
@@ -2684,11 +2685,21 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc) {
             // a glow that hugs the real (moving) silhouette
             float g = exp(-max(min_d, 0.0) * 13.0);
             lcol = mix(c1, c2, 0.35) * (g * (0.22 + 0.45 * voice + 0.8 * fl));
+            // antialiased rim: a ray that grazed the skin within a pixel or
+            // two (wider at low quality — the CPU's coarse grid) still
+            // carries a sliver of the edge, so the silhouette never stairs
+            float pxf = 2.0 * max(FS_TEXEL.x, FS_TEXEL.y) / size;
+            float cov = 1.0 - smoothstep(0.0, pxf * 1.5 / quality, max(min_d, 0.0));
+            rim_a = 0.3 * cov;
         }
     }
     lcol = vec3(1.0) - exp(lcol * -1.05);
     if (lalpha > 0.0) {
         lcol = lcol * lalpha;  // premultiplied; the miss glow is additive
+    } else if (rim_a > 0.0) {
+        vec3 rim = vec3(1.0) - exp((mix(c1, c2, 0.4) * 0.55 + vec3(0.12)) * (glow * -1.05));
+        lcol = lcol * (1.0 - rim_a) + rim * rim_a;
+        lalpha = rim_a;
     }
 
     // ---- 2. the vapour ---------------------------------------------------
