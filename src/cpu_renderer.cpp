@@ -469,13 +469,13 @@ int liquidCpuStride(float quality) {
 }
 
 void applyFilterCoarse(Buf& buf, const Buf& src, int mode, vec4 pa, vec4 pb, vec4 pc,
-                       int stride) {
+                       vec4 pd, int stride) {
     const int cw = (buf.w + stride - 1) / stride + 1;
     const int ch = (buf.h + stride - 1) / stride + 1;
     std::vector<vec4> coarse(static_cast<size_t>(cw) * ch);
     auto premul = [&](int x, int y) {
         const vec2 uv{(x + 0.5f) / buf.w, (y + 0.5f) / buf.h};
-        const vec4 o = filter_bodies::fs_apply(mode, uv, pa, pb, pc);
+        const vec4 o = filter_bodies::fs_apply(mode, uv, pa, pb, pc, pd);
         return vec4{o.x * o.w, o.y * o.w, o.z * o.w, o.w};
     };
     for (int cy = 0; cy < ch; ++cy) {
@@ -588,10 +588,11 @@ void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext,
     const vec4 pa{values[0], values[1], values[2], values[3]};
     const vec4 pb{values[4], values[5], values[6], values[7]};
     const vec4 pc{values[8], values[9], values[10], values[11]};
+    const vec4 pd{values[12], values[13], values[14], values[15]};
     if (f.mode == FS_LIQUID) {
         const int stride = liquidCpuStride(values[11]);
         if (stride > 1) {
-            applyFilterCoarse(buf, src, f.mode, pa, pb, pc, stride);
+            applyFilterCoarse(buf, src, f.mode, pa, pb, pc, pd, stride);
             g_filter_src = nullptr;
             g_filter_image = nullptr;
             g_filter_state = nullptr;
@@ -602,7 +603,7 @@ void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext,
         for (int x = 0; x < buf.w; ++x) {
             const float src_a = src.at(x, y)[3];
             const vec2 uv{(x + 0.5f) / buf.w, (y + 0.5f) / buf.h};
-            const vec4 out = filter_bodies::fs_apply(f.mode, uv, pa, pb, pc);
+            const vec4 out = filter_bodies::fs_apply(f.mode, uv, pa, pb, pc, pd);
             float* d = buf.at(x, y);
             // Filters keep the source's alpha shape (resampling filters
             // approximate; exact per-filter alpha is refined with L1 golden

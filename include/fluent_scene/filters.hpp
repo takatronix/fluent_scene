@@ -36,9 +36,9 @@ namespace fluent_scene {
 /// must stay valid until the next render. An invalid view leaves the filter
 /// a pass-through, so an unfed `$inputs` grade shows the ungraded picture
 /// rather than garbage.
-/// Parameter slots per filter. The GPU passes carry them as three vec4s
-/// (push block pa / pb / px2); most filters use the first five.
-constexpr int kFilterSlots = 12;
+/// Parameter slots per filter. The GPU passes carry them as four vec4s
+/// (push block pa / pb / px2 / color); most filters use the first five.
+constexpr int kFilterSlots = 16;
 
 struct Filter {
     int mode = 0;           ///< FS_* id (see shared/filters_shared.h).

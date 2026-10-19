@@ -1,7 +1,7 @@
 // filter.frag — the single-source filter bodies running on the GPU: this
 // file #includes the very same filters_shared.h the CPU reference compiles.
 // Fullscreen pass over a premultiplied source; bodies see straight rgb.
-// meta.w = FS_* mode; pa / pb / px2 = the twelve parameter slots (already
+// meta.w = FS_* mode; pa / pb / px2 / color = the sixteen parameter slots (already
 // Length-scaled by the recorder via plan::scaleFilterValues).
 
 #version 450
@@ -57,7 +57,7 @@ vec4 fs_sample_state_raw(vec2 uv) {
 
 void main() {
     int mode = u_mode();
-    vec4 res = fs_apply(mode, v_uv, u.pa, u.pb, u.px2);
+    vec4 res = fs_apply(mode, v_uv, u.pa, u.pb, u.px2, u.color);
     // Filters keep the source's alpha shape; FS_OPACITY scales it (the
     // same rule as the CPU reference).
     float src_a = texture(src_tex, v_uv).a;

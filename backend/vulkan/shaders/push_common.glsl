@@ -21,7 +21,7 @@ FS_PUSH_DECL PushBlock {
     vec4 pa;     // pipeline-specific
     vec4 pb;     // pipeline-specific
     vec4 px2;    // pipeline-specific
-    vec4 color;  // straight rgba
+    vec4 color;  // straight rgba (filter passes: parameter slots 12..15)
 } u;
 
 // Fragment position (pixel center) mapped into the draw's local space.

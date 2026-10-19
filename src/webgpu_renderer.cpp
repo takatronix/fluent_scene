@@ -1475,6 +1475,10 @@ struct WebGPURenderer::Impl {
             push.px2[1] = values[9];
             push.px2[2] = values[10];
             push.px2[3] = values[11];
+            push.color[0] = values[12];
+            push.color[1] = values[13];
+            push.color[2] = values[14];
+            push.color[3] = values[15];
             // Stateful filters (persistent_buffers P1): advance the layer's
             // field one tick (read ping + source, write pong RAW), swap,
             // then let the normal pass below read the fresh field.

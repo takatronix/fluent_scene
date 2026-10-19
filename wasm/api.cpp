@@ -503,7 +503,7 @@ int fs_layer_set_filter(FsInstance* inst, const char* layer_id, const char* filt
 }
 
 /// One parameter of the layer's first filter of that kind, by name — any
-/// slot (liquid has twelve). `duration` > 0 animates from the current value
+/// slot (liquid has thirteen). `duration` > 0 animates from the current value
 /// (ease in-out), like a $params `animate`; 0 snaps. Clock slots (liquid's
 /// time / splash) restart their count from the value. Returns 0 for an
 /// unknown layer / filter / parameter or a layer without that filter.

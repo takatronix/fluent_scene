@@ -10,8 +10,8 @@
 // Contract with filters_shared.h (the body source):
 //   - MODE is a FS_* id declared there;
 //   - parameters appear in slot order — FS_PARAM's `slot` must equal its
-//     position in the block (0, 1, 2, …) and must match the p0..p11 order the
-//     fs_apply dispatch passes to the body (kFilterSlots = 12).
+//     position in the block (0, 1, 2, …) and must match the p0..p15 order the
+//     fs_apply dispatch passes to the body (kFilterSlots = 16).
 //
 // Units: `Length` parameters are logical units — the renderer multiplies
 // them by its logical→source-pixel factor before the body sees them, so

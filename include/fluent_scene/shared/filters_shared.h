@@ -2483,7 +2483,7 @@ vec3 fs_lq_dir(float h1, float h2, float zbias) {
     return vec3(cos(a) * s, sin(a) * s, z);
 }
 
-vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc) {
+vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc, vec4 pd) {
     float t = pa.x;
     float level = clamp(pa.y, 0.0, 1.0);
     // mood weights (idle, listening, thinking, speaking); idle is the rest
@@ -2784,12 +2784,12 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc) {
 }
 
 // ---- dispatch --------------------------------------------------------------
-// The only place slot values (p0..p11, in table order) meet parameter names.
-// The slots travel as three vec4s (pa = p0..p3, pb = p4..p7, pc = p8..p11 —
-// the GPU push block's pa / pb / px2). Returns rgba; alpha is 1 except for
+// The only place slot values (p0..p15, in table order) meet parameter names.
+// The slots travel as four vec4s (pa = p0..p3, pb = p4..p7, pc = p8..p11,
+// pd = p12..p15 — the GPU push block's pa / pb / px2 / color). Returns rgba; alpha is 1 except for
 // filters that define it (fs_shapes_alpha).
 
-vec4 fs_apply(int mode, vec2 uv, vec4 pa, vec4 pb, vec4 pc) {
+vec4 fs_apply(int mode, vec2 uv, vec4 pa, vec4 pb, vec4 pc, vec4 pd) {
     float p0 = pa.x;
     float p1 = pa.y;
     float p2 = pa.z;
@@ -2859,7 +2859,7 @@ vec4 fs_apply(int mode, vec2 uv, vec4 pa, vec4 pb, vec4 pc) {
     else if (mode == FS_THERMAL)         c = fs_thermal(uv, p0, p1);
     else if (mode == FS_GLITCH)          c = fs_glitch(uv, p0, p1, p2, p3);
     else if (mode == FS_LIQUID) {
-        vec4 r = fs_liquid(uv, pa, pb, pc);
+        vec4 r = fs_liquid(uv, pa, pb, pc, pd);
         c = vec3(r.x, r.y, r.z);
         alpha = r.w;
     }
