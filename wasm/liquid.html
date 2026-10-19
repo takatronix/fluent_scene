@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>fluent scene — liquid 生きている液体</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; overflow: hidden;
+               background: radial-gradient(ellipse at 50% 45%, #0b0b16 0%, #040409 70%); }
+  #v { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block;
+       touch-action: none; -webkit-user-select: none; user-select: none; }
+  .chrome { transition: opacity 0.9s; }
+  body.idle .chrome { opacity: 0; pointer-events: none; }
+  #title { position: fixed; left: 18px; top: calc(14px + env(safe-area-inset-top)); z-index: 9;
+           font: 300 13px/1.5 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.04em;
+           color: rgba(255,255,255,0.72); pointer-events: none; }
+  #title b { font-weight: 600; color: rgba(255,255,255,0.92); }
+  #title span { display: block; font: 11px ui-monospace, monospace; color: rgba(255,255,255,0.45); }
+  #credit { position: fixed; right: 12px; top: calc(10px + env(safe-area-inset-top)); z-index: 9;
+            font: 11px ui-monospace, monospace; color: rgba(255,255,255,0.55);
+            text-decoration: none; background: rgba(0,0,0,0.35);
+            padding: 4px 10px; border-radius: 999px; backdrop-filter: blur(4px); }
+  #credit b { color: rgba(255,255,255,0.85); }
+  #dock { position: fixed; left: 50%; transform: translateX(-50%); z-index: 9;
+          bottom: calc(16px + env(safe-area-inset-bottom));
+          display: flex; gap: 6px; align-items: center; padding: 6px;
+          background: rgba(10, 10, 20, 0.45); border: 1px solid rgba(255,255,255,0.09);
+          border-radius: 999px; backdrop-filter: blur(12px); }
+  .st { border: 0; background: transparent; color: rgba(255,255,255,0.7);
+        font: 500 13px/1 ui-sans-serif, system-ui, sans-serif; padding: 9px 13px;
+        border-radius: 999px; cursor: pointer; transition: 0.25s; white-space: nowrap; }
+  .st:hover { color: #fff; background: rgba(255,255,255,0.07); }
+  .st.on { color: #0a0a12; background: var(--hi, #7fb8ff);
+           box-shadow: 0 0 18px var(--hi, #7fb8ff); }
+  .st[data-s=idle] { --hi: #7fa9ff; }
+  .st[data-s=listening] { --hi: #5ff2ee; }
+  .st[data-s=thinking] { --hi: #b57cff; }
+  .st[data-s=speaking] { --hi: #ff9a6a; }
+  .st.auto.on { --hi: rgba(255,255,255,0.85); }
+  .sep { width: 1px; height: 22px; background: rgba(255,255,255,0.12); margin: 0 2px; }
+  .chip { width: 38px; height: 38px; border-radius: 50%; border: 0;
+          background: transparent; color: rgba(255,255,255,0.8); font-size: 17px;
+          cursor: pointer; transition: 0.2s; display: flex; align-items: center; justify-content: center; }
+  .chip:hover { background: rgba(255,255,255,0.08); }
+  .chip.on { background: rgba(255, 110, 110, 0.85); color: #fff; box-shadow: 0 0 16px rgba(255,90,90,0.6); }
+  #pill { position: fixed; left: 14px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 9;
+          font: 11px ui-monospace, monospace; color: rgba(255,255,255,0.6);
+          background: rgba(0,0,0,0.35); padding: 5px 10px; border-radius: 999px;
+          backdrop-filter: blur(4px); }
+  #pill i { font-style: normal; font-weight: 700; padding: 1px 6px; border-radius: 999px;
+            margin-right: 6px; color: #0a0a12; background: #8ef0c0; }
+  #pill i.cpu { background: #ffcf6e; }
+  #hud { position: fixed; right: 14px; bottom: calc(70px + env(safe-area-inset-bottom)); z-index: 9;
+         font: 12px ui-monospace, monospace; color: rgba(255,255,255,0.78);
+         background: rgba(8, 8, 16, 0.6); border-radius: 14px; border: 1px solid rgba(255,255,255,0.09);
+         padding: 12px 16px; backdrop-filter: blur(12px);
+         display: none; flex-direction: column; gap: 8px; }
+  #hud.open { display: flex; }
+  #hud label { display: flex; align-items: center; gap: 8px; }
+  #hud span.k { width: 4.5em; opacity: 0.8; }
+  #hud input[type=range] { width: 140px; accent-color: #9f8cff; }
+  #meter { position: fixed; left: 50%; transform: translateX(-50%); z-index: 9;
+           bottom: calc(66px + env(safe-area-inset-bottom)); width: 120px; height: 3px;
+           border-radius: 2px; background: rgba(255,255,255,0.08); overflow: hidden; display: none; }
+  #meter.on { display: block; }
+  #meter div { height: 100%; width: 0; background: linear-gradient(90deg, #5ff2ee, #ff9a6a); }
+  @media (max-width: 560px) {
+    .st { padding: 8px 9px; font-size: 12px; }
+    #pill { bottom: calc(70px + env(safe-area-inset-bottom)); }
+  }
+</style>
+<canvas id="v" width="1280" height="720"></canvas>
+<div id="title" class="chrome"><b>liquid</b> — 生きている液体<span>fluent_scene filter · GLSL∩C++ single source</span></div>
+<a id="credit" class="chrome" href="https://x.com/takatronix" target="_blank" rel="noopener">fluent_scene · by <b>@takatronix</b></a>
+<div id="dock" class="chrome">
+  <button class="st" data-s="idle" title="待機">待機</button>
+  <button class="st" data-s="listening" title="聞いている">聞く</button>
+  <button class="st" data-s="thinking" title="考えている">考える</button>
+  <button class="st" data-s="speaking" title="話している">話す</button>
+  <button class="st auto on" id="auto" title="状態を自動で巡回">自動</button>
+  <div class="sep"></div>
+  <button class="chip" id="mic" title="マイクで level を駆動">🎤</button>
+  <button class="chip" id="cfg" title="設定">⚙</button>
+  <button class="chip" id="fsb" title="全画面">⛶</button>
+</div>
+<div id="meter"><div></div></div>
+<div id="hud">
+  <label><span class="k">色相</span><input id="hue" type="range" min="-180" max="180" value="0"></label>
+  <label><span class="k">大きさ</span><input id="size" type="range" min="50" max="180" value="100"></label>
+  <label><span class="k">画質</span><input id="qual" type="range" min="20" max="100" value="100"></label>
+</div>
+<div id="pill" class="chrome">起動中…</div>
+<script type="module">
+// Kepler's "Liquid" figure, drawn by fluent_scene: ONE layer with the
+// `liquid` filter, every knob a Scene $param. The engine does the rest —
+// `time` and `splash` are Clock slots that run by dt, the mood weights and
+// the pointer ease through the params' `animate`. The page only says what
+// happens (state, level, pointer, taps). Design: docs/design/liquid.ja.md.
+//   ?cpu=1      force the CPU renderer          ?res=WxH   pin the render size
+//   ?state=thinking&auto=0   pin a state      ?snap=1   no loop: lqSnapshot(dt) renders
+//   one frame dt seconds on (headless checks; WebGPU canvases screenshot blank)
+import createFluentScene from './fluent_scene.mjs';
+
+const Q = new URLSearchParams(location.search);
+const SNAP = Q.get('snap') === '1';
+const portrait = innerHeight > innerWidth;
+const vw = Math.max(320, innerWidth), vh = Math.max(320, innerHeight);
+// the stage takes the screen's aspect; long side 1280
+const STAGE_W = portrait ? Math.round(1280 * vw / vh / 4) * 4 : 1280;
+const STAGE_H = portrait ? 1280 : Math.round(1280 * vh / vw / 4) * 4;
+// the figure: about 40% of the short side across (more on phones)
+const SIZE0 = portrait ? 1.25 : 1.1;
+const SCENE = `
+schema: fluent.scene/v1alpha2
+stage: { size: [${STAGE_W}, ${STAGE_H}] }
+params:
+  listen: { type: f32, default: 0, animate: { duration: 1.2, ease: ease_in_out } }
+  think:  { type: f32, default: 0, animate: { duration: 1.2, ease: ease_in_out } }
+  speak:  { type: f32, default: 0, animate: { duration: 1.2, ease: ease_in_out } }
+  level:  { type: f32, default: 0 }
+  px:     { type: f32, default: ${STAGE_W / 2}, animate: { duration: 0.35, ease: ease_out } }
+  py:     { type: f32, default: ${STAGE_H / 2}, animate: { duration: 0.35, ease: ease_out } }
+  ptr:    { type: f32, default: 0, animate: { duration: 0.6, ease: ease_in_out } }
+  splash: { type: f32, default: 9 }
+  hue:    { type: f32, default: 0, animate: { duration: 0.6, ease: ease_out } }
+  size:   { type: f32, default: ${SIZE0}, animate: { duration: 0.6, ease: ease_in_out } }
+  quality: { type: f32, default: 1 }
+layers:
+  - id: liquid
+    frame: [0, 0, ${STAGE_W}, ${STAGE_H}]
+    background: [0, 0, 0, 1]
+    filters:
+      - liquid: { listen: $params.listen, think: $params.think, speak: $params.speak,
+                  level: $params.level, pointer_x: $params.px, pointer_y: $params.py,
+                  pointer: $params.ptr, splash: $params.splash, hue: $params.hue,
+                  size: $params.size, quality: $params.quality }
+`;
+
+let canvas = document.getElementById('v');
+canvas.width = STAGE_W; canvas.height = STAGE_H;
+const pill = document.getElementById('pill');
+const mod = await createFluentScene();
+const c = (n, r, a) => mod.cwrap(n, r, a);
+const fs = {
+  create: c('fs_create', 'number', ['string']),
+  error: c('fs_error', 'string', []),
+  render: c('fs_render', 'number', ['number', 'number', 'number', 'number']),
+  renderW: c('fs_render_width', 'number', ['number']),
+  renderH: c('fs_render_height', 'number', ['number']),
+  gInit: c('fs_webgpu_init', null, ['string']),
+  gStatus: c('fs_webgpu_status', 'number', []),
+  gError: c('fs_webgpu_error', 'string', []),
+  gRender: c('fs_render_webgpu', 'number', ['number', 'number', 'number', 'number']),
+  set: c('fs_set_param_f32', 'number', ['number', 'string', 'number']),
+};
+const inst = fs.create(SCENE);
+if (!inst) { pill.textContent = 'scene rejected: ' + fs.error(); throw new Error(fs.error()); }
+
+// ---- state ------------------------------------------------------------------
+const MOOD = { idle: [0, 0, 0], listening: [1, 0, 0], thinking: [0, 1, 0], speaking: [0, 0, 1] };
+const ORDER = ['idle', 'listening', 'thinking', 'speaking'];
+const DWELL = { idle: 7, listening: 6, thinking: 6, speaking: 8 };
+let state = 'idle', stateAt = 0;
+let auto = Q.get('auto') !== '0';
+function setState(s, by) {
+  state = s; stateAt = performance.now() / 1000;
+  const [l, t, k] = MOOD[s];
+  fs.set(inst, 'listen', l); fs.set(inst, 'think', t); fs.set(inst, 'speak', k);
+  for (const b of document.querySelectorAll('.st[data-s]')) b.classList.toggle('on', b.dataset.s === s);
+  if (by === 'user') { auto = false; document.getElementById('auto').classList.remove('on'); }
+}
+for (const b of document.querySelectorAll('.st[data-s]'))
+  b.onclick = (e) => { e.stopPropagation(); setState(b.dataset.s, 'user'); };
+document.getElementById('auto').onclick = (e) => {
+  e.stopPropagation();
+  auto = !auto; e.currentTarget.classList.toggle('on', auto);
+  if (auto) stateAt = performance.now() / 1000;
+};
+setState(MOOD[Q.get('state')] ? Q.get('state') : 'idle');
+if (!auto) document.getElementById('auto').classList.remove('on');
+
+// ---- level: the mic, or a synthetic voice while listening / speaking ----------
+let mic = null, micBuf = null, lvl = 0, kick = 0;
+const meter = document.getElementById('meter');
+document.getElementById('mic').onclick = async (e) => {
+  e.stopPropagation();
+  const btn = e.currentTarget;
+  if (mic) {
+    mic.stream.getTracks().forEach((t) => t.stop()); mic.ctx.close(); mic = null;
+    btn.classList.remove('on'); meter.classList.remove('on'); return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    const ctx = new AudioContext();
+    const an = ctx.createAnalyser(); an.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(an);
+    mic = { stream, ctx, an }; micBuf = new Float32Array(an.fftSize);
+    btn.classList.add('on'); meter.classList.add('on');
+  } catch (err) {
+    console.warn('mic unavailable:', err);
+    btn.title = 'マイクを使えません: ' + (err && err.message ? err.message : err);
+  }
+};
+function rawLevel(t) {
+  if (mic) {
+    mic.an.getFloatTimeDomainData(micBuf);
+    let s = 0; for (let i = 0; i < micBuf.length; i++) s += micBuf[i] * micBuf[i];
+    const rms = Math.sqrt(s / micBuf.length);
+    return Math.min(1, Math.max(0, (Math.log10(rms + 1e-5) + 2.6) / 1.6));   // ~-52 dB … -10 dB
+  }
+  // synthetic: syllables (4–6 Hz) in phrases, quiet gaps between
+  const phrase = 0.5 + 0.5 * Math.sin(t * 0.9) * Math.sin(t * 0.37 + 1.3);
+  const syl = Math.max(0, Math.sin(t * 11.3) * 0.6 + Math.sin(t * 7.1 + 2) * 0.4);
+  const v = Math.min(1, syl * (0.35 + 0.75 * phrase));
+  return state === 'speaking' ? v : state === 'listening' ? v * 0.55 : 0;
+}
+
+// ---- pointer: hover leans the body, a tap splashes -------------------------------
+let ptrOn = 0, ptrAt = -9, touch = false;
+const toStage = (e) => [e.clientX / innerWidth * STAGE_W, e.clientY / innerHeight * STAGE_H];
+const onCanvas = (e) => e.target === canvas;
+addEventListener('pointermove', (e) => {
+  touch = e.pointerType === 'touch';
+  if (!onCanvas(e) && !touch) { return; }
+  const [x, y] = toStage(e);
+  fs.set(inst, 'px', x); fs.set(inst, 'py', y);
+  ptrAt = performance.now() / 1000;
+  if (!ptrOn) { ptrOn = 1; fs.set(inst, 'ptr', 1); }
+}, { passive: true });
+const ptrOff = () => { if (ptrOn) { ptrOn = 0; fs.set(inst, 'ptr', 0); } };
+document.documentElement.addEventListener('pointerleave', ptrOff);
+addEventListener('blur', ptrOff);
+addEventListener('pointerup', (e) => { if (e.pointerType === 'touch') setTimeout(ptrOff, 500); });
+addEventListener('pointerdown', (e) => {
+  if (!onCanvas(e)) return;
+  const [x, y] = toStage(e);
+  fs.set(inst, 'px', x); fs.set(inst, 'py', y);
+  fs.set(inst, 'splash', 0);   // Clock slot: the splash age restarts at 0
+  kick = 1;
+});
+
+// ---- chrome ------------------------------------------------------------------------
+document.getElementById('fsb').onclick = (e) => {
+  e.stopPropagation();
+  document.fullscreenElement ? document.exitFullscreen() : document.body.requestFullscreen();
+};
+document.getElementById('cfg').onclick = (e) => {
+  e.stopPropagation(); document.getElementById('hud').classList.toggle('open');
+};
+document.getElementById('hue').oninput = (e) => fs.set(inst, 'hue', +e.target.value);
+document.getElementById('size').oninput = (e) => fs.set(inst, 'size', SIZE0 * e.target.value / 100);
+let qualUser = 1;
+document.getElementById('qual').oninput = (e) => { qualUser = e.target.value / 100; };
+let idleT = 0;
+const wake = () => {
+  document.body.classList.remove('idle');
+  clearTimeout(idleT);
+  idleT = setTimeout(() => document.body.classList.add('idle'), 3500);
+};
+for (const ev of ['pointermove', 'pointerdown', 'keydown', 'touchstart']) addEventListener(ev, wake, { passive: true });
+wake();
+addEventListener('keydown', (e) => {
+  const k = { 1: 'idle', 2: 'listening', 3: 'thinking', 4: 'speaking' }[e.key];
+  if (k) setState(k, 'user');
+  if (e.key === ' ') { fs.set(inst, 'splash', 0); kick = 1; }
+});
+
+// ---- backend: WebGPU when it comes up, the CPU renderer otherwise --------------
+let mode = 'boot', ctx2d = null;
+const forceCpu = Q.get('cpu') === '1' || !navigator.gpu;
+if (!forceCpu) fs.gInit('#v');
+const resPin = /^\d+x\d+$/.test(Q.get('res') || '') ? Q.get('res').split('x').map(Number) : null;
+function goCpu(why) {
+  mode = 'cpu';
+  if (why) console.warn('liquid: CPU renderer —', why);
+  // a canvas WebGPU claimed refuses a 2D context: start from a fresh twin
+  const fresh = canvas.cloneNode(false);
+  canvas.replaceWith(fresh); canvas = fresh;
+  // the raymarch costs per pixel: a quarter-size stage, coarse quality,
+  // CSS scales it up (the figure is smooth, so it holds up)
+  const k = 0.3;
+  canvas.width = resPin ? resPin[0] : Math.round(STAGE_W * k / 4) * 4;
+  canvas.height = resPin ? resPin[1] : Math.round(STAGE_H * k / 4) * 4;
+  ctx2d = canvas.getContext('2d');
+}
+if (forceCpu) goCpu(Q.get('cpu') === '1' ? '?cpu=1' : 'no navigator.gpu');
+else if (resPin) { canvas.width = resPin[0]; canvas.height = resPin[1]; }
+
+// adaptive: a resolution ladder down (never back up — it oscillates) and
+// the step budget, until the frame rate holds
+const LADDER = [1, 0.8, 0.66, 0.5, 0.4];
+let rung = 0, qAuto = 1, fps = 0, frames = 0, fpsAt = performance.now();
+setInterval(() => {
+  if (resPin || mode === 'boot') return;
+  if (fps > 0 && fps < (mode === 'gpu' ? 40 : 14)) {
+    if (qAuto > 0.55) qAuto -= 0.15;
+    else if (rung < LADDER.length - 1) {
+      ++rung;
+      const s = LADDER[rung] * (mode === 'cpu' ? 0.3 : 1);
+      canvas.width = Math.round(STAGE_W * s / 4) * 4; canvas.height = Math.round(STAGE_H * s / 4) * 4;
+    }
+  }
+}, 1500);
+
+const t0 = performance.now();
+let last = t0;
+function tick() {
+  try { frame(); } catch (e) { console.error(e); pill.textContent = '⚠ ' + (e && e.message ? e.message : e); }
+  requestAnimationFrame(tick);
+}
+function frame() {
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+  const t = (now - t0) / 1000;
+  if (mode === 'boot') {
+    const st = fs.gStatus();
+    if (st === 1) mode = 'gpu';
+    else if (st === 0 && now - t0 < 6000) { pill.textContent = `WebGPU 初期化中… ${(t | 0)}s`; return; }
+    else goCpu('WebGPU status ' + st + ': ' + fs.gError());
+  }
+  if (SNAP) { pill.textContent = mode; return; }   // checks drive frames themselves
+  // auto-cycle the states
+  if (auto && now / 1000 - stateAt > DWELL[state]) setState(ORDER[(ORDER.indexOf(state) + 1) % 4]);
+  // level: fast attack, softer release, plus the tap's kick
+  const raw = rawLevel(t);
+  lvl += (raw - lvl) * (1 - Math.exp(-dt * (raw > lvl ? 20 : 6)));
+  kick *= Math.exp(-dt * 3);
+  fs.set(inst, 'level', Math.min(1, lvl + kick * 0.6));
+  if (mic) meter.firstElementChild.style.width = (lvl * 100).toFixed(0) + '%';
+  // a finger that stopped moving lets go; a mouse stays until it leaves
+  if (ptrOn && touch && now / 1000 - ptrAt > 0.8) ptrOff();
+  fs.set(inst, 'quality', Math.min(qualUser, qAuto) * (mode === 'cpu' ? 0.5 : 1));
+
+  if (mode === 'gpu') {
+    if (fs.gRender(inst, dt, canvas.width, canvas.height)) ++frames;
+  } else {
+    const p = fs.render(inst, dt, canvas.width, canvas.height);
+    const w = fs.renderW(inst), h = fs.renderH(inst);
+    ctx2d.putImageData(new ImageData(new Uint8ClampedArray(mod.HEAPU8.buffer, p, w * h * 4), w, h), 0, 0);
+    ++frames;
+  }
+  if (now - fpsAt > 1000) {
+    fps = Math.round(frames * 1000 / (now - fpsAt)); frames = 0; fpsAt = now;
+    pill.innerHTML = `<i class="${mode === 'gpu' ? 'gpu' : 'cpu'}">${mode === 'gpu' ? 'WebGPU' : 'CPU'}</i>` +
+        `${fps} fps · ${canvas.width}×${canvas.height}`;
+  }
+}
+requestAnimationFrame(tick);
+
+// For checks (headless WebGPU canvases screenshot blank): one frame `dt`
+// seconds on, as a data URL over the page's dark ground. GPU frames come
+// back through fs_webgpu_read_begin (an offscreen render of the same tree),
+// CPU frames through fs_render. Use with ?snap=1 (no render loop).
+const readBegin = c('fs_webgpu_read_begin', 'number', ['number', 'number', 'number', 'number']);
+const readPixels = c('fs_webgpu_read_pixels', 'number', []);
+window.lqSnapshot = (dt = 0) => new Promise((resolve) => {
+  const w = canvas.width, h = canvas.height;
+  const out = document.createElement('canvas'); out.width = w; out.height = h;
+  const o = out.getContext('2d');
+  o.fillStyle = '#06060c'; o.fillRect(0, 0, w, h);
+  const paint = (p) => {
+    const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = h;
+    tmp.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(mod.HEAPU8.slice(p, p + w * h * 4).buffer), w, h), 0, 0);
+    o.drawImage(tmp, 0, 0);
+    resolve(out.toDataURL());
+  };
+  if (mode !== 'gpu') { paint(fs.render(inst, dt, w, h)); return; }
+  if (!readBegin(inst, dt, w, h)) { resolve(null); return; }
+  (function poll() { const p = readPixels(); if (p) paint(p); else requestAnimationFrame(poll); })();
+});
+window.lqSet = (name, v) => fs.set(inst, name, v);
+</script>
