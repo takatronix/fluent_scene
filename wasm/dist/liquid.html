@@ -87,6 +87,7 @@
 <div id="hud">
   <label><span class="k">色相</span><input id="hue" type="range" min="-180" max="180" value="0"></label>
   <label><span class="k">大きさ</span><input id="size" type="range" min="50" max="180" value="100"></label>
+  <label><span class="k">真珠</span><input id="pearl" type="range" min="0" max="100" value="0"></label>
   <label><span class="k">画質</span><input id="qual" type="range" min="20" max="100" value="100"></label>
 </div>
 <div id="pill" class="chrome">起動中…</div>
@@ -97,6 +98,7 @@
 // the pointer ease through the params' `animate`. The page only says what
 // happens (state, level, pointer, taps). Design: docs/design/liquid.ja.md.
 //   ?cpu=1      force the CPU renderer          ?res=WxH   pin the render size
+//   ?pearl=1    Fluent pearl glass (the ⚙ slider blends 0–1)
 //   ?state=thinking&auto=0   pin a state      ?snap=1   no loop: lqSnapshot(dt) renders
 //   one frame dt seconds on (headless checks; WebGPU canvases screenshot blank)
 import createFluentScene from './fluent_scene.mjs';
@@ -110,6 +112,8 @@ const STAGE_W = portrait ? Math.round(1280 * vw / vh / 4) * 4 : 1280;
 const STAGE_H = portrait ? 1280 : Math.round(1280 * vh / vw / 4) * 4;
 // the figure: about a third of the short side across (more on phones)
 const SIZE0 = portrait ? 1.15 : 0.95;
+// ?pearl=1: the Fluent pearl-glass material (0 = iridescent metal)
+const PEARL0 = Math.min(1, Math.max(0, +(Q.get('pearl') || 0)));
 const SCENE = `
 schema: fluent.scene/v1alpha2
 stage: { size: [${STAGE_W}, ${STAGE_H}] }
@@ -125,6 +129,7 @@ params:
   hue:    { type: f32, default: 0, animate: { duration: 0.6, ease: ease_out } }
   size:   { type: f32, default: ${SIZE0}, animate: { duration: 0.6, ease: ease_in_out } }
   quality: { type: f32, default: 1 }
+  pearl:  { type: f32, default: ${PEARL0}, animate: { duration: 0.8, ease: ease_in_out } }
 layers:
   - id: liquid
     frame: [0, 0, ${STAGE_W}, ${STAGE_H}]
@@ -133,7 +138,7 @@ layers:
       - liquid: { listen: $params.listen, think: $params.think, speak: $params.speak,
                   level: $params.level, pointer_x: $params.px, pointer_y: $params.py,
                   pointer: $params.ptr, splash: $params.splash, hue: $params.hue,
-                  size: $params.size, quality: $params.quality }
+                  size: $params.size, quality: $params.quality, pearl: $params.pearl }
 `;
 
 let canvas = document.getElementById('v');
@@ -253,6 +258,8 @@ document.getElementById('cfg').onclick = (e) => {
   e.stopPropagation(); document.getElementById('hud').classList.toggle('open');
 };
 document.getElementById('hue').oninput = (e) => fs.set(inst, 'hue', +e.target.value);
+document.getElementById('pearl').value = PEARL0 * 100;
+document.getElementById('pearl').oninput = (e) => fs.set(inst, 'pearl', e.target.value / 100);
 document.getElementById('size').oninput = (e) => fs.set(inst, 'size', SIZE0 * e.target.value / 100);
 let qualUser = 1;
 document.getElementById('qual').oninput = (e) => { qualUser = e.target.value / 100; };

@@ -114,7 +114,7 @@ check(api.setFilterParam(inst, 'nobody', 'liquid', 'hue', 1, 0) === 0, 'unknown 
 // ---- catalog ----
 const cat = JSON.parse(api.filtersJson());
 const liq = cat.find((f) => f.name === 'liquid');
-check(!!liq && liq.params.length === 12, 'catalog lists liquid with 12 params');
+check(!!liq && liq.params.length === 13, 'catalog lists liquid with 13 params');
 check(liq && liq.params[0].unit === 'clock' && liq.params[8].unit === 'clock', 'time / splash are clock');
 
 api.destroy(inst);

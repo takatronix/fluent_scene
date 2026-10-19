@@ -81,7 +81,7 @@ struct FilterSpec {
                            ///< (ping-pong) before the normal output pass
                            ///< (persistent_buffers P1; `sumie` is the
                            ///< first customer).
-    std::vector<FilterParamSpec> params;  ///< In slot order p0..p11.
+    std::vector<FilterParamSpec> params;  ///< In slot order p0..p15.
 };
 
 // ---------------------------------------------------------------------------

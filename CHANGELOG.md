@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.19.0 — 2026-10-19 (liquid の `pearl`: Fluent の真珠ガラス / filter の 16 スロット)
+
+- **`liquid` の `pearl` (スロット 12、既定 0)**: 材質を「虹彩のある濡れた
+  金属」(0) から「真珠のガラス」(1、Kepler の FLUENT の顔) へ連続に
+  変える。深い半透明の体、ガラスが薄くなる縁と折り目に溜まる青 → 紫の光
+  (体の周りで色が回る)、内側の光の流れ (広いシート、軸の近くは色を平均に
+  寄せて継ぎ目を出さない)、フレネルだけのガラスの反射、真珠の光沢、
+  広い柔らかいハイライト。蒸気は細い筋を減らした柔らかい光の霞
+  (acrylic) になり、bloom の外側が広がる。気分の色も Fluent の配色
+  (待機 青/空色/ラベンダー、聞く 空色、考える 菫/蘭、話す ローズ/珊瑚)。
+  表面の波は 3 割おだやか。pearl 0 の絵は 0.18.0 とビット一致
+- **filter スロット 12 → 16** (`kFilterSlots`): filter パスでは push block の
+  `color` (filter では未使用だった) がスロット 12–15 を運ぶ。本体の入口は
+  `fs_apply(mode, uv, pa, pb, pc, pd)`。既存 filter と golden は不変
+- tests: golden `liquid_pearl` (4 タイル、liquid と同じ許容。Vulkan max_diff 57)
+- demo: `wasm/liquid.html` の ⚙ に「真珠」スライダ、`?pearl=1`
+
 ## 0.18.0 — 2026-10-19 (liquid: Kepler の Liquid を filter に / filter の 12 スロット・Clock・$params 束縛)
 
 Kepler の顔 "Liquid" を fluent_scene を通して描けるようにした

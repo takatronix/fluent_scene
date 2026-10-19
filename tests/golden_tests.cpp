@@ -375,6 +375,27 @@ void sceneLiquid(Renderer& r) {
     g_max_diff_limit = saved_limit;
 }
 
+// Liquid's pearl material (Fluent glass, `pearl` 1 — the first filter slot
+// past twelve, carried by the push block's color vec4): the idle frame, the
+// listening face with the pointer strand, speaking with level, a splash
+// between thinking and speaking at a smaller step budget. Same tolerance.
+void sceneLiquidPearl(Renderer& r) {
+    Stage stage(320, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 145, 135}).filter(Liquid().time(11.0f).pearl(1.0f));
+    stage.image(view).frame({165, 10, 145, 135}).filter(
+        Liquid().time(2.5f).listen(1.0f).level(0.4f).pointer_x(130.0f).pointer_y(30.0f).pointer(1.0f).pearl(1.0f));
+    stage.image(view).frame({10, 155, 145, 135}).filter(
+        Liquid().time(4.1f).speak(1.0f).level(0.7f).pearl(1.0f));
+    stage.image(view).frame({165, 155, 145, 135}).filter(
+        Liquid().time(3.0f).splash(0.35f).think(0.5f).speak(0.5f).quality(0.76f).pearl(0.8f));
+    const int saved_limit = g_max_diff_limit;
+    g_max_diff_limit = 96;
+    checkScene("liquid_pearl", r.render(stage, 0.0f));
+    g_max_diff_limit = saved_limit;
+}
+
 // Oilpaint picks the least-variant of four quadrants — a hard selection, so
 // a whisker of CPU/GPU drift near a variance tie flips a whole daub. Same
 // waiver as LSD/notebook: over_ratio carries the guard.
@@ -829,6 +850,7 @@ int main(int argc, char** argv) {
     sceneLsd(r);
     sceneFractal(r);
     sceneLiquid(r);
+    sceneLiquidPearl(r);
     sceneNotebook(r);
     sceneBokeh(r);
     sceneOilpaint(r);

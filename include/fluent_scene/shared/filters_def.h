@@ -433,7 +433,8 @@ FS_FILTER(Liquid, liquid, FS_LIQUID,
           "living liquid figure — raymarched metaball in iridescent metal "
           "with inner currents and vapour; mood = listen/think/speak (rest "
           "idle), level swells it, pointer leans it, splash = seconds since "
-          "a tap (time and splash run by themselves)")
+          "a tap (time and splash run by themselves); pearl 0→1 turns the "
+          "metal into Fluent pearl glass")
 FS_PARAM(0, time, 0.0f, Clock)
 FS_PARAM(1, level, 0.0f, Scalar)
 FS_PARAM(2, listen, 0.0f, Scalar)
@@ -446,6 +447,7 @@ FS_PARAM(8, splash, 9.0f, Clock)
 FS_PARAM(9, hue, 0.0f, Scalar)
 FS_PARAM(10, size, 1.0f, Scalar)
 FS_PARAM(11, quality, 1.0f, Scalar)
+FS_PARAM(12, pearl, 0.0f, Scalar)
 FS_END(Liquid)
 
 // ---- hand drawing ----------------------------------------------------------

@@ -2321,7 +2321,10 @@ vec3 fs_crt(vec2 uv, float curvature, float scan, float mask, float glow,
 // moving part runs on two fixed clocks (calm and busy) and the mood blends
 // their RESULTS — blending phases would turn a rate change at t = 10⁴ s into
 // a lurch. Droplets are closed-form damped springs instead of a particle
-// list: a tap throws five, loud speech throws three in turns.
+// list: a tap throws five, loud speech throws three in turns. `pearl` (0–1)
+// turns the metal into Fluent pearl glass: a deep translucent body whose
+// light gathers where it thins, frosted currents, fresnel-only reflections,
+// a softer vapour (docs/design/liquid.ja.md §7.1).
 
 // Raymarch state shared by the SDF and the shading (a struct keeps the map
 // signature short; C++ passes it by reference, GLSL by value).
@@ -2440,9 +2443,11 @@ vec3 fs_lq_env(vec3 dw, float env, vec3 c0, vec3 c1, vec3 c2) {
 }
 
 // Silk currents of light inside: warped gyroid sheets coloured round the
-// body, at flow phase `fl`, spin `spin`, twist `swirl`.
+// body, at flow phase `fl`, spin `spin`, twist `swirl`. `pole` > 0 fades the
+// colour wheel to its mean within that distance of the spin axis (where the
+// angle turns fast and would read as a seam through a clear body).
 vec3 fs_lq_currents(vec3 qw, float fl, float spin, float swirl, float sharp, vec3 c0, vec3 c1,
-                    vec3 c2) {
+                    vec3 c2, float pole) {
     float r = length(qw);
     float a = spin + swirl * (0.7 - r);
     float ca = cos(a);
@@ -2456,6 +2461,9 @@ vec3 fs_lq_currents(vec3 qw, float fl, float spin, float swirl, float sharp, vec
     float ang = atan(q.z, q.x) + w.y * 0.3;
     vec3 col = c0 * (0.5 + 0.5 * cos(ang)) + c1 * (0.5 + 0.5 * cos(ang - 2.094)) +
                c2 * (0.5 + 0.5 * cos(ang + 2.094));
+    if (pole > 0.0) {
+        col = mix((c0 + c1 + c2) * 0.5, col, smoothstep(0.0, pole, length(vec2(q.x, q.z))));
+    }
     return col * (0.04 + sheet * 1.7) + vec3(pow(sheet, 10.0) * 0.7);
 }
 
@@ -2499,6 +2507,8 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc, vec4 pd) {
     float hue = pc.y;
     float size = max(pc.z, 0.05);
     float quality = clamp(pc.w, 0.1, 1.0);
+    // 0 = Kepler's iridescent wet metal, 1 = pearl / milk glass (Fluent)
+    float pearl = clamp(pd.x, 0.0, 1.0);
 
     // figure space: the short side spans [-1, 1] (× size), y up
     float ar = FS_TEXEL.y / FS_TEXEL.x;
@@ -2513,6 +2523,16 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc, vec4 pd) {
                         vec3(1.00, 0.55, 0.24));
     vec3 c2 = fs_lq_m4c(m, vec3(0.55, 0.42, 1.00), vec3(0.45, 1.00, 0.80), vec3(1.00, 0.36, 0.86),
                         vec3(1.00, 0.30, 0.55));
+    if (pearl > 0.0) {
+        // Fluent's light: deep blue → azure → lavender, sky when listening,
+        // violet / orchid when thinking, rose / peach when speaking
+        c0 = mix(c0, fs_lq_m4c(m, vec3(0.04, 0.18, 0.86), vec3(0.00, 0.30, 0.86),
+                                vec3(0.26, 0.12, 0.84), vec3(0.42, 0.12, 0.70)), pearl);
+        c1 = mix(c1, fs_lq_m4c(m, vec3(0.36, 0.68, 1.00), vec3(0.30, 0.80, 1.00),
+                                vec3(0.62, 0.46, 1.00), vec3(0.95, 0.38, 0.80)), pearl);
+        c2 = mix(c2, fs_lq_m4c(m, vec3(0.66, 0.54, 1.00), vec3(0.55, 0.72, 1.00),
+                                vec3(0.88, 0.58, 1.00), vec3(1.00, 0.62, 0.62)), pearl);
+    }
     if (abs(hue) > 0.01) {
         c0 = max(fs_hue_rotate(c0, hue), vec3(0.0));
         c1 = max(fs_hue_rotate(c1, hue), vec3(0.0));
@@ -2522,13 +2542,13 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc, vec4 pd) {
     float fl = max(0.0, 1.0 - age / 1.1);
     float amp0 = fs_lq_m4(m, 0.022, 0.024, 0.036, 0.026);
     float lobe_a = fs_lq_m4(m, 0.17, 0.15, 0.22, 0.19);
-    float sharp = fs_lq_m4(m, 8.0, 7.5, 8.5, 7.0);
+    float sharp = mix(fs_lq_m4(m, 8.0, 7.5, 8.5, 7.0), 6.0, pearl);
     float glow0 = fs_lq_m4(m, 0.9, 1.0, 1.05, 1.1);
-    float metal = fs_lq_m4(m, 0.7, 0.62, 0.6, 0.6);
+    float metal = fs_lq_m4(m, 0.7, 0.62, 0.6, 0.6) * (1.0 - pearl);
     float rad = fs_lq_m4(m, 0.40, 0.41, 0.38, 0.41);
     float swirl = fs_lq_m4(m, 0.0, 0.0, 1.8, 0.3);
     float bloom = fs_lq_m4(m, 0.8, 1.0, 0.95, 1.05) * (1.0 + voice * 0.4 + fl * 0.5);
-    float v_inj = fs_lq_m4(m, 0.55, 0.75, 0.8, 0.8) * (1.0 + voice * 1.2);
+    float v_inj = fs_lq_m4(m, 0.55, 0.75, 0.8, 0.8) * (1.0 + voice * 1.2) * (1.0 - 0.45 * pearl);
     float v_out = fs_lq_m4(m, 0.10, 0.16, 0.06, 0.18) + voice * 0.35 + fl * 0.9;
     float v_swirl = fs_lq_m4(m, 0.05, 0.05, 0.85, 0.12);
     // how busy each clock family runs (0 = calm clock, 1 = busy clock)
@@ -2542,7 +2562,7 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc, vec4 pd) {
     FsLiquid q;
     q.time = t;
     q.busy = busy_wave;
-    q.amp = amp0 * (1.0 + voice * 1.4) + fl * 0.02;
+    q.amp = amp0 * (1.0 + voice * 1.4) * (1.0 - 0.3 * pearl) + fl * 0.02;
     float breathe = 1.0 + (0.045 * m.x + 0.02 * (1.0 - m.x)) * sin(t * 1.1);
     float bounce = 0.1 * sin(age * 15.0) * exp(-age * 4.0) * step(age, 2.0);
     q.r0 = rad * 0.82 * breathe *
@@ -2664,11 +2684,11 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc, vec4 pd) {
             // through the surface: refracted inner currents, calm and busy
             vec3 rr = refract(rd, n, 0.75);
             vec3 qi = p - q.shift + rr * 0.32;
-            vec3 cur_calm = fs_lq_currents(qi, t * 0.25, t * 0.08, swirl, sharp, c0, c1, c2);
+            vec3 cur_calm = fs_lq_currents(qi, t * 0.25, t * 0.08, swirl, sharp, c0, c1, c2, pearl * 0.35);
             vec3 cur = cur_calm;
             if (busy_flow > 0.001) {
                 vec3 cur_busy =
-                    fs_lq_currents(qi, t * 1.25 + 2.0, t * 0.53, swirl, sharp, c0, c1, c2);
+                    fs_lq_currents(qi, t * 1.25 + 2.0, t * 0.53, swirl, sharp, c0, c1, c2, pearl * 0.35);
                 cur = mix(cur_calm, cur_busy, busy_flow);
             }
             vec3 inner = cur * (glow * (0.55 + 0.45 * ndv));
@@ -2681,6 +2701,32 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc, vec4 pd) {
             lcol += vec3(1.0, 0.96, 0.9) * (fl * fl * 0.9 * ndv);
             // the edge thins out into the vapour rather than ending on a line
             lalpha = smoothstep(0.0, 0.45, ndv) * 0.7 + 0.3;
+            if (pearl > 0.0) {
+                // pearl glass (Fluent's Bloom): a deep translucent body, its
+                // light gathered where the glass thins — the rim and the
+                // folds glow saturated blue → violet round the body — the
+                // inner currents seen softly through it, a nacre sheen, a
+                // broad soft highlight with a small sharp one in it
+                vec3 kl = vec3(-0.5354, 0.6036, -0.5354);
+                float wrap = clamp((dot(n, kl) + 0.4) / 1.4, 0.0, 1.0);
+                float ang = atan(n.y, n.x) + t * 0.11 + p.z * 1.5;
+                vec3 edge_c = c1 * (0.5 + 0.5 * cos(ang)) + c2 * (0.5 + 0.5 * cos(ang + 2.4)) +
+                              c0 * (0.6 * (0.5 + 0.5 * cos(ang - 2.4)));
+                float thin = pow(1.0 - ndv, 1.7);
+                vec3 glass = c0 * (0.05 + 0.25 * wrap) + cur * (glow * (1.0 + 0.6 * ndv)) +
+                             fs_lq_env(rf, env, c0, c1, c2) * (fr * 1.6 + 0.04) +
+                             edge_c * (thin * (0.85 + 0.5 * voice) * glow);
+                float nth = (1.0 - ndv) * 1.6 + dot(p, vec3(0.9, 1.3, -0.6)) * 0.6 + t * 0.05;
+                vec3 nacre = vec3(0.5) + cos(vec3(nth, nth + 0.33, nth + 0.67) * 6.2832) * 0.5;
+                glass += nacre * mix(c1, vec3(1.0), 0.6) * (pow(1.0 - ndv, 4.0) * 0.35);
+                float sp = max(dot(rf, kl), 0.0);
+                glass += vec3(0.92, 0.95, 1.0) * (pow(sp, 10.0) * 0.16 + pow(sp, 140.0) * 2.0);
+                glass += mix(c1, vec3(1.0), 0.5) *
+                         (pow(max(dot(rf, vec3(0.6097, 0.3049, -0.7622)), 0.0), 30.0) * 0.3);
+                glass += vec3(1.0, 0.96, 0.92) * (fl * fl * 0.9 * ndv);
+                lcol = mix(lcol, glass, pearl);
+                lalpha = mix(lalpha, 0.8 + 0.2 * thin, pearl);
+            }
         } else {
             // a glow that hugs the real (moving) silhouette
             float g = exp(-max(min_d, 0.0) * 13.0);
@@ -2738,7 +2784,7 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc, vec4 pd) {
         q3 = q3 + wv2 * 0.9;
         float n = fs_lsd_vnoise(q3) * 0.65 + fs_lsd_vnoise(q3 * 2.03 + vec2(5.1)) * 0.35;
         float ridge = 1.0 - abs(n * 2.0 - 1.0);
-        dens += smoothstep(0.5, 0.9, n) * wk;
+        dens += mix(smoothstep(0.5, 0.9, n), smoothstep(0.25, 0.85, n), pearl) * wk;
         fil += ridge * ridge * ridge * ridge * wk;
     }
     float reach_v = 1.0 / (1.0 + v_out * 2.0);
@@ -2746,7 +2792,7 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc, vec4 pd) {
     float ang = atan(fp.y, fp.x) + t * 0.15;
     vec3 vcol = c0 * (0.5 + 0.5 * cos(ang)) + c1 * (0.5 + 0.5 * cos(ang - 2.094)) +
                 c2 * (0.5 + 0.5 * cos(ang + 2.094));
-    vec3 vap_raw = vcol * (band * (fil * 1.25 + dens * 0.3) * v_inj);
+    vec3 vap_raw = vcol * (band * (fil * 1.25 * (1.0 - 0.8 * pearl) + dens * (0.3 + 0.5 * pearl)) * v_inj);
     float fr_r = 0.4 + (1.0 - fl) * 0.45;
     float ring = (r - fr_r) * 9.0;
     vap_raw += mix(c1, vec3(1.0), 0.4) * (exp(-ring * ring) * fl * 1.6 * (0.4 + 0.6 * dens));
@@ -2754,7 +2800,7 @@ vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc, vec4 pd) {
     // ---- 3. bloom (an analytic stand-in for the blurred mips) ------------
     // outside: a halo that hugs the silhouette; inside: the bright parts
     float lmax = max(lcol.x, max(lcol.y, lcol.z));
-    vec3 halo = mix(c1, c2, 0.35) * (exp(-e * 10.0) * 0.13 + exp(-e * 3.5) * 0.03) *
+    vec3 halo = mix(c1, c2, 0.35) * (exp(-e * 10.0) * 0.13 + exp(-e * 3.5) * (0.03 + 0.06 * pearl)) *
                 (1.0 - lalpha);
     vec3 bl = halo + lcol * (0.25 * smoothstep(0.3, 0.9, lmax));
     float lit = 0.35 + 1.8 * (exp(-e * 4.0) * 0.4);

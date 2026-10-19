@@ -34,7 +34,7 @@ Kepler 版はホスト (JS) で状態ごとの値を積分していました。f
 
 | 拡張 | 内容 | liquid での用途 |
 |---|---|---|
-| **スロット 5 → 12** (`kFilterSlots`) | GPU は push block の `pa`/`pb`/`px2` の3つの vec4。`fs_apply(mode, uv, pa, pb, pc)` | 12個の param (下表) |
+| **スロット 5 → 12 → 16** (`kFilterSlots`) | GPU は push block の `pa`/`pb`/`px2`/`color` の4つの vec4 (`color` は filter パスでは使っていなかった)。`fs_apply(mode, uv, pa, pb, pc, pd)` | 13個の param (下表) |
 | **`FilterUnit::Clock`** | `Layer::step` が毎 advance で dt を足す自走スロット。値を設定すると、その値から数え直す | `time` (ホストのループが不要)、`splash` (タップ = 0 を設定) |
 | **filter パラメータの `$params` 束縛** | `filters: [ { liquid: { level: $params.level } } ]`。`Layer::setFilterParam` は Transaction の中なら補間する | 気分の重みとポインタは param の `animate` がそのまま補間する |
 
@@ -57,6 +57,7 @@ Kepler 版はホスト (JS) で状態ごとの値を積分していました。f
 | 9 | hue | Scalar | 0 | パレットの色相回転 (度) |
 | 10 | size | Scalar | 1 | 図形の大きさ (短辺の半分 = 1) |
 | 11 | quality | Scalar | 1 | GPU は step 数 (20 + 28q)、CPU は粗い格子 (§6) |
+| 12 | pearl | Scalar | 0 | 材質。0 = 虹彩の濡れた金属、1 = 真珠のガラス (§7.1) |
 
 気分を4状態の **重み** にしたのは、`animate` を付けた3つの param を同時に
 setParam すれば、どの状態からどの状態へも線形に混ざるからです。状態を
@@ -137,6 +138,26 @@ golden は t の任意の時刻を直接描けます。
 - `?cpu=1` `?res=WxH` `?state=thinking&auto=0` `?snap=1` (ループ無しで
   `lqSnapshot(dt)` が1枚返す。headless の WebGPU canvas はスクショが空に
   なるため)
+
+## 7.1 pearl — Fluent の真珠ガラス (0.19.0)
+
+Kepler の FLUENT の顔を liquid で作り直すとき、LIQUID の顔 (虹彩の
+金属 + 青緑の蒸気) と見分けがつく材質が要りました。hue だけでは材質が
+変わらないので、`pearl` を足しました (0〜1 で連続に混ざる)。
+
+- 体: 深い c0 の半透明。キーライトを wrap で受ける
+- 光: ガラスが薄くなる所 (`(1 − n·v)^1.7`) に色が溜まり、体の周りの角度で
+  c1 / c2 / c0 が回る (Windows の Bloom のような縁の光)
+- 内側の光の流れ: gyroid シートを広く (sharp 6)、明るく見せる。色の輪の
+  軸 (spin 軸) の近くでは角度が速く回って継ぎ目に見えるので、軸から
+  0.35 以内は色を3色の平均に寄せる (`fs_lq_currents` の `pole`。
+  pearl 0 では 0 なので LIQUID の絵は変わらない)
+- 反射はフレネルの分だけ (ガラス)。真珠の光沢は縁の近くだけ。広い
+  ハイライトと小さく鋭いハイライト
+- 蒸気は筋 (ridge) を 8 割減らして濃度を柔らかくし、注入を 45% 下げる。
+  bloom の外側の halo を広げる (アクリルの霞)
+- パレットは Fluent の青 → 紫。話すときは LIQUID の橙ではなくローズ/珊瑚
+- 表面の波は 3 割おだやか (金属の細かいさざ波より、ゆっくりしたガラス)
 
 ## 8. 既知の差と残課題
 
