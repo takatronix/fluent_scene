@@ -949,6 +949,64 @@ layers:
     CHECK(hasCode(fs::compile(bad.doc).diagnostics, "compile.reference"));
 }
 
+// Filter parameters bound to $params (liquid's face, any filter's slot): the
+// slot starts at the param's value, setParam animates it through `animate`,
+// fmt keeps the reference, and bad references are rejected up front.
+void testFilterParamBinding() {
+    const char* text = R"(schema: fluent.scene/v1alpha2
+stage: { size: [8, 8] }
+params:
+  amt: { type: f32, default: 0.25, runtime_mutable: true,
+         animate: { duration: 0.4, ease: linear } }
+layers:
+  - id: pic
+    content: { rect: { rect: [0, 0, 8, 8], color: [0.8, 0.2, 0.4] } }
+    filters: [ { sepia: { intensity: $params.amt } } ]
+)";
+    const fs::ParseResult parsed = fs::parseScene(text);
+    CHECK(parsed.ok());
+    CHECK(parsed.doc.layers[0].filters[0].param_refs.size() == 1);
+    const std::string once = fs::format(parsed.doc);
+    CHECK(once.find("intensity: $params.amt") != std::string::npos);
+    const fs::ParseResult re = fs::parseScene(once);
+    CHECK(re.ok());
+    CHECK(fs::digest(re.doc) == fs::digest(parsed.doc));
+    CHECK(fs::format(re.doc) == once);
+
+    fs::CompileResult compiled = fs::compile(parsed.doc);
+    CHECK(compiled.ok());
+    fs::CompiledScene& scene = *compiled.scene;
+    Layer* pic = scene.stage().find("pic");
+    CHECK(pic != nullptr && pic->filters().size() == 1);
+    CHECK(near(pic->filters()[0].values[0], 0.25f));
+    CHECK(scene.setParam("amt", 1.0f));
+    scene.stage().advance(0.2f);
+    CHECK(near(pic->filters()[0].values[0], 0.625f, 0.02f));
+    scene.stage().advance(0.3f);
+    CHECK(near(pic->filters()[0].values[0], 1.0f));
+
+    // Literal and bound slots mix; the canonical order is the table's.
+    const fs::ParseResult mixed = fs::parseScene(
+        "schema: fluent.scene/v1alpha2\nparams:\n  t: { type: f32, default: 2 }\n"
+        "layers:\n  - content: { rect: {} }\n"
+        "    filters: [ { glitch: { blocks: 8, time: $params.t, amount: 0.5 } } ]\n");
+    CHECK(mixed.ok());
+    CHECK(fs::format(mixed.doc).find("{ glitch: { amount: 0.5, time: $params.t, blocks: 8 } }") !=
+          std::string::npos);
+
+    CHECK(hasCode(fs::parseScene("schema: fluent.scene/v1alpha2\nlayers:\n"
+                                 "  - content: { rect: {} }\n"
+                                 "    filters: [ { sepia: { intensity: $params.nope } } ]\n")
+                      .diagnostics,
+                  "validate.reference"));
+    CHECK(hasCode(fs::parseScene("schema: fluent.scene/v1alpha2\n"
+                                 "params:\n  v: { type: vec2, default: [1, 2] }\n"
+                                 "layers:\n  - content: { rect: {} }\n"
+                                 "    filters: [ { sepia: { intensity: $params.v } } ]\n")
+                      .diagnostics,
+                  "validate.type"));
+}
+
 // The layer mask through the document (Layer::mask's declarative face):
 // an image input whose alpha multiplies the layer after its filters.
 void testLayerMask() {
@@ -1045,6 +1103,8 @@ void testDescribe() {
     for (const FilterSpec& f : filterTable()) {
         CHECK(json.find("\"" + std::string(f.name) + "\"") != std::string::npos);
     }
+    // Self-running slots say so (liquid's time / splash).
+    CHECK(json.find("\"unit\": \"clock\"") != std::string::npos);
 }
 
 }  // namespace
@@ -1064,6 +1124,7 @@ int main() {
     testSceneUiControls();
     testBindingDoc();
     testLutFilter();
+    testFilterParamBinding();
     testLayerMask();
     testDescribe();
     if (g_failures == 0) {

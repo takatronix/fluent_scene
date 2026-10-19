@@ -235,13 +235,14 @@ inline Rect subtreeExtent(const Layer& layer, Vec2 parent_size, const TextMeasur
 //   CoordX/CoordY — positions in the layer's local space, mapped into the
 //   filter pass's normalized uv over the buffer (`ext` is the local-space
 //   rect the buffer covers);
-//   Scalar — untouched.
+//   Scalar / Clock — untouched.
 inline void scaleFilterValues(const Filter& f, float scale, Rect ext, float buf_w, float buf_h,
-                              float out[5]) {
-    for (int i = 0; i < 5; ++i) {
+                              float out[kFilterSlots]) {
+    for (int i = 0; i < kFilterSlots; ++i) {
         out[i] = f.values[i];
     }
-    // Paper flag for the stateful painters: no sixth slot exists, so a
+    // Paper flag for the stateful painters: their state pass carries five
+    // slots only, so a
     // bound paper image is signalled to the body by adding +2 to slot 4
     // (sumie: chroma, watercolor: dilute). One shared spot = all three
     // backends agree for free.
@@ -249,9 +250,10 @@ inline void scaleFilterValues(const Filter& f, float scale, Rect ext, float buf_
         out[4] += 2.0f;
     }
     if (const FilterSpec* spec = findFilterSpec(f.mode)) {
-        for (size_t i = 0; i < spec->params.size() && i < 5; ++i) {
+        for (size_t i = 0; i < spec->params.size() && i < kFilterSlots; ++i) {
             switch (spec->params[i].unit) {
                 case FilterUnit::Scalar:
+                case FilterUnit::Clock:
                     break;
                 case FilterUnit::Length:
                     out[i] *= scale;

@@ -36,9 +36,13 @@ namespace fluent_scene {
 /// must stay valid until the next render. An invalid view leaves the filter
 /// a pass-through, so an unfed `$inputs` grade shows the ungraded picture
 /// rather than garbage.
+/// Parameter slots per filter. The GPU passes carry them as three vec4s
+/// (push block pa / pb / px2); most filters use the first five.
+constexpr int kFilterSlots = 12;
+
 struct Filter {
     int mode = 0;           ///< FS_* id (see shared/filters_shared.h).
-    float values[5] = {};   ///< Parameter slots, in filters_def.h order.
+    float values[kFilterSlots] = {};   ///< Parameter slots, in filters_def.h order.
     ImageView image{};      ///< Borrowed image parameter; ignored by most filters.
 };
 
@@ -49,6 +53,10 @@ enum class FilterUnit {
     CoordX,  ///< X position in the layer's local logical space; the
              ///< renderer maps it into the filter pass's normalized uv.
     CoordY,  ///< Y position, same mapping.
+    Clock,   ///< Seconds that run by themselves: Layer::step adds dt every
+             ///< Stage::advance (Scalar to the renderer). Setting the slot
+             ///< restarts the count from that value — `time` that needs no
+             ///< host loop, `splash` age that a host resets to 0.
 };
 
 /// Metadata for one filter parameter (generated from filters_def.h).
@@ -73,7 +81,7 @@ struct FilterSpec {
                            ///< (ping-pong) before the normal output pass
                            ///< (persistent_buffers P1; `sumie` is the
                            ///< first customer).
-    std::vector<FilterParamSpec> params;  ///< In slot order p0..p4.
+    std::vector<FilterParamSpec> params;  ///< In slot order p0..p11.
 };
 
 // ---------------------------------------------------------------------------

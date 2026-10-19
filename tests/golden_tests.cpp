@@ -345,6 +345,31 @@ void sceneFractal(Renderer& r) {
     g_over_ratio_limit = saved_ratio;
 }
 
+// Liquid raymarches a smooth metaball (no chaos), but it is generative and
+// its surface hit is a threshold: rounding drift moves a silhouette pixel
+// or a march's stopping step — the standard GPU tolerance holds. Tiles: the
+// static idle frame (t=0), each mood with level, the pointer strand, a
+// splash in flight (shockwave, droplets, vapour ring) with a hue turn, and a
+// smaller step budget at a smaller size (quality 0.76 keeps the CPU at full
+// resolution; its coarse path is CPU-only and covered by stage_tests). Each
+// sits on an opaque image — liquid reads only its alpha.
+void sceneLiquid(Renderer& r) {
+    Stage stage(480, 300);
+    const auto img = makeTestImage(160, 120);
+    const ImageView view{160, 120, img.data(), 0};
+    stage.image(view).frame({10, 10, 150, 130}).filter(Liquid());
+    stage.image(view).frame({170, 10, 150, 130}).filter(
+        Liquid().time(2.5f).listen(1.0f).level(0.5f).pointer_x(130.0f).pointer_y(30.0f).pointer(1.0f));
+    stage.image(view).frame({330, 10, 140, 130}).filter(Liquid().time(6.3f).think(1.0f));
+    stage.image(view).frame({10, 160, 150, 130}).filter(
+        Liquid().time(4.1f).speak(1.0f).level(0.8f));
+    stage.image(view).frame({170, 160, 150, 130}).filter(
+        Liquid().time(3.0f).splash(0.35f).hue(40.0f).think(0.5f).speak(0.5f));
+    stage.image(view).frame({330, 160, 140, 130}).filter(
+        Liquid().time(9.7f).listen(0.3f).quality(0.76f).size(0.8f));
+    checkScene("liquid", r.render(stage, 0.0f));
+}
+
 // Oilpaint picks the least-variant of four quadrants — a hard selection, so
 // a whisker of CPU/GPU drift near a variance tie flips a whole daub. Same
 // waiver as LSD/notebook: over_ratio carries the guard.
@@ -798,6 +823,7 @@ int main(int argc, char** argv) {
     sceneBeauty(r);
     sceneLsd(r);
     sceneFractal(r);
+    sceneLiquid(r);
     sceneNotebook(r);
     sceneBokeh(r);
     sceneOilpaint(r);

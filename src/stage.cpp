@@ -716,6 +716,7 @@ Layer& Layer::filter(const Filter& f) {
 
 Layer& Layer::clearFilters() {
     filters_.clear();
+    filter_anims_.clear();
     return *this;
 }
 
@@ -738,6 +739,31 @@ Layer& Layer::setFilterImage(size_t index, const ImageView& view) {
     } else {
         warn("setFilterImage(): no filter at that index");
     }
+    return *this;
+}
+
+Layer& Layer::setFilterParam(size_t index, int slot, float value) {
+    if (index >= filters_.size() || slot < 0 || slot >= kFilterSlots) {
+        warn("setFilterParam(): no filter slot there");
+        return *this;
+    }
+    auto it = std::find_if(filter_anims_.begin(), filter_anims_.end(),
+                           [&](const FilterSlotAnim& a) {
+                               return a.filter == index && a.slot == slot;
+                           });
+    const Transaction* t = Transaction::active();
+    if (t == nullptr || t->duration() <= 0) {
+        if (it != filter_anims_.end()) {
+            filter_anims_.erase(it);
+        }
+        filters_[index].values[slot] = value;
+        return *this;
+    }
+    if (it == filter_anims_.end()) {
+        filter_anims_.push_back({index, slot, Animated<float>(filters_[index].values[slot])});
+        it = filter_anims_.end() - 1;
+    }
+    it->value.to(value, t->duration(), t->ease());
     return *this;
 }
 
@@ -872,7 +898,7 @@ void Layer::removeWhenSettled() {
 bool Layer::animating() const {
     return bounds_.animating() || position_.animating() || rotation_.animating() ||
            scale_.animating() || opacity_.animating() || color_.animating() ||
-           background_.animating() || border_color_.animating();
+           background_.animating() || border_color_.animating() || !filter_anims_.empty();
 }
 
 void Layer::step(float dt) {
@@ -884,6 +910,29 @@ void Layer::step(float dt) {
     color_.step(dt);
     background_.step(dt);
     border_color_.step(dt);
+    // Clock slots run by themselves (FilterUnit::Clock): seconds since they
+    // were last set. Not an animation — a layer never settles on them.
+    for (Filter& f : filters_) {
+        if (const FilterSpec* spec = findFilterSpec(f.mode)) {
+            for (size_t i = 0; i < spec->params.size(); ++i) {
+                if (spec->params[i].unit == FilterUnit::Clock) {
+                    f.values[i] += dt;
+                }
+            }
+        }
+    }
+    for (size_t i = 0; i < filter_anims_.size();) {
+        FilterSlotAnim& a = filter_anims_[i];
+        a.value.step(dt);
+        if (a.filter < filters_.size()) {
+            filters_[a.filter].values[a.slot] = a.value.value();
+        }
+        if (a.value.animating() && a.filter < filters_.size()) {
+            ++i;
+        } else {
+            filter_anims_.erase(filter_anims_.begin() + static_cast<long>(i));
+        }
+    }
     if (auto* boxes = std::get_if<BoxesContent>(&content_)) {
         smoothBoxes(*boxes, dt);
     }

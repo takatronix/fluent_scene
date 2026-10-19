@@ -175,6 +175,9 @@ void applyBinding(const CompiledScene::ParamBinding& b, const Value& v) {
             b.layer->border(border);
             break;
         }
+        case Target::FilterParam:
+            b.layer->setFilterParam(b.filter_index, b.filter_slot, v.num[0]);
+            break;
     }
 }
 
@@ -357,7 +360,17 @@ private:
 
         for (size_t i = 0; i < decl.filters.size(); ++i) {
             const FilterDecl& f = decl.filters[i];
-            layer->filter(f.value);
+            Filter value = f.value;
+            for (const auto& [slot, param] : f.param_refs) {
+                value.values[slot] = params().at(param).num[0];
+            }
+            layer->filter(value);
+            for (const auto& [slot, param] : f.param_refs) {
+                CompiledScene::ParamBinding b{layer, AttrId::Opacity, Target::FilterParam};
+                b.filter_index = i;
+                b.filter_slot = slot;
+                CompileAccess::paramBindings(scene_)[param].push_back(b);
+            }
             if (!f.image_input.empty()) {
                 const InputDecl* input = doc_.findInput(f.image_input);
                 if (input == nullptr || input->type != InputType::ImageRgba8) {

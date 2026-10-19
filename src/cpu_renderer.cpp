@@ -457,12 +457,63 @@ struct FilterStatePair {
     uint64_t stamp = 0;
 };
 
+// The CPU's low-resolution path for the generative liquid (its `quality`
+// slot): the raymarch runs once per stride×stride block and the result is
+// bilinearly upsampled — the figure is smooth, so 1/4 or 1/9 of the work
+// still reads as the same image. GPUs never take it (they spend quality on
+// the step budget instead); goldens pin quality 1 where both agree.
+int liquidCpuStride(float quality) {
+    return quality >= 0.75f ? 1 : quality >= 0.4f ? 2 : quality >= 0.25f ? 3 : 4;
+}
+
+void applyFilterCoarse(Buf& buf, const Buf& src, int mode, vec4 pa, vec4 pb, vec4 pc,
+                       int stride) {
+    const int cw = (buf.w + stride - 1) / stride + 1;
+    const int ch = (buf.h + stride - 1) / stride + 1;
+    std::vector<vec4> coarse(static_cast<size_t>(cw) * ch);
+    for (int cy = 0; cy < ch; ++cy) {
+        for (int cx = 0; cx < cw; ++cx) {
+            // sample at the block's corner pixel center (clamped to the
+            // buffer) and keep it premultiplied for the interpolation
+            const int x = std::min(cx * stride, buf.w - 1);
+            const int y = std::min(cy * stride, buf.h - 1);
+            const vec2 uv{(x + 0.5f) / buf.w, (y + 0.5f) / buf.h};
+            const vec4 o = filter_bodies::fs_apply(mode, uv, pa, pb, pc);
+            coarse[static_cast<size_t>(cy) * cw + cx] = {o.x * o.w, o.y * o.w, o.z * o.w, o.w};
+        }
+    }
+    const float inv = 1.0f / stride;
+    for (int y = 0; y < buf.h; ++y) {
+        const int cy = y / stride;
+        const float ty = (y - cy * stride) * inv;
+        const int cy1 = std::min(cy + 1, ch - 1);
+        for (int x = 0; x < buf.w; ++x) {
+            const int cx = x / stride;
+            const float tx = (x - cx * stride) * inv;
+            const int cx1 = std::min(cx + 1, cw - 1);
+            const vec4& a = coarse[static_cast<size_t>(cy) * cw + cx];
+            const vec4& b = coarse[static_cast<size_t>(cy) * cw + cx1];
+            const vec4& c = coarse[static_cast<size_t>(cy1) * cw + cx];
+            const vec4& d = coarse[static_cast<size_t>(cy1) * cw + cx1];
+            auto lerp2 = [&](float va, float vb, float vc, float vd) {
+                return (va * (1 - tx) + vb * tx) * (1 - ty) + (vc * (1 - tx) + vd * tx) * ty;
+            };
+            const float src_a = src.at(x, y)[3];
+            float* o = buf.at(x, y);
+            o[0] = lerp2(a.x, b.x, c.x, d.x) * src_a;
+            o[1] = lerp2(a.y, b.y, c.y, d.y) * src_a;
+            o[2] = lerp2(a.z, b.z, c.z, d.z) * src_a;
+            o[3] = lerp2(a.w, b.w, c.w, d.w) * src_a;
+        }
+    }
+}
+
 // Applies one filter to the buffer. `scale` converts logical units to
 // buffer pixels; `ext` is the local-space rect the buffer covers (§5-3).
 // `state` is non-null exactly when the filter's spec is stateful.
 void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext,
                  FilterStatePair* state) {
-    float values[5];
+    float values[kFilterSlots];
     plan::scaleFilterValues(f, scale, ext, static_cast<float>(buf.w),
                             static_cast<float>(buf.h), values);
     if (f.mode == FS_BLUR) {
@@ -513,19 +564,29 @@ void applyFilter(Buf& buf, const Filter& f, float scale, Rect ext,
         std::swap(state->ping, state->pong);
         g_filter_state = &state->ping;
     }
+    const vec4 pa{values[0], values[1], values[2], values[3]};
+    const vec4 pb{values[4], values[5], values[6], values[7]};
+    const vec4 pc{values[8], values[9], values[10], values[11]};
+    if (f.mode == FS_LIQUID) {
+        const int stride = liquidCpuStride(values[11]);
+        if (stride > 1) {
+            applyFilterCoarse(buf, src, f.mode, pa, pb, pc, stride);
+            g_filter_src = nullptr;
+            g_filter_image = nullptr;
+            g_filter_state = nullptr;
+            return;
+        }
+    }
     for (int y = 0; y < buf.h; ++y) {
         for (int x = 0; x < buf.w; ++x) {
             const float src_a = src.at(x, y)[3];
             const vec2 uv{(x + 0.5f) / buf.w, (y + 0.5f) / buf.h};
-            const vec4 out = filter_bodies::fs_apply(f.mode, uv, values[0], values[1],
-                                                     values[2], values[3], values[4]);
+            const vec4 out = filter_bodies::fs_apply(f.mode, uv, pa, pb, pc);
             float* d = buf.at(x, y);
             // Filters keep the source's alpha shape (resampling filters
             // approximate; exact per-filter alpha is refined with L1 golden
             // work). FS_OPACITY scales it.
-            const float a = (f.mode == FS_OPACITY || f.mode == FS_INKLINE)
-                                ? src_a * out.w
-                                : src_a;
+            const float a = filter_bodies::fs_shapes_alpha(f.mode) ? src_a * out.w : src_a;
             d[0] = out.x * a;
             d[1] = out.y * a;
             d[2] = out.z * a;

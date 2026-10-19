@@ -770,7 +770,7 @@ private:
                     layer.sublayers.push_back(parseLayer(s, doc, depth + 1));
                 }
             } else if (e.key == "filters") {
-                parseFilters(e.value, layer);
+                parseFilters(e.value, doc, layer);
             } else if (e.key == "mask") {
                 parseMask(e.value, layer);
             } else if (e.key == "transition") {
@@ -952,7 +952,7 @@ private:
         layer.content = std::move(content);
     }
 
-    void parseFilters(const YamlNode& n, LayerDecl& layer) {
+    void parseFilters(const YamlNode& n, const SceneDoc& doc, LayerDecl& layer) {
         if (!n.isSequence()) {
             error("validate.type", n.span,
                   "filters must be a sequence of { name: { params } } entries");
@@ -1022,6 +1022,15 @@ private:
                                                        : " (expected: " + valid + ")"));
                         continue;
                     }
+                    if (isParamRef(p.value)) {
+                        // An f32 param drives the slot at runtime; the
+                        // compiler starts it at the param's value.
+                        Value ref;
+                        if (parseParamRef(p.value, ValueKind::F32, doc, false, ref)) {
+                            decl.param_refs.emplace_back(slot, ref.param);
+                        }
+                        continue;
+                    }
                     float v = 0;
                     if (!readNumber(p.value, v)) {
                         error("validate.type", p.value.span, "expected a number");
@@ -1031,6 +1040,7 @@ private:
                     decl.set_params.emplace_back(slot, v);
                 }
                 std::sort(decl.set_params.begin(), decl.set_params.end());
+                std::sort(decl.param_refs.begin(), decl.param_refs.end());
             }
             layer.filters.push_back(std::move(decl));
         }

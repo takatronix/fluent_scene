@@ -456,8 +456,10 @@ const char* fs_diagnostics(FsInstance* inst) {
 
 /// Live filter tweaking by public name: updates the parameter slots of the
 /// layer's first filter of that kind, or appends one when the chain has
-/// none. All five slots are given in filters_def.h order (pass the defaults
-/// for slots the filter does not use); a filter's image parameter and the
+/// none. The first five slots are given in filters_def.h order (pass the
+/// defaults for slots the filter does not use; slots 5+ keep their value,
+/// or the table default on append — fs_layer_set_filter_param reaches
+/// them by name); a filter's image parameter and the
 /// rest of the chain are left untouched, so a slider driving
 /// `beauty.smoothing` composes with a `lut` grade on the same layer.
 /// Filter parameters are compile-time literals in Scene YAML — this is the
@@ -481,8 +483,12 @@ int fs_layer_set_filter(FsInstance* inst, const char* layer_id, const char* filt
                 }
             }
             if (!replaced) {
+                // slots past the five start at the table defaults
                 Filter f;
                 f.mode = spec.mode;
+                for (size_t i = 0; i < spec.params.size(); ++i) {
+                    f.values[i] = spec.params[i].default_value;
+                }
                 std::copy(values, values + 5, f.values);
                 chain.push_back(f);
             }
@@ -492,6 +498,45 @@ int fs_layer_set_filter(FsInstance* inst, const char* layer_id, const char* filt
             }
             return 1;
         }
+    }
+    return 0;
+}
+
+/// One parameter of the layer's first filter of that kind, by name — any
+/// slot (liquid has twelve). `duration` > 0 animates from the current value
+/// (ease in-out), like a $params `animate`; 0 snaps. Clock slots (liquid's
+/// time / splash) restart their count from the value. Returns 0 for an
+/// unknown layer / filter / parameter or a layer without that filter.
+EMSCRIPTEN_KEEPALIVE
+int fs_layer_set_filter_param(FsInstance* inst, const char* layer_id, const char* filter_name,
+                              const char* param, float value, float duration) {
+    Layer* target = inst->scene->stage().find(layer_id);
+    if (target == nullptr) {
+        return 0;
+    }
+    for (const FilterSpec& spec : filterTable()) {
+        if (spec.name != std::string(filter_name)) {
+            continue;
+        }
+        int slot = -1;
+        for (size_t i = 0; i < spec.params.size(); ++i) {
+            if (spec.params[i].name == std::string(param)) {
+                slot = static_cast<int>(i);
+            }
+        }
+        const std::vector<Filter>& chain = target->filters();
+        for (size_t i = 0; i < chain.size() && slot >= 0; ++i) {
+            if (chain[i].mode == spec.mode) {
+                if (duration > 0) {
+                    Transaction t(duration, Ease::InOut);
+                    target->setFilterParam(i, slot, value);
+                } else {
+                    target->setFilterParam(i, slot, value);
+                }
+                return 1;
+            }
+        }
+        return 0;
     }
     return 0;
 }
@@ -620,7 +665,7 @@ int fs_layer_clear_filters(FsInstance* inst, const char* layer_id) {
 /// The filter catalog as JSON — the same single-source filterTable() that
 /// feeds Scene parsing, so a page can build its UI without a hand-kept copy.
 /// [{"name":..,"mode":..,"summary":..,"params":[{"name":..,"def":..,
-///   "unit":"scalar"|"length"|"coord_x"|"coord_y"}]}]
+///   "unit":"scalar"|"length"|"coord_x"|"coord_y"|"clock"}]}]
 EMSCRIPTEN_KEEPALIVE
 const char* fs_filters_json() {
     static std::string json;
@@ -648,6 +693,7 @@ const char* fs_filters_json() {
                 const char* unit = p.unit == FilterUnit::Length   ? "length"
                                    : p.unit == FilterUnit::CoordX ? "coord_x"
                                    : p.unit == FilterUnit::CoordY ? "coord_y"
+                                   : p.unit == FilterUnit::Clock  ? "clock"
                                                                   : "scalar";
                 json += "{\"name\":\"" + esc(p.name) + "\",\"def\":" +
                         std::to_string(p.default_value) + ",\"unit\":\"" +

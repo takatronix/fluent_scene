@@ -92,6 +92,8 @@ inline vec2 abs_(vec2 v) { return {abs_(v.x), abs_(v.y)}; }
 inline vec3 abs3_(vec3 v) { return {abs_(v.x), abs_(v.y), abs_(v.z)}; }
 inline float tanh_(float v) { return std::tanh(v); }
 inline vec3 cos3_(vec3 v) { return {std::cos(v.x), std::cos(v.y), std::cos(v.z)}; }
+inline vec3 sin3_(vec3 v) { return {std::sin(v.x), std::sin(v.y), std::sin(v.z)}; }
+inline vec3 exp3_(vec3 v) { return {std::exp(v.x), std::exp(v.y), std::exp(v.z)}; }
 inline vec2 normalize2_(vec2 v) { return v / length(v); }
 inline vec3 normalize3_(vec3 v) { return v / length(v); }
 inline vec2 min2_(vec2 a, vec2 b) { return {min_(a.x, b.x), min_(a.y, b.y)}; }
@@ -117,6 +119,18 @@ inline vec2 abs(vec2 v) { return abs_(v); }
 inline vec3 abs(vec3 v) { return abs3_(v); }
 inline float tanh(float v) { return tanh_(v); }
 inline vec3 cos(vec3 v) { return cos3_(v); }
+inline vec3 sin(vec3 v) { return sin3_(v); }
+inline vec3 exp(vec3 v) { return exp3_(v); }
+// GLSL reflect / refract (incident I, unit normal N, ratio eta).
+inline vec3 reflect(vec3 i, vec3 n) { return i - n * (2.0f * dot(n, i)); }
+inline vec3 refract(vec3 i, vec3 n, float eta) {
+    const float d = dot(n, i);
+    const float k = 1.0f - eta * eta * (1.0f - d * d);
+    if (k < 0.0f) {
+        return vec3(0.0f);
+    }
+    return i * eta - n * (eta * d + std::sqrt(k));
+}
 inline vec2 normalize(vec2 v) { return normalize2_(v); }
 inline vec3 normalize(vec3 v) { return normalize3_(v); }
 inline vec2 min(vec2 a, vec2 b) { return min2_(a, b); }

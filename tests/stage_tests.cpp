@@ -337,6 +337,71 @@ void testRenderDeterminism() {
     CHECK(big.width == 640 && big.height == 400);
 }
 
+// Filter slots as live state: Clock slots count dt by themselves (and
+// restart from a set value), setFilterParam animates inside a Transaction
+// and snaps outside one, and a filter slot mid-animation keeps the layer
+// "animating" until it settles.
+void testFilterClockAndAnim() {
+    Stage stage(64, 64);
+    Layer& l = stage.rect({0, 0, 64, 64}).filter(Liquid().time(1.0f).level(0.2f));
+    stage.advance(0.25f);
+    CHECK(near(l.filters()[0].values[0], 1.25f));  // time: Clock
+    CHECK(near(l.filters()[0].values[8], 9.25f));  // splash: Clock (default 9)
+    CHECK(near(l.filters()[0].values[1], 0.2f));   // level: Scalar, untouched
+    l.setFilterParam(0, 8, 0.0f);                  // a tap: splash age restarts
+    stage.advance(0.5f);
+    CHECK(near(l.filters()[0].values[8], 0.5f));
+    {
+        Transaction t(1.0f, Ease::Linear);
+        l.setFilterParam(0, 1, 1.0f);
+    }
+    stage.advance(0.5f);
+    CHECK(near(l.filters()[0].values[1], 0.6f, 0.01f));
+    stage.advance(0.6f);
+    CHECK(near(l.filters()[0].values[1], 1.0f));
+    l.setFilterParam(0, 1, 0.3f);  // outside a Transaction: immediate
+    CHECK(near(l.filters()[0].values[1], 0.3f));
+    // A bad index or slot is a diagnosed no-op, never a crash.
+    l.setFilterParam(3, 0, 1.0f);
+    l.setFilterParam(0, kFilterSlots, 1.0f);
+    CHECK(!stage.drainDiagnostics().empty());
+}
+
+// The liquid on the CPU: a figure with its own alpha on a transparent
+// ground, and the coarse path (quality < 0.75: one raymarch per block,
+// bilinear upsample) still the same picture as full resolution.
+void testLiquidCpu() {
+    std::vector<uint8_t> opaque(4 * 4 * 4, 255);
+    const ImageView src{4, 4, opaque.data(), 0};
+    auto render = [&](float quality) {
+        Stage stage(200, 120);
+        stage.image(src).frame({0, 0, 200, 120}).filter(
+            Liquid().time(2.0f).think(0.5f).quality(quality));
+        CpuRenderer r;
+        const Surface& s = r.render(stage, 0.0f);
+        return std::vector<uint8_t>(s.pixels, s.pixels + s.strideBytes * s.height);
+    };
+    const std::vector<uint8_t> full = render(1.0f);
+    const std::vector<uint8_t> coarse = render(0.3f);
+    const size_t stride = 200 * 4;
+    auto alpha = [&](const std::vector<uint8_t>& p, int x, int y) {
+        return p[static_cast<size_t>(y) * stride + x * 4 + 3];
+    };
+    CHECK(alpha(full, 100, 60) > 200);   // the body at the center
+    CHECK(alpha(full, 2, 2) < 8);        // transparent ground at the corner
+    CHECK(alpha(coarse, 100, 60) > 200);
+    CHECK(alpha(coarse, 2, 2) < 8);
+    double sum = 0;
+    for (size_t i = 0; i < full.size(); ++i) {
+        sum += std::abs(static_cast<int>(full[i]) - static_cast<int>(coarse[i]));
+    }
+    const double mean = sum / full.size();
+    CHECK(mean < 6.0);
+    if (mean >= 6.0) {
+        std::fprintf(stderr, "  liquid coarse mean diff %.2f\n", mean);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -349,6 +414,8 @@ int main() {
     testFilterTable();
     testRenderDeterminism();
     testPolygonFillExact();
+    testFilterClockAndAnim();
+    testLiquidCpu();
     if (g_failures == 0) {
         std::printf("all stage_tests passed\n");
         return 0;

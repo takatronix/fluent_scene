@@ -147,20 +147,29 @@ std::string flowFilters(const std::vector<FilterDecl>& filters) {
     for (size_t i = 0; i < filters.size(); ++i) {
         const FilterDecl& f = filters[i];
         out += (i != 0 ? ", " : "") + std::string("{ ") + f.spec->name + ": ";
-        if (f.set_params.empty() && f.image_input.empty()) {
+        if (f.set_params.empty() && f.param_refs.empty() && f.image_input.empty()) {
             out += "{}";
         } else {
             out += "{ ";
-            // The image parameter leads, then the explicit slots in table
-            // order — one canonical spelling per document.
+            // The image parameter leads, then the explicit slots (literals
+            // and $params refs merged) in table order — one canonical
+            // spelling per document.
+            std::vector<std::pair<int, std::string>> slots;
+            for (const auto& [slot, value] : f.set_params) {
+                slots.emplace_back(slot, formatNumber(value));
+            }
+            for (const auto& [slot, param] : f.param_refs) {
+                slots.emplace_back(slot, "$params." + param);
+            }
+            std::sort(slots.begin(), slots.end(),
+                      [](const auto& a, const auto& b) { return a.first < b.first; });
             if (!f.image_input.empty()) {
                 out += std::string(f.spec->image_param) + ": $inputs." + f.image_input;
             }
-            for (size_t j = 0; j < f.set_params.size(); ++j) {
-                const auto& [slot, value] = f.set_params[j];
+            for (size_t j = 0; j < slots.size(); ++j) {
                 out += (j != 0 || !f.image_input.empty() ? ", " : "") +
-                       std::string(f.spec->params[static_cast<size_t>(slot)].name) + ": " +
-                       formatNumber(value);
+                       std::string(f.spec->params[static_cast<size_t>(slots[j].first)].name) +
+                       ": " + slots[j].second;
             }
             out += " }";
         }

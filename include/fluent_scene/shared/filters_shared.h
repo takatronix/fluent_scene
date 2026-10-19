@@ -9,7 +9,7 @@
 //
 // Its sibling filters_def.h is the single source of the filter *metadata*
 // (public names, parameter names/defaults/units); the parameter order
-// declared there IS the slot order p0..p4 used by fs_apply below. Adding a
+// declared there IS the slot order p0..p11 used by fs_apply below. Adding a
 // filter = one function + one dispatch line here + one block in
 // filters_def.h. Mode ids never appear anywhere else.
 //
@@ -84,8 +84,17 @@ const int FS_MIRROR = 51;
 const int FS_THERMAL = 52;
 const int FS_GLITCH = 53;
 const int FS_TEXTURE = 54;
+const int FS_LIQUID = 55;
 
 #ifdef FS_SAMPLE
+
+// Filters whose output alpha multiplies the source's (everyone else keeps
+// the source's alpha shape): opacity scales it, inkline draws its own
+// strokes, liquid is a figure on a transparent ground. Shared by every
+// backend's output pass.
+bool fs_shapes_alpha(int mode) {
+    return mode == FS_OPACITY || mode == FS_INKLINE || mode == FS_LIQUID;
+}
 
 float fs_luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
@@ -2290,11 +2299,494 @@ vec3 fs_crt(vec2 uv, float curvature, float scan, float mask, float glow,
                 sqrt(max(lit.z, 0.0)));
 }
 
-// ---- dispatch --------------------------------------------------------------
-// The only place slot values (p0..p4, in table order) meet parameter names.
-// Returns rgba; alpha is 1 except for filters that define it.
+// ---- living liquid ---------------------------------------------------------
+// fs_liquid — Kepler's "Liquid" figure as a filter: a blob of luminous
+// liquid that keeps folding into new shapes and sheds glowing vapour.
+// Design: docs/design/liquid.ja.md.
+//
+// A raymarched metaball SDF (a core smooth-merged with four wandering
+// lobes, splash and speech droplets, a strand reaching after the pointer,
+// travelling waves), shaded as wet iridescent metal: a procedural studio
+// reflected through a thin-film hue shift, two sharp speculars, and silk
+// currents of light inside (warped gyroid sheets) seen through refraction.
+// Around it a procedural vapour and a bloom halo, composited and tone
+// mapped in the same pass. Generative: the source is not read; the output
+// alpha is the figure's (fs_shapes_alpha), so it floats over whatever is
+// below the layer.
+//
+// A pure function of its slots, like fs_fractal: `time` and `splash` are
+// Clock slots the engine advances by dt, the mood (listen/think/speak, the
+// rest is idle) and the pointer are plain values a $params `animate` eases.
+// Kepler's page integrated per-state phase rates on the host; here every
+// moving part runs on two fixed clocks (calm and busy) and the mood blends
+// their RESULTS — blending phases would turn a rate change at t = 10⁴ s into
+// a lurch. Droplets are closed-form damped springs instead of a particle
+// list: a tap throws five, loud speech throws three in turns.
 
-vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p4) {
+// Raymarch state shared by the SDF and the shading (a struct keeps the map
+// signature short; C++ passes it by reference, GLSL by value).
+struct FsLiquid {
+    vec4 lobe[4];
+    vec4 drop[8];
+    vec4 reach;
+    vec4 ptr;
+    vec3 shift;
+    float r0;
+    float amp;
+    float busy;
+    float time;
+    float lean;
+    float rip;
+    float prip;
+    float shock_c;
+    float shock_a;
+};
+#ifdef __cplusplus
+#define FS_LQ_IN const FsLiquid&
+#else
+#define FS_LQ_IN FsLiquid
+#endif
+
+vec3 fs_lq_xyz(vec4 v) { return vec3(v.x, v.y, v.z); }
+
+float fs_lq_smin(float a, float b, float k) {
+    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+    return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+// 3D value noise over the lsd hash (lattice z folded into the 2D hash).
+float fs_lq_hash3(vec3 p) { return fs_lsd_hash(vec2(p.x + p.z * 57.0, p.y - p.z * 113.0)); }
+
+float fs_lq_vnoise3(vec3 p) {
+    vec3 ip = floor(p);
+    vec3 f = p - ip;
+    vec3 s = f * f * (vec3(3.0) - f * 2.0);
+    float a = fs_lq_hash3(ip);
+    float b = fs_lq_hash3(ip + vec3(1.0, 0.0, 0.0));
+    float c = fs_lq_hash3(ip + vec3(0.0, 1.0, 0.0));
+    float d = fs_lq_hash3(ip + vec3(1.0, 1.0, 0.0));
+    float e = fs_lq_hash3(ip + vec3(0.0, 0.0, 1.0));
+    float g = fs_lq_hash3(ip + vec3(1.0, 0.0, 1.0));
+    float h = fs_lq_hash3(ip + vec3(0.0, 1.0, 1.0));
+    float k = fs_lq_hash3(ip + vec3(1.0, 1.0, 1.0));
+    float lo = mix(mix(a, b, s.x), mix(c, d, s.x), s.y);
+    float hi = mix(mix(e, g, s.x), mix(h, k, s.x), s.y);
+    return mix(lo, hi, s.z);
+}
+
+// Travelling skin waves at phase w (two scales).
+float fs_lq_waves(vec3 p, float w) {
+    float v = sin(p.x * 4.7 + w) * sin(p.y * 4.1 - w * 0.8) * sin(p.z * 4.4 + w * 1.2);
+    v += 0.45 * sin(dot(p, vec3(8.3, 6.1, -7.4)) + w * 1.9) *
+         sin(dot(p, vec3(-5.2, 9.0, 4.1)) - w * 1.3);
+    return v;
+}
+
+float fs_lq_map(vec3 pw, FS_LQ_IN q) {
+    vec3 p = pw - q.shift;
+    float d = length(p) - q.r0;
+    for (int i = 0; i < 4; ++i) {
+        d = fs_lq_smin(d, length(p - fs_lq_xyz(q.lobe[i])) - q.lobe[i].w, 0.34);
+    }
+    for (int i = 0; i < 8; ++i) {
+        if (q.drop[i].w > 0.001) {
+            d = fs_lq_smin(d, length(p - fs_lq_xyz(q.drop[i])) - q.drop[i].w, 0.15);
+        }
+    }
+    // the strand that reaches after the pointer, joined by a wide neck
+    if (q.reach.w > 0.001) {
+        d = fs_lq_smin(d, length(p - fs_lq_xyz(q.reach)) - q.reach.w, 0.26);
+    }
+    // big slow folds that keep changing the silhouette (calm clock only)
+    float wf = q.time * 1.0;
+    float ca = cos(wf * 0.07);
+    float sa = sin(wf * 0.07);
+    vec3 f = vec3((ca * p.x - sa * p.y) * 2.1, (sa * p.x + ca * p.y) * 2.1, p.z * 2.1);
+    d -= (q.amp * 2.2 + 0.025) * sin(f.x + wf * 0.31) * sin(f.y * 1.2 - wf * 0.23 + 1.0) *
+         sin(f.z + wf * 0.19 + 2.0);
+    // skin waves: the calm and the busy clock, blended by the mood
+    d -= q.amp * mix(fs_lq_waves(p, q.time * 1.0), fs_lq_waves(p, q.time * 2.4 + 1.3), q.busy);
+    float l = length(p) + 0.0001;
+    float front = max(0.0, -p.z / l);
+    // listening: the face toward the viewer swells and ripples from its centre
+    d -= q.lean * front * front * front * 0.16;
+    if (q.rip > 0.0001) {
+        d -= q.rip * sin(length(vec2(p.x, p.y)) * 21.0 - q.time * 8.0) * front * front;
+    }
+    // under the pointer: the skin swells toward it and ripples spread
+    if (q.ptr.w > 0.001) {
+        vec2 dp = vec2(p.x - q.ptr.x, p.y - q.ptr.y);
+        float pd = length(dp);
+        d -= q.ptr.w * (0.07 * exp(-pd * pd * 9.0) +
+                        q.prip * sin(pd * 26.0 - q.time * 8.0) * exp(-pd * 3.5)) *
+             (1.0 - smoothstep(-0.6, 0.1, p.z));
+    }
+    // the tap's shockwave: a ring that runs from the front round to the back
+    float sh = (-p.z / l - q.shock_c) * 6.0;
+    d -= q.shock_a * exp(-sh * sh);
+    return d;
+}
+
+vec3 fs_lq_normal(vec3 p, FS_LQ_IN q) {
+    float e = 0.0035;
+    float a = fs_lq_map(p + vec3(e, -e, -e), q);
+    float b = fs_lq_map(p + vec3(-e, -e, e), q);
+    float c = fs_lq_map(p + vec3(-e, e, -e), q);
+    float d = fs_lq_map(p + vec3(e, e, e), q);
+    return normalize(vec3(e, -e, -e) * a + vec3(-e, -e, e) * b + vec3(-e, e, -e) * c +
+                     vec3(e, e, e) * d);
+}
+
+// The studio round the substance, tinted by the mood: dark, a big soft key,
+// a coloured strip, a horizon band, and a light from behind for refraction.
+vec3 fs_lq_env(vec3 dw, float env, vec3 c0, vec3 c1, vec3 c2) {
+    float ce = cos(env);
+    float se = sin(env);
+    vec3 d = vec3(ce * dw.x - se * dw.z, dw.y, se * dw.x + ce * dw.z);
+    float r2 = 0.25 * sin(env * 0.7);
+    float cr = cos(r2);
+    float sr = sin(r2);
+    d = vec3(cr * d.x - sr * d.y, sr * d.x + cr * d.y, d.z);
+    vec3 c = mix(c0 * 0.06, c1 * 0.30, smoothstep(-0.3, 0.95, d.y)) +
+             c0 * (0.22 * (1.0 - smoothstep(-0.9, 0.2, d.y)));
+    c += vec3(1.0, 0.98, 0.96) * (1.5 * smoothstep(0.80, 0.96, dot(d, vec3(-0.5354, 0.6036, -0.5354))));
+    c += c2 * (1.2 * smoothstep(0.62, 0.9, dot(d, vec3(0.9113, -0.1608, -0.3752))));
+    float band = max(0.0, 1.0 - abs(d.y + 0.1 * sin(d.x * 3.0 + env)) * 5.0);
+    c += c1 * (0.9 * band * band * band);
+    c += c1 * (0.5 * smoothstep(0.55, 0.95, dot(d, vec3(0.0995, -0.5970, 0.7960))));
+    return c;
+}
+
+// Silk currents of light inside: warped gyroid sheets coloured round the
+// body, at flow phase `fl`, spin `spin`, twist `swirl`.
+vec3 fs_lq_currents(vec3 qw, float fl, float spin, float swirl, float sharp, vec3 c0, vec3 c1,
+                    vec3 c2) {
+    float r = length(qw);
+    float a = spin + swirl * (0.7 - r);
+    float ca = cos(a);
+    float sa = sin(a);
+    vec3 q = vec3(ca * qw.x - sa * qw.z, qw.y, sa * qw.x + ca * qw.z);
+    vec3 w = q * 3.3;
+    w += sin(vec3(w.z, w.x, w.y) * 1.1 + vec3(0.0, 1.7, 3.1) + vec3(fl)) * 0.55;
+    w += sin(vec3(w.y, w.z, w.x) * 2.3 + vec3(2.3, 0.4, 1.1) - vec3(fl * 1.6)) * 0.25;
+    float g = dot(sin(w), cos(vec3(w.y, w.z, w.x) + vec3(fl * 0.3)));
+    float sheet = exp(-abs(g) * sharp);
+    float ang = atan(q.z, q.x) + w.y * 0.3;
+    vec3 col = c0 * (0.5 + 0.5 * cos(ang)) + c1 * (0.5 + 0.5 * cos(ang - 2.094)) +
+               c2 * (0.5 + 0.5 * cos(ang + 2.094));
+    return col * (0.04 + sheet * 1.7) + vec3(pow(sheet, 10.0) * 0.7);
+}
+
+// Mood blend of four per-state constants (idle, listening, thinking,
+// speaking) by the weights in m.
+float fs_lq_m4(vec4 m, float a, float b, float c, float d) {
+    return m.x * a + m.y * b + m.z * c + m.w * d;
+}
+vec3 fs_lq_m4c(vec4 m, vec3 a, vec3 b, vec3 c, vec3 d) {
+    return a * m.x + b * m.y + c * m.z + d * m.w;
+}
+
+// A closed-form droplet: thrown from radius r0 along `dir` at speed v0,
+// pulled back by surface tension (damped spring k = 2, c = 1.4).
+vec3 fs_lq_drop_pos(vec3 dir, float r0, float v0, float age) {
+    float om = 1.2288;
+    float r = exp(-0.7 * age) * (r0 * cos(om * age) + (v0 + 0.7 * r0) / om * sin(om * age));
+    return dir * r;
+}
+
+vec3 fs_lq_dir(float h1, float h2, float zbias) {
+    float a = h1 * 6.2831853;
+    float z = clamp((h2 - 0.5) * 0.8 + zbias, -0.95, 0.95);
+    float s = sqrt(1.0 - z * z);
+    return vec3(cos(a) * s, sin(a) * s, z);
+}
+
+vec4 fs_liquid(vec2 uv, vec4 pa, vec4 pb, vec4 pc) {
+    float t = pa.x;
+    float level = clamp(pa.y, 0.0, 1.0);
+    // mood weights (idle, listening, thinking, speaking); idle is the rest
+    vec4 m = vec4(0.0, clamp(pa.z, 0.0, 1.0), clamp(pa.w, 0.0, 1.0), clamp(pb.x, 0.0, 1.0));
+    float msum = m.y + m.z + m.w;
+    if (msum > 1.0) {
+        m = vec4(0.0, m.y / msum, m.z / msum, m.w / msum);
+    } else {
+        m.x = 1.0 - msum;
+    }
+    float presence = clamp(pb.w, 0.0, 1.0);
+    float age = max(pc.x, 0.0);
+    float hue = pc.y;
+    float size = max(pc.z, 0.05);
+    float quality = clamp(pc.w, 0.1, 1.0);
+
+    // figure space: the short side spans [-1, 1] (× size), y up
+    float ar = FS_TEXEL.y / FS_TEXEL.x;
+    vec2 k = ar > 1.0 ? vec2(ar, 1.0) : vec2(1.0, 1.0 / ar);
+    vec2 fp = vec2((uv.x - 0.5) * 2.0 * k.x, (0.5 - uv.y) * 2.0 * k.y) / size;
+    vec2 pp = vec2((pb.y - 0.5) * 2.0 * k.x, (0.5 - pb.z) * 2.0 * k.y) / size;
+
+    // ---- the mood --------------------------------------------------------
+    vec3 c0 = fs_lq_m4c(m, vec3(0.05, 0.16, 0.62), vec3(0.00, 0.30, 0.70), vec3(0.18, 0.06, 0.62),
+                        vec3(0.55, 0.10, 0.12));
+    vec3 c1 = fs_lq_m4c(m, vec3(0.22, 0.62, 1.00), vec3(0.20, 0.95, 1.00), vec3(0.56, 0.30, 1.00),
+                        vec3(1.00, 0.55, 0.24));
+    vec3 c2 = fs_lq_m4c(m, vec3(0.55, 0.42, 1.00), vec3(0.45, 1.00, 0.80), vec3(1.00, 0.36, 0.86),
+                        vec3(1.00, 0.30, 0.55));
+    if (abs(hue) > 0.01) {
+        c0 = max(fs_hue_rotate(c0, hue), vec3(0.0));
+        c1 = max(fs_hue_rotate(c1, hue), vec3(0.0));
+        c2 = max(fs_hue_rotate(c2, hue), vec3(0.0));
+    }
+    float voice = level * (m.y + m.w + 0.4 * (m.x + m.z));
+    float fl = max(0.0, 1.0 - age / 1.1);
+    float amp0 = fs_lq_m4(m, 0.022, 0.024, 0.036, 0.026);
+    float lobe_a = fs_lq_m4(m, 0.17, 0.15, 0.22, 0.19);
+    float sharp = fs_lq_m4(m, 8.0, 7.5, 8.5, 7.0);
+    float glow0 = fs_lq_m4(m, 0.9, 1.0, 1.05, 1.1);
+    float metal = fs_lq_m4(m, 0.7, 0.62, 0.6, 0.6);
+    float rad = fs_lq_m4(m, 0.40, 0.41, 0.38, 0.41);
+    float swirl = fs_lq_m4(m, 0.0, 0.0, 1.8, 0.3);
+    float bloom = fs_lq_m4(m, 0.8, 1.0, 0.95, 1.05) * (1.0 + voice * 0.4 + fl * 0.5);
+    float v_inj = fs_lq_m4(m, 0.55, 0.75, 0.8, 0.8) * (1.0 + voice * 1.2);
+    float v_out = fs_lq_m4(m, 0.10, 0.16, 0.06, 0.18) + voice * 0.35 + fl * 0.9;
+    float v_swirl = fs_lq_m4(m, 0.05, 0.05, 0.85, 0.12);
+    // how busy each clock family runs (0 = calm clock, 1 = busy clock)
+    float busy_wave = clamp((fs_lq_m4(m, 1.0, 1.98, 2.42, 2.2) + voice * 3.0 + fl * 4.0 - 1.0) / 1.4,
+                            0.0, 1.0);
+    float busy_lobe = clamp((fs_lq_m4(m, 0.22, 0.35, 0.75, 0.45) + voice * 0.6 + fl * 1.5 - 0.22) /
+                                0.53, 0.0, 1.0);
+    float busy_flow = clamp((fs_lq_m4(m, 0.22, 0.45, 1.25, 0.65) + voice * 0.9 + fl * 1.2 - 0.22) /
+                                1.03, 0.0, 1.0);
+
+    FsLiquid q;
+    q.time = t;
+    q.busy = busy_wave;
+    q.amp = amp0 * (1.0 + voice * 1.4) + fl * 0.02;
+    float breathe = 1.0 + (0.045 * m.x + 0.02 * (1.0 - m.x)) * sin(t * 1.1);
+    float bounce = 0.1 * sin(age * 15.0) * exp(-age * 4.0) * step(age, 2.0);
+    q.r0 = rad * 0.82 * breathe *
+           (1.0 + m.w * level * 0.14 + (1.0 - m.w) * voice * 0.05 + bounce);
+    q.lean = m.y * (0.25 + level * 1.1);
+    q.rip = m.y * (0.004 + level * 0.02);
+    q.prip = 0.006 + 0.016 * 0.4 * presence;
+    q.shock_c = 1.0 - min(2.0, age * 2.4);
+    q.shock_a = fl * fl * 0.07;
+
+    // the lobes wander on Lissajous paths, calm and busy clocks blended
+    float la = lobe_a * 1.35 * (1.0 + voice * 0.35 + fl * 0.4);
+    for (int i = 0; i < 4; ++i) {
+        float fi = float(i);
+        float ts = t * 0.22 + fi * 1.7;
+        float tf = t * 0.75 + fi * 1.7 + 3.1;
+        vec3 ps = vec3(sin(ts * (0.9 + fi * 0.13) + fi * 2.1) * 1.15,
+                       sin(ts * (0.7 + fi * 0.17) + fi * 0.8),
+                       cos(ts * (0.8 + fi * 0.11) + fi * 1.3));
+        vec3 pf = vec3(sin(tf * (0.9 + fi * 0.13) + fi * 2.1) * 1.15,
+                       sin(tf * (0.7 + fi * 0.17) + fi * 0.8),
+                       cos(tf * (0.8 + fi * 0.11) + fi * 1.3));
+        vec3 lp = mix(ps, pf, busy_lobe) * la - vec3(0.0, 0.0, q.lean * 0.12);
+        float lr = mix(sin(ts * 1.3 + fi), sin(tf * 1.3 + fi), busy_lobe);
+        q.lobe[i] = vec4(lp, q.r0 * (0.62 + 0.14 * lr) * (1.0 + m.w * level * 0.25));
+    }
+
+    // droplets: a tap throws five (seeded by when it happened), loud speech
+    // throws three in turns; each falls back in or pinches off and fades
+    float seed = floor((t - age) * 7.0);
+    for (int i = 0; i < 5; ++i) {
+        float fi = float(i);
+        float h1 = fs_lsd_hash(vec2(seed + fi * 3.1, 11.7));
+        float h2 = fs_lsd_hash(vec2(fi * 5.3, seed + 2.9));
+        float h3 = fs_lsd_hash(vec2(seed - fi * 1.7, fi + 7.3));
+        float a = (fi + 0.6 * h1) / 5.0 * 6.2831853;
+        vec3 dir = normalize(vec3(cos(a), sin(a), -0.25));
+        vec3 dp = fs_lq_drop_pos(dir, rad * 0.9 * 0.9, 1.7 + 0.6 * h2, age);
+        float dr = (0.05 + 0.035 * h3) * exp(-0.5 * age) * (1.0 - smoothstep(1.4, 2.2, age));
+        q.drop[i] = vec4(dp, dr);
+    }
+    float speech = m.w * smoothstep(0.3, 0.55, level);
+    for (int j = 0; j < 3; ++j) {
+        float fj = float(j);
+        float ph = t + fj * 0.5667;
+        float cyc = floor(ph / 1.7);
+        float da = ph - cyc * 1.7;
+        vec3 dir = fs_lq_dir(fs_lsd_hash(vec2(cyc, fj * 7.7 + 3.3)),
+                             fs_lsd_hash(vec2(fj * 3.9 + 1.1, cyc)), -0.2);
+        vec3 dp = fs_lq_drop_pos(dir, rad * 0.9 * 0.9, 0.7 + level * 1.1, da);
+        float dr = (0.035 + 0.045 * level) * speech * smoothstep(0.0, 0.15, da) *
+                   (1.0 - smoothstep(1.0, 1.7, da));
+        q.drop[5 + j] = vec4(dp, dr);
+    }
+
+    // the pointer: the body leans toward it, a strand reaches after it
+    float pr = length(pp) + 0.0001;
+    vec2 pu = pp / pr;
+    vec2 sh = pu * (min(pr, 1.0) * 0.07 * presence);
+    q.shift = vec3(sh.x, sh.y, 0.0);
+    float reach_d = min(pr, q.r0 + 0.12 + min(0.32, max(0.0, pr - q.r0) * 0.6));
+    q.reach = vec4(pu.x * reach_d - sh.x, pu.y * reach_d - sh.y, -0.18,
+                   (0.085 + 0.03 * sin(t * 2.3)) * presence *
+                       smoothstep(0.0, 1.0, (pr - q.r0 * 0.6) * 3.0));
+    q.ptr = vec4(pp.x - sh.x, pp.y - sh.y, 0.0,
+                 presence * (1.0 - smoothstep(0.0, 1.0, (pr - 0.9) * 2.0)));
+
+    // ---- 1. the liquid ---------------------------------------------------
+    // integer pixel coordinates: the hashes below amplify input drift ×10³,
+    // so they must not see the interpolated uv (CPU/GPU parity)
+    vec2 px = floor(uv * vec2(1.0 / FS_TEXEL.x, 1.0 / FS_TEXEL.y));
+    vec3 ro = vec3(0.0, 0.0, -3.0);
+    vec3 rd = normalize(vec3(fp.x, fp.y, 3.0));
+    float glow = glow0 * (1.0 + voice * 0.5 + fl * 0.6);
+    float env = t * 0.14;
+    vec3 lcol = vec3(0.0);
+    float lalpha = 0.0;
+    float min_d = 9.0;
+    float b = dot(ro, rd);
+    float hh = b * b - dot(ro, ro) + 1.15 * 1.15;
+    bool inside = hh > 0.0;
+    if (inside) {
+        hh = sqrt(hh);
+        float tt = -b - hh;
+        float t1 = -b + hh;
+        bool hit = false;
+        tt += 0.02 * fs_lsd_hash(px);
+        float steps = floor(20.0 + 28.0 * quality);
+        for (int i = 0; i < 48; ++i) {
+            if (float(i) >= steps) {
+                break;
+            }
+            float d = fs_lq_map(ro + rd * tt, q);
+            min_d = min(min_d, d);
+            if (d < 0.0012 * tt) {
+                hit = true;
+                break;
+            }
+            tt += d * 0.8;
+            if (tt > t1) {
+                break;
+            }
+        }
+        if (hit) {
+            vec3 p = ro + rd * tt;
+            vec3 n = fs_lq_normal(p, q);
+            float ndv = clamp(dot(n, vec3(0.0) - rd), 0.0, 1.0);
+            float fr = 0.04 + 0.96 * pow(1.0 - ndv, 5.0);
+            vec3 rf = reflect(rd, n);
+            // thin film: the hue drifts with the viewing angle and the skin
+            float th = ndv * 1.3 + 0.3 * sin(dot(p, vec3(3.1, 2.3, -2.7)) * 1.6 + t * 0.3) +
+                       env * 0.05;
+            vec3 film = vec3(0.5) + cos(vec3(th, th + 0.33, th + 0.67) * 6.2832) * 0.5;
+            film = mix(film, film * (c1 + c2) * 0.9, 0.45);
+            vec3 refl = fs_lq_env(rf, env, c0, c1, c2) * mix(vec3(1.0), film * 1.6, 0.6);
+            // through the surface: refracted inner currents, calm and busy
+            vec3 rr = refract(rd, n, 0.75);
+            vec3 qi = p - q.shift + rr * 0.32;
+            vec3 cur_calm = fs_lq_currents(qi, t * 0.25, t * 0.08, swirl, sharp, c0, c1, c2);
+            vec3 cur = cur_calm;
+            if (busy_flow > 0.001) {
+                vec3 cur_busy =
+                    fs_lq_currents(qi, t * 1.25 + 2.0, t * 0.53, swirl, sharp, c0, c1, c2);
+                cur = mix(cur_calm, cur_busy, busy_flow);
+            }
+            vec3 inner = cur * (glow * (0.55 + 0.45 * ndv));
+            inner += fs_lq_env(rr, env, c0, c1, c2) * c1 * 0.18;
+            // light scattered near the thin edge
+            vec3 sss = mix(c1, c2, 0.4) * (pow(1.0 - ndv, 3.0) * (0.18 + 0.5 * voice) * glow);
+            lcol = inner * ((1.0 - fr) * (1.0 - metal * 0.45)) + refl * (metal * 0.85 + fr) + sss;
+            lcol += vec3(pow(max(dot(rf, vec3(-0.5354, 0.6036, -0.5354)), 0.0), 90.0) * 2.2 +
+                         pow(max(dot(rf, vec3(0.6097, 0.3049, -0.7622)), 0.0), 40.0) * 0.5);
+            lcol += vec3(1.0, 0.96, 0.9) * (fl * fl * 0.9 * ndv);
+            // the edge thins out into the vapour rather than ending on a line
+            lalpha = smoothstep(0.0, 0.45, ndv) * 0.7 + 0.3;
+        } else {
+            // a glow that hugs the real (moving) silhouette
+            float g = exp(-max(min_d, 0.0) * 13.0);
+            lcol = mix(c1, c2, 0.35) * (g * (0.22 + 0.45 * voice + 0.8 * fl));
+        }
+    }
+    lcol = vec3(1.0) - exp(lcol * -1.05);
+    if (lalpha > 0.0) {
+        lcol = lcol * lalpha;  // premultiplied; the miss glow is additive
+    }
+
+    // ---- 2. the vapour ---------------------------------------------------
+    // Distance to the silhouette: the march's closest approach (it hugs the
+    // moving shape), handed over to a sphere estimate toward the bounding
+    // sphere's rim (where the march has few steps) so it leaves no seam.
+    float r = length(fp) + 0.0001;
+    float e_an = max(r - q.r0 - 0.22, 0.0);
+    float e = inside ? mix(max(min_d, 0.0), e_an, smoothstep(0.8, 1.12, r)) : e_an;
+    if (lalpha > 0.0) {
+        e = 0.0;
+    }
+    vec2 dir2 = fp / r;
+    float tw = v_swirl * 2.5 * e + t * 0.12;
+    float cs = cos(tw);
+    float ss = sin(tw);
+    vec2 dv = vec2(cs * dir2.x - ss * dir2.y, ss * dir2.x + cs * dir2.y);
+    // wisps peel off the silhouette and drift out: noise in (direction,
+    // distance − drift), curl-like domain warp, ridged into filaments
+    float reach_v = 1.0 / (1.0 + v_out * 2.5);
+    vec3 nq = vec3(dv.x * 2.2, dv.y * 2.2, e * 4.0 * reach_v - t * 0.45);
+    vec3 warp = vec3(fs_lq_vnoise3(nq * 0.7 + vec3(0.0, t * 0.09, 3.0)),
+                     fs_lq_vnoise3(nq * 0.7 + vec3(5.2, 1.3, t * 0.13)), 0.0) - vec3(0.5, 0.5, 0.0);
+    vec3 wq = nq + warp * (1.6 + 1.2 * v_swirl);
+    float n1 = fs_lq_vnoise3(wq);
+    float n2 = fs_lq_vnoise3(wq * 2.1 + vec3(1.7, 9.2, 4.4));
+    float ridge = 1.0 - abs(n1 * 2.0 - 1.0);
+    float fil = ridge * ridge * ridge * (0.55 + 0.45 * n2);
+    float patchy = smoothstep(0.3, 0.75, n1 * 0.6 + n2 * 0.4);
+    float band = exp(-e * 7.0 * reach_v) * smoothstep(0.0, 0.05, e);
+    float ang = atan(fp.y, fp.x) + t * 0.15;
+    vec3 vcol = c0 * (0.5 + 0.5 * cos(ang)) + c1 * (0.5 + 0.5 * cos(ang - 2.094)) +
+                c2 * (0.5 + 0.5 * cos(ang + 2.094));
+    vec3 vap_raw = vcol * (band * (fil * 1.1 + patchy * 0.18) * v_inj);
+    float fr_r = 0.4 + (1.0 - fl) * 0.45;
+    float ring = (r - fr_r) * 9.0;
+    vap_raw += mix(c1, vec3(1.0), 0.4) * (exp(-ring * ring) * fl * 1.6 * (0.4 + 0.6 * fil));
+
+    // ---- 3. bloom (an analytic stand-in for the blurred mips) ------------
+    // outside: a halo that hugs the silhouette; inside: the bright parts
+    float lmax = max(lcol.x, max(lcol.y, lcol.z));
+    vec3 halo = mix(c1, c2, 0.35) * (exp(-e * 9.0) * 0.16 + exp(-e * 3.5) * 0.05) *
+                (1.0 - lalpha);
+    vec3 bl = halo + lcol * (0.25 * smoothstep(0.3, 0.9, lmax));
+    float lit = 0.35 + 1.8 * (exp(-e * 4.0) * 0.4);
+    vec3 vap = vec3(1.0) - exp(vap_raw * (-lit * 1.4));
+    float va = max(vap.x, max(vap.y, vap.z));
+
+    // ---- 4. composite ----------------------------------------------------
+    vec3 col = lcol + vap * (1.0 - lalpha * 0.92);
+    float alpha = lalpha + va * (1.0 - lalpha);
+    col += bl * bloom;
+    col = vec3(1.0) - exp(col * -1.15);
+    // fade out well before the layer's edge (no square cut)
+    vec2 eu = abs(uv - vec2(0.5)) * 2.0;
+    float edge = (1.0 - smoothstep(0.86, 1.0, max(eu.x, eu.y))) * (1.0 - smoothstep(0.85, 1.45, r));
+    col = col * edge;
+    alpha *= edge;
+    // grain + dither, kept inside alpha
+    float gn = fs_lsd_hash(px + vec2(floor((t * 7.31 - floor(t * 7.31)) * 911.0))) - 0.5;
+    float mx = max(col.x, max(col.y, col.z));
+    col += vec3(gn * (1.5 / 255.0 + 0.03 * mx * (1.0 - mx)));
+    col = clamp(col, 0.0, 1.0);
+    float a = max(alpha, max(col.x, max(col.y, col.z)));
+    if (a <= 0.0001) {
+        return vec4(0.0);
+    }
+    return vec4(col / a, a);
+}
+
+// ---- dispatch --------------------------------------------------------------
+// The only place slot values (p0..p11, in table order) meet parameter names.
+// The slots travel as three vec4s (pa = p0..p3, pb = p4..p7, pc = p8..p11 —
+// the GPU push block's pa / pb / px2). Returns rgba; alpha is 1 except for
+// filters that define it (fs_shapes_alpha).
+
+vec4 fs_apply(int mode, vec2 uv, vec4 pa, vec4 pb, vec4 pc) {
+    float p0 = pa.x;
+    float p1 = pa.y;
+    float p2 = pa.z;
+    float p3 = pa.w;
+    float p4 = pb.x;
     vec3 c = FS_SAMPLE(uv);
     float alpha = 1.0;
     if (mode == FS_GRAYSCALE)            c = fs_grayscale(c);
@@ -2358,6 +2850,11 @@ vec4 fs_apply(int mode, vec2 uv, float p0, float p1, float p2, float p3, float p
     else if (mode == FS_MIRROR)          c = fs_mirror(uv, p0, p1);
     else if (mode == FS_THERMAL)         c = fs_thermal(uv, p0, p1);
     else if (mode == FS_GLITCH)          c = fs_glitch(uv, p0, p1, p2, p3);
+    else if (mode == FS_LIQUID) {
+        vec4 r = fs_liquid(uv, pa, pb, pc);
+        c = vec3(r.x, r.y, r.z);
+        alpha = r.w;
+    }
     return vec4(clamp(c, 0.0, 1.0), alpha);
 }
 

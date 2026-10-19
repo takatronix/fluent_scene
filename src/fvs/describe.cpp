@@ -153,6 +153,7 @@ std::string describeJson() {
             const char* unit = p.unit == FilterUnit::Length   ? "length"
                                : p.unit == FilterUnit::CoordX ? "coord_x"
                                : p.unit == FilterUnit::CoordY ? "coord_y"
+                               : p.unit == FilterUnit::Clock  ? "clock"
                                                               : "scalar";
             out += (j != 0 ? ", " : "") + std::string("{\"name\": \"") + p.name +
                    "\", \"default\": " + jsonNumber(p.default_value) + ", \"unit\": \"" +

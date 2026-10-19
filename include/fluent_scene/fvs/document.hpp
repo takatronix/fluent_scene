@@ -79,6 +79,8 @@ struct FilterDecl {
     const FilterSpec* spec = nullptr;
     Filter value{};   ///< Mode + all parameter slots (defaults filled).
     std::vector<std::pair<int, float>> set_params;  ///< Explicit slots, table order.
+    std::vector<std::pair<int, std::string>> param_refs;  ///< `$params`-bound slots
+                                                          ///< (f32 params), table order.
     std::string image_input;  ///< `$inputs` name feeding the image parameter
                               ///< (filters with spec->image_param only).
     Span span;

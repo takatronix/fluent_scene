@@ -10,8 +10,8 @@
 // Contract with filters_shared.h (the body source):
 //   - MODE is a FS_* id declared there;
 //   - parameters appear in slot order — FS_PARAM's `slot` must equal its
-//     position in the block (0, 1, 2, …) and must match the p0..p4 order the
-//     fs_apply dispatch passes to the body.
+//     position in the block (0, 1, 2, …) and must match the p0..p11 order the
+//     fs_apply dispatch passes to the body (kFilterSlots = 12).
 //
 // Units: `Length` parameters are logical units — the renderer multiplies
 // them by its logical→source-pixel factor before the body sees them, so
@@ -423,6 +423,30 @@ FS_PARAM(2, morph, 1.0f, Scalar)
 FS_PARAM(3, glow, 1.0f, Scalar)
 FS_PARAM(4, blend, 0.0f, Scalar)
 FS_END(Fractal)
+
+// Kepler's "Liquid" figure (docs/design/liquid.ja.md). Generative: the
+// source is not read, the output alpha is the figure's. `time` and
+// `splash` are Clock slots — the engine advances them by dt; set splash to
+// 0 for a tap. The mood is listen/think/speak (idle is what's left), so a
+// $params `animate` on each blends any state into any other.
+FS_FILTER(Liquid, liquid, FS_LIQUID,
+          "living liquid figure — raymarched metaball in iridescent metal "
+          "with inner currents and vapour; mood = listen/think/speak (rest "
+          "idle), level swells it, pointer leans it, splash = seconds since "
+          "a tap (time and splash run by themselves)")
+FS_PARAM(0, time, 0.0f, Clock)
+FS_PARAM(1, level, 0.0f, Scalar)
+FS_PARAM(2, listen, 0.0f, Scalar)
+FS_PARAM(3, think, 0.0f, Scalar)
+FS_PARAM(4, speak, 0.0f, Scalar)
+FS_PARAM(5, pointer_x, 0.0f, CoordX)
+FS_PARAM(6, pointer_y, 0.0f, CoordY)
+FS_PARAM(7, pointer, 0.0f, Scalar)
+FS_PARAM(8, splash, 9.0f, Clock)
+FS_PARAM(9, hue, 0.0f, Scalar)
+FS_PARAM(10, size, 1.0f, Scalar)
+FS_PARAM(11, quality, 1.0f, Scalar)
+FS_END(Liquid)
 
 // ---- hand drawing ----------------------------------------------------------
 // After flockaroo's "notebook drawings" (shadertoy XtVGD1), CC BY-NC-SA 3.0

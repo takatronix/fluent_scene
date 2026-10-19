@@ -307,6 +307,11 @@ public:
     /// Replaces the image parameter of the filter at `index` in the chain
     /// (`lut` grades). Same borrowed-pixels contract as setImage.
     Layer& setFilterImage(size_t index, const ImageView& view);
+    /// Sets parameter `slot` (filters_def.h order) of the filter at `index`
+    /// in the chain. Inside a Transaction the value animates like any
+    /// attribute — the face of `$params`-bound filter params. `Clock` slots
+    /// restart their count from the value set.
+    Layer& setFilterParam(size_t index, int slot, float value);
     /// Replaces the text (text content only).
     Layer& setText(const std::string& utf8);
     /// Replaces the points (polyline / polygon / circles content).
@@ -487,6 +492,14 @@ private:
     std::optional<Border> border_;
     Animated<Color> border_color_;  // border_->color's model/presentation
     std::vector<Filter> filters_;
+    /// Filter slots mid-animation (set inside a Transaction); step() writes
+    /// their presentation value into filters_ and drops them once settled.
+    struct FilterSlotAnim {
+        size_t filter;
+        int slot;
+        Animated<float> value;
+    };
+    std::vector<FilterSlotAnim> filter_anims_;
     ImageView mask_{};
     bool mask_invert_ = false;
     float mask_feather_ = 0;

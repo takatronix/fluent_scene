@@ -1433,7 +1433,7 @@ struct WebGPURenderer::Impl {
 
         // Filters: ping-pong through transients (fullscreen passes).
         for (const Filter& f : layer.filters()) {
-            float values[5];
+            float values[kFilterSlots];
             plan::scaleFilterValues(f, scale, ext, static_cast<float>(bw),
                                     static_cast<float>(bh), values);
             if (f.mode == FS_BLUR) {
@@ -1468,6 +1468,13 @@ struct WebGPURenderer::Impl {
             push.pa[2] = values[2];
             push.pa[3] = values[3];
             push.pb[0] = values[4];
+            push.pb[1] = values[5];
+            push.pb[2] = values[6];
+            push.pb[3] = values[7];
+            push.px2[0] = values[8];
+            push.px2[1] = values[9];
+            push.px2[2] = values[10];
+            push.px2[3] = values[11];
             // Stateful filters (persistent_buffers P1): advance the layer's
             // field one tick (read ping + source, write pong RAW), swap,
             // then let the normal pass below read the fresh field.

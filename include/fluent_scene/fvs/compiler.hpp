@@ -167,13 +167,16 @@ public:
     const std::vector<std::pair<const LayerDecl*, Layer*>>& nodes() const { return nodes_; }
 
     /// One `$params` binding (compiler bookkeeping): a layer attribute, a
-    /// content style key, or one field of the shadow/border map.
+    /// content style key, one field of the shadow/border map, or one slot
+    /// of a filter in the layer's chain.
     struct ParamBinding {
-        enum class Target { Attr, Style, ShadowField, BorderField };
+        enum class Target { Attr, Style, ShadowField, BorderField, FilterParam };
         Layer* layer;
         AttrId attr;                       ///< Target::Attr only.
         Target target = Target::Attr;
         const FieldSpec* field = nullptr;  ///< Style/ShadowField/BorderField.
+        size_t filter_index = 0;           ///< FilterParam: chain position.
+        int filter_slot = 0;               ///< FilterParam: slot (table order).
     };
     /// One `$inputs` content binding with its fallback presentation
     /// (compiler bookkeeping).
