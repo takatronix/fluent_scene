@@ -137,7 +137,12 @@ layers:
 `;
 
 let canvas = document.getElementById('v');
-canvas.width = STAGE_W; canvas.height = STAGE_H;
+// the output: the screen's own pixels (Retina too), long side up to 2560 —
+// the stage is only the coordinate space, the renderer scales it
+const DPR = Math.min(devicePixelRatio || 1, 2);
+const OUT = Math.min(2560, Math.max(vw, vh) * DPR) / 1280;
+const OUT_W = Math.round(STAGE_W * OUT / 4) * 4, OUT_H = Math.round(STAGE_H * OUT / 4) * 4;
+canvas.width = OUT_W; canvas.height = OUT_H;
 const pill = document.getElementById('pill');
 const mod = await createFluentScene();
 const c = (n, r, a) => mod.cwrap(n, r, a);
@@ -270,17 +275,17 @@ let mode = 'boot', ctx2d = null;
 const forceCpu = Q.get('cpu') === '1' || !navigator.gpu;
 if (!forceCpu) fs.gInit('#v');
 const resPin = /^\d+x\d+$/.test(Q.get('res') || '') ? Q.get('res').split('x').map(Number) : null;
+const CPU_K = 0.5;
 function goCpu(why) {
   mode = 'cpu';
   if (why) console.warn('liquid: CPU renderer —', why);
   // a canvas WebGPU claimed refuses a 2D context: start from a fresh twin
   const fresh = canvas.cloneNode(false);
   canvas.replaceWith(fresh); canvas = fresh;
-  // the raymarch costs per pixel: a quarter-size stage, coarse quality,
-  // CSS scales it up (the figure is smooth, so it holds up)
-  const k = 0.3;
-  canvas.width = resPin ? resPin[0] : Math.round(STAGE_W * k / 4) * 4;
-  canvas.height = resPin ? resPin[1] : Math.round(STAGE_H * k / 4) * 4;
+  // the raymarch costs per pixel: start at half the stage and let the
+  // ladder below step down until the frame rate holds; CSS scales it up
+  canvas.width = resPin ? resPin[0] : Math.round(STAGE_W * CPU_K / 4) * 4;
+  canvas.height = resPin ? resPin[1] : Math.round(STAGE_H * CPU_K / 4) * 4;
   ctx2d = canvas.getContext('2d');
 }
 if (forceCpu) goCpu(Q.get('cpu') === '1' ? '?cpu=1' : 'no navigator.gpu');
@@ -288,7 +293,7 @@ else if (resPin) { canvas.width = resPin[0]; canvas.height = resPin[1]; }
 
 // adaptive: a resolution ladder down (never back up — it oscillates) and
 // the step budget, until the frame rate holds
-const LADDER = [1, 0.8, 0.66, 0.5, 0.4];
+const LADDER = [1, 0.8, 0.66, 0.5, 0.4, 0.3];
 let rung = 0, qAuto = 1, fps = 0, frames = 0, fpsAt = performance.now();
 setInterval(() => {
   if (resPin || mode === 'boot') return;
@@ -296,7 +301,7 @@ setInterval(() => {
     if (qAuto > 0.55) qAuto -= 0.15;
     else if (rung < LADDER.length - 1) {
       ++rung;
-      const s = LADDER[rung] * (mode === 'cpu' ? 0.3 : 1);
+      const s = LADDER[rung] * (mode === 'cpu' ? CPU_K : OUT);
       canvas.width = Math.round(STAGE_W * s / 4) * 4; canvas.height = Math.round(STAGE_H * s / 4) * 4;
     }
   }
@@ -343,7 +348,8 @@ function frame() {
   if (now - fpsAt > 1000) {
     fps = Math.round(frames * 1000 / (now - fpsAt)); frames = 0; fpsAt = now;
     pill.innerHTML = `<i class="${mode === 'gpu' ? 'gpu' : 'cpu'}">${mode === 'gpu' ? 'WebGPU' : 'CPU'}</i>` +
-        `${fps} fps · ${canvas.width}×${canvas.height}`;
+        `${fps} fps · ${canvas.width}×${canvas.height}` +
+        (mode === 'cpu' && !isSecureContext ? ' · WebGPU は https か localhost で' : '');
   }
 }
 requestAnimationFrame(tick);
