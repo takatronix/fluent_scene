@@ -10,7 +10,7 @@ by **[@takatronix](https://x.com/takatronix)** · MIT licensed
 
 fluent_scene is a 2D compositing engine built on a CALayer-style retained
 layer tree and SDF rendering. Declare camera feeds, detections, HUDs, and UI
-in logical coordinates; three backends — CPU, Vulkan, and WebGPU — render
+in logical coordinates; four backends — CPU, Vulkan, WebGPU, and WebGL2 — render
 them **pixel-identically** (a golden-image contract; measured max|Δ|=1).
 
 ```
@@ -34,6 +34,7 @@ server-side processing; video never leaves your tab.
 | [gaze](https://takatronix.github.io/fluent_scene/gaze.html) | Gaze focus — a MediaPipe landmarker driving Scene parameters |
 | [anime](https://takatronix.github.io/fluent_scene/anime.html) | Anime face — face-lock crop → AnimeGANv3 in-browser (WebGPU fp16) → feathered paste-back. Weights are **non-commercial** ([license](wasm/dist/models/LICENSE.txt)) |
 | [webgpu](https://takatronix.github.io/fluent_scene/webgpu.html) | Backend verification — one scene rendered by CPU and WebGPU, compared per pixel |
+| [webgl](https://takatronix.github.io/fluent_scene/webgl.html) | The same check for the WebGL2 backend (`?scene=<url>` for your own document) |
 
 ## Three ways to write it, one picture
 
@@ -81,7 +82,7 @@ const inst = mod.cwrap('fs_create', 'number', ['number'])(
 | Platform | Entry point | Status |
 |---|---|---|
 | **Robots (ROS 2)** | `scene_node` (.fvs+.fvb → topics → render → Image publish), `scene_web` live editing, `fvsc` CLI | in production |
-| **Web apps** | `fluent_scene.mjs` + `.wasm` (self-contained ES module), CPU or WebGPU | live (demos above) |
+| **Web apps** | `fluent_scene.mjs` + `.wasm` (self-contained ES module), CPU, WebGPU or WebGL2 | live (demos above) |
 | **Desktop** | C++17 library + `stage_web` / `scene_web` / `fvsc` | in production |
 | **Mobile** | the same portable C++17 core + the flat C ABI (the wasm/api.cpp surface); iOS / Android bindings — [plan (ja)](docs/design/mobile_support.ja.md) | on the roadmap |
 
@@ -95,13 +96,14 @@ renderer is itself production quality.
 | `CpuRenderer` | reference; runs everywhere including wasm | defines the goldens |
 | `VulkanRenderer` | robots and desktops; zero runtime shader compilation | 5.6 ms/frame at 1080p (~17× CPU, readback included) |
 | `WebGPURenderer` | browser GPU; renders straight into the canvas (zero readback) | max|Δ|=1 vs CPU, zero pixels over tolerance |
+| `WebGLRenderer` | browser GPU where WebGPU has no adapter (Chromium on Linux without Vulkan — e.g. a car's browser); same draws, WebGL2 | max|Δ|=1–2 vs CPU, zero pixels over tolerance |
 
-Identity is machinery, not aspiration: all three walk the shared plan layer
+Identity is machinery, not aspiration: all four walk the shared plan layer
 ([render_shared.hpp](src/render_shared.hpp)) in the same order, and every
 shape and filter body is a **single GLSL∩C++ source**
 ([filters_shared.h](include/fluent_scene/shared/filters_shared.h)) —
 compiled as C++ on the CPU, as GLSL→SPIR-V for Vulkan, and machine-translated
-SPIR-V→WGSL (naga) for WebGPU. Nothing is hand-ported. Golden tests hold all
+SPIR-V→WGSL (naga) for WebGPU, SPIR-V→GLSL ES 3.00 (naga) for WebGL2. Nothing is hand-ported. Golden tests hold all
 three backends to the same reference images.
 
 ## What you get
@@ -188,6 +190,7 @@ source ~/emsdk/emsdk_env.sh
 | L4 | UI controls (pointer injection + 6 controls) | **done** |
 | W1 | wasm (CPU renderer in the browser, 1 LSB from native) | **done** |
 | W3 | WebGPU backend (browser GPU, straight to canvas) | **done** |
+| W4 | WebGL2 backend (browser GPU without a WebGPU adapter) | **done** |
 | next | Python binding / public C ABI / mobile bindings | planned |
 
 Known limitations are listed honestly at the

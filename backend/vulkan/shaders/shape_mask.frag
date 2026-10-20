@@ -8,7 +8,18 @@
 #include "fluent_scene/shared/shapes_shared.h"
 #include "shape_modes.h"
 
+#ifdef FS_WEBGL
+// WebGL2 has no storage buffers: the points ride an RG32F texture, 1024
+// points per row (fetched exactly, never filtered).
+layout(set = 0, binding = 0) uniform texture2D pts_tex_t;
+layout(set = 0, binding = 1) uniform sampler pts_tex_s;
+vec2 fs_point(int i) {
+    return texelFetch(sampler2D(pts_tex_t, pts_tex_s), ivec2(i & 1023, i >> 10), 0).xy;
+}
+#else
 layout(std430, set = 0, binding = 0) readonly buffer Points { vec2 pts[]; };
+vec2 fs_point(int i) { return pts[i]; }
+#endif
 
 layout(location = 0) out float o_cov;
 
@@ -19,8 +30,8 @@ float polygon_distance(int offset, int count, vec2 p) {
     float d2 = 1e30;
     float sgn = 1.0;
     for (int i = 0, j = count - 1; i < count; j = i++) {
-        vec2 vi = pts[offset + i];
-        vec2 vj = pts[offset + j];
+        vec2 vi = fs_point(offset + i);
+        vec2 vj = fs_point(offset + j);
         vec2 e = vj - vi;
         vec2 w = p - vi;
         float t = clamp(dot(w, e) / max(dot(e, e), 1e-12), 0.0, 1.0);

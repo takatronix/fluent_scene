@@ -10,7 +10,7 @@
 
 fluent_scene は CALayer 型の保持レイヤーツリーと SDF レンダリングによる
 2D 合成エンジンです。カメラ映像・検出結果・HUD・UI を論理座標系で宣言し、
-CPU / Vulkan / WebGPU の3バックエンドが**ピクセル一致**で描きます
+CPU / Vulkan / WebGPU / WebGL2 の4バックエンドが**ピクセル一致**で描きます
 （golden テストが契約。実測 max|Δ|=1）。
 
 ```
@@ -32,6 +32,7 @@ wasm ビルドです。サーバー処理はなく、映像はタブの外に出
 | [lsd](https://takatronix.github.io/fluent_scene/lsd.html) | LSD フィルタ — 時間駆動のサイケデリア、閉眼幻視対応（[解説レポート](https://takatronix.github.io/fluent_scene/lsd_report.html)） |
 | [gaze](https://takatronix.github.io/fluent_scene/gaze.html) | 視線フォーカス — MediaPipe landmarker が Scene パラメータを駆動 |
 | [webgpu](https://takatronix.github.io/fluent_scene/webgpu.html) | バックエンド検証 — 同一シーンを CPU と WebGPU で描いて画素比較 |
+| [webgl](https://takatronix.github.io/fluent_scene/webgl.html) | 同じ検証を WebGL2 バックエンドで（`?scene=<url>` で任意の文書） |
 
 ## 3つの書き方、同じ絵
 
@@ -77,7 +78,7 @@ const inst = mod.cwrap('fs_create', 'number', ['number'])(
 | プラットフォーム | 入口 | 状態 |
 |---|---|---|
 | **ロボット (ROS 2)** | `scene_node`（.fvs+.fvb → トピック購読 → 描画 → Image 配信）、`scene_web` ライブ編集、`fvsc` CLI | 実機運用中 |
-| **Webアプリ** | `fluent_scene.mjs` + `.wasm`（ES module、自己完結）。CPU または WebGPU | 公開中（上のデモ） |
+| **Webアプリ** | `fluent_scene.mjs` + `.wasm`（ES module、自己完結）。CPU・WebGPU・WebGL2 | 公開中（上のデモ） |
 | **デスクトップ** | C++17 ライブラリ + `stage_web` / `scene_web` / `fvsc` | 運用中 |
 | **モバイル** | 同じポータブル C++17 コア + フラット C ABI（wasm/api.cpp と同じ面）。iOS / Android バインディングはロードマップ（[計画書](docs/design/mobile_support.ja.md)） | 計画 |
 
@@ -91,13 +92,14 @@ const inst = mod.cwrap('fs_create', 'number', ['number'])(
 | `CpuRenderer` | リファレンス。どこでも動く（wasm 含む） | golden の定義元 |
 | `VulkanRenderer` | ロボット・デスクトップ本番。実行時シェーダーコンパイルゼロ | 1080p 5.6ms/frame（CPU比 ~17倍、読み戻し込み） |
 | `WebGPURenderer` | ブラウザ GPU。canvas 直描画（読み戻しゼロ） | CPU比 max|Δ|=1・許容超過0画素 |
+| `WebGLRenderer` | WebGPU のアダプタが無いブラウザの GPU（Vulkan の無い Linux の Chromium — 車のブラウザなど）。同じ描画を WebGL2 で | CPU比 max|Δ|=1〜2・許容超過0画素 |
 
 同一性は願望ではなく仕組みです: 描画プランは共有層
-([render_shared.hpp](src/render_shared.hpp)) を3者が同じ順で歩き、
+([render_shared.hpp](src/render_shared.hpp)) を4者が同じ順で歩き、
 シェイプとフィルタの数式は **GLSL∩C++ の単一ソース**
 ([filters_shared.h](include/fluent_scene/shared/filters_shared.h)) を
 CPU は C++ として、Vulkan は GLSL→SPIR-V として、WebGPU は
-SPIR-V→WGSL 機械変換（naga）としてコンパイルします。手書き移植はゼロ。
+SPIR-V→WGSL 機械変換（naga）として、WebGL2 は SPIR-V→GLSL ES 3.00 機械変換（naga）としてコンパイルします。手書き移植はゼロ。
 golden テストが3バックエンドを同じ基準画像に対して検証します。
 
 ## なにができるか
@@ -181,6 +183,7 @@ source ~/emsdk/emsdk_env.sh
 | L4 | UI コントロール（ポインタ注入 + 6コントロール） | **完了** |
 | W1 | wasm（ブラウザで CPU レンダラ、native と 1LSB 一致） | **完了** |
 | W3 | WebGPU バックエンド（ブラウザ GPU、canvas 直描画） | **完了** |
+| W4 | WebGL2 バックエンド（WebGPU のアダプタが無いブラウザの GPU） | **完了** |
 | 次 | Python binding / C ABI 公開 / モバイルバインディング | 計画 |
 
 既知の制限は [cookbook 末尾](docs/cookbook.ja.md#既知の-l0-制限正直リスト)に

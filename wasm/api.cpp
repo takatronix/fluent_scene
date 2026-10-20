@@ -28,6 +28,9 @@
 #ifdef FS_HAVE_WEBGPU
 #include <fluent_scene/webgpu_renderer.hpp>
 #endif
+#ifdef FS_HAVE_WEBGL
+#include <fluent_scene/webgl_renderer.hpp>
+#endif
 
 using namespace fluent_scene;
 namespace fvs = fluent_scene::fvs;
@@ -38,6 +41,9 @@ std::string g_error;
 
 #ifdef FS_HAVE_WEBGPU
 std::unique_ptr<WebGPURenderer> g_webgpu;
+#endif
+#ifdef FS_HAVE_WEBGL
+std::unique_ptr<WebGLRenderer> g_webgl;
 #endif
 
 struct FsInstance {
@@ -94,13 +100,19 @@ FsInstance* fs_create(const char* yaml_utf8) {
 EMSCRIPTEN_KEEPALIVE
 const char* fs_error() { return g_error.c_str(); }
 
-/// The renderer behind the frame — "cpu", or "webgpu" once fs_webgpu_init
-/// succeeded. Shown in HUDs so nobody has to wonder what is drawing.
+/// The renderer behind the frame — "cpu", or "webgpu" / "webgl" once
+/// fs_webgpu_init / fs_webgl_init succeeded. Shown in HUDs so nobody has to
+/// wonder what is drawing.
 EMSCRIPTEN_KEEPALIVE
 const char* fs_backend() {
 #ifdef FS_HAVE_WEBGPU
     if (g_webgpu && g_webgpu->status() == WebGPURenderer::Status::Ready) {
         return "webgpu";
+    }
+#endif
+#ifdef FS_HAVE_WEBGL
+    if (g_webgl && g_webgl->status() == WebGLRenderer::Status::Ready) {
+        return "webgl";
     }
 #endif
     return "cpu";
@@ -187,6 +199,70 @@ const uint8_t* fs_webgpu_read_pixels() {
 }
 
 #endif  // FS_HAVE_WEBGPU
+
+#ifdef FS_HAVE_WEBGL
+
+/// Creates the WebGL2 renderer on `canvas_selector` (e.g. "#view") —
+/// synchronous: returns 1 when ready, -1 on failure (fs_webgl_error says
+/// why: no WebGL2, no float render targets, a shader the driver refused).
+/// For browsers without a WebGPU adapter; the canvas must not carry
+/// another context.
+EMSCRIPTEN_KEEPALIVE
+int fs_webgl_init(const char* canvas_selector) {
+    WebGLRenderer::Options opts;
+    opts.canvas_selector = canvas_selector != nullptr ? canvas_selector : "";
+    g_webgl = std::make_unique<WebGLRenderer>(std::move(opts));
+    return g_webgl->status() == WebGLRenderer::Status::Ready ? 1 : -1;
+}
+
+/// 1 = ready, -1 = error / not initialized / context lost.
+EMSCRIPTEN_KEEPALIVE
+int fs_webgl_status() {
+    return g_webgl && g_webgl->status() == WebGLRenderer::Status::Ready ? 1 : -1;
+}
+
+EMSCRIPTEN_KEEPALIVE
+const char* fs_webgl_error() {
+    static std::string out;
+    out = g_webgl ? g_webgl->error() : "fs_webgl_init not called";
+    return out.c_str();
+}
+
+/// The GL renderer string (a hardware GPU, or SwiftShader = software).
+EMSCRIPTEN_KEEPALIVE
+const char* fs_webgl_info() {
+    static std::string out;
+    out = g_webgl ? g_webgl->rendererInfo() : "";
+    return out.c_str();
+}
+
+/// Renders one frame straight into the canvas (no readback).
+EMSCRIPTEN_KEEPALIVE
+int fs_render_webgl(FsInstance* inst, float dt, int out_w, int out_h) {
+    if (!g_webgl) {
+        return 0;
+    }
+    if (inst->ripple) {
+        inst->ripple->tick(dt);
+    }
+    return g_webgl->renderToCanvas(inst->scene->stage(), static_cast<uint32_t>(out_w),
+                                   static_cast<uint32_t>(out_h), dt)
+               ? 1
+               : 0;
+}
+
+/// Renders offscreen and reads back at once (tests, self-checks): tight
+/// straight-RGBA8 pixels, valid until the next call, or 0 on failure.
+EMSCRIPTEN_KEEPALIVE
+const uint8_t* fs_webgl_read(FsInstance* inst, float dt, int out_w, int out_h) {
+    if (!g_webgl) {
+        return nullptr;
+    }
+    return g_webgl->readPixels(inst->scene->stage(), static_cast<uint32_t>(out_w),
+                               static_cast<uint32_t>(out_h), dt);
+}
+
+#endif  // FS_HAVE_WEBGL
 
 /// The document's canonical digest.
 EMSCRIPTEN_KEEPALIVE

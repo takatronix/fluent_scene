@@ -6,7 +6,8 @@ zero network latency.
 
 ```bash
 source ~/emsdk/emsdk_env.sh
-./wasm/build.sh --webgpu   # what Pages serves: Japanese font + WebGPU (~3.8 MB, ~1.5 MB gzipped)
+./wasm/build.sh --webgpu --webgl   # what Pages serves: Japanese font + WebGPU + WebGL2 (~7.2 MB, ~2.2 MB brotli)
+./wasm/build.sh --webgpu   # Japanese font + WebGPU only (~5.6 MB)
 ./wasm/build.sh            # CPU renderer only (~2.7 MB)
 ./wasm/build.sh --latin    # DejaVuSans instead of the Japanese font (~2.4 MB, Latin only)
 ./wasm/build.sh --cjk      # the whole NotoSansCJK collection (~21 MB)
@@ -19,6 +20,26 @@ python3 -m http.server -d wasm/dist 8792   # then open /index.html
   filter tiles, HUD, all local.
 - Parity: a scene rendered in node matches the native CPU renderer to
   within 1 LSB (float rounding across ISAs).
+
+## WebGL2 — the GPU where WebGPU hands out no adapter
+
+Some browsers expose `navigator.gpu` but `requestAdapter()` resolves to
+null (Chromium on Linux without Vulkan — the Tesla's browser, for one) while
+WebGL2 runs on the GPU. `--webgl` compiles `src/webgl_renderer.cpp` in: the
+WebGPU backend's draws, recorded and replayed on WebGL2, its shaders the same
+GLSL through naga as GLSL ES 3.00. Synchronous, so no polling:
+
+```js
+const ok = cw('fs_webgl_init', 'number', ['string'])('#view') === 1;   // a canvas without another context
+cw('fs_webgl_info', 'string', [])();   // GL renderer — "SwiftShader" / "llvmpipe" = software: stay on the CPU
+const px = cw('fs_webgl_read', 'number', ['number', 'number', 'number', 'number'])(inst, 0, w, h);  // self-test
+cw('fs_render_webgl', 'number', ['number', 'number', 'number', 'number'])(inst, dt, w, h);         // per frame
+cw('fs_webgl_status', 'number', [])();  // -1 after a context loss
+```
+
+Needs `EXT_color_buffer_float` (every WebGL2 on a real GPU). Programs
+compile on first use (the filter program is big; a scene without filters
+never compiles it). Check: `webgl.html` (CPU vs WebGL2 per pixel).
 
 ## Driving a scene from JS — params, text, layers
 

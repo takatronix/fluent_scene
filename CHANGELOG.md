@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.22.0 — 2026-10-20 (WebGL2 バックエンド: WebGPU のアダプタが無いブラウザでも GPU)
+
+`navigator.gpu` はあるのに `requestAdapter()` が null を返すブラウザ（Vulkan の
+無い Linux の Chromium — テスラの車載ブラウザなど）では CPU 描画しかなかった。
+WebGL2 は GPU で動いているので、そこへ描く 4 つ目のバックエンドを足した。
+
+- **`WebGLRenderer`**（src/webgl_renderer.cpp、`wasm/build.sh --webgl`）:
+  WebGPU バックエンドと同じ描画を同じ順で — 共有プラン、MAX 合成のマスク、
+  4 つのブレンド式。シェーダは同じ GLSL を `-DFS_WEBGPU -DFS_WEBGL` で
+  glslc → naga（`--keep-coordinate-space --profile es300`）、手書き移植なし
+- WebGL の事情: 描画を記録して定数を 1 回で転送しリプレイ（WebGPU の
+  コマンドエンコーダと同じ形）、ポリゴン点は RG32F テクスチャ
+  （shape_mask.frag の FS_WEBGL）、canvas への present だけ上下反転
+  （fullscreen.vert の FS_FLIP_Y）、float ターゲットに EXT_color_buffer_float
+- C ABI: `fs_webgl_init` / `fs_webgl_status` / `fs_webgl_error` /
+  `fs_webgl_info`（GL レンダラ名 — SwiftShader ならソフト描画）/
+  `fs_render_webgl` / `fs_webgl_read`。`fs_backend` は "webgl" も返す
+- 検証: `wasm/webgl.html`（CPU と画素比較、`?scene=` で任意の文書）。
+  AMD・NVIDIA（ANGLE GL / Vulkan）と SwiftShader で max|Δ|=1〜2、許容超過 0 画素。
+  OBD 計器盤（1920×1200）は CPU の 6.7 fps（解像度 0.36）→ 50 fps（等倍、CPU 4 倍遅延の模擬）
+- wasm: 5.6 → 7.2 MB（brotli 2.10 → 2.21 MB）
+
 ## 0.21.0 — 2026-10-20 (アンチエイリアス: 小さい文字をブラウザ並みに、非一様拡大でも 1 px)
 
 - **小さい文字はヒンティング無しが既定**（グレースケール AA ＋ ¼ px の
