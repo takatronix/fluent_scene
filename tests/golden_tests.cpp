@@ -29,6 +29,8 @@
 #include <memory>
 
 #include <fluent_scene/fluent_scene.hpp>
+#include <fluent_scene/fvs/compiler.hpp>
+#include <fluent_scene/fvs/document.hpp>
 #ifdef FS_HAVE_VULKAN
 #include <fluent_scene/vulkan_renderer.hpp>
 #endif
@@ -146,6 +148,107 @@ void checkScene(const std::string& name, const Surface& s) {
     } else {
         std::printf("ok %s (max_diff=%d)\n", name.c_str(), max_diff);
     }
+}
+
+// Text scenes add a perceptual floor on top of the per-pixel rule: PSNR and
+// SSIM (8×8 windows on luma) against the golden — glyph edges may move by
+// an LSB between backends, but a blur, a shifted baseline, or a missing
+// glyph drops both numbers far below the floor.
+void checkTextScene(const std::string& name, const Surface& s, double min_psnr,
+                    double min_ssim) {
+    checkScene(name, s);
+    if (g_update) {
+        return;
+    }
+    uint32_t gw = 0, gh = 0;
+    std::vector<uint8_t> golden;
+    if (!readPpm(g_dir + "/" + name + ".ppm", gw, gh, golden) || gw != s.width ||
+        gh != s.height) {
+        return;  // checkScene already failed
+    }
+    std::vector<float> a(static_cast<size_t>(gw) * gh), b(a.size());
+    double se = 0;
+    for (uint32_t y = 0; y < gh; ++y) {
+        const uint8_t* row = s.row(y);
+        for (uint32_t x = 0; x < gw; ++x) {
+            const uint8_t* p = &row[x * 4];
+            const float al = p[3] / 255.0f;
+            float la = 0, lb = 0;
+            static const float kW[3] = {0.299f, 0.587f, 0.114f};
+            for (int c = 0; c < 3; ++c) {
+                const float v = static_cast<float>(static_cast<uint8_t>(p[c] * al + 64 * (1 - al)));
+                const float g = golden[(static_cast<size_t>(y) * gw + x) * 3 + c];
+                se += (v - g) * (v - g);
+                la += kW[c] * v;
+                lb += kW[c] * g;
+            }
+            a[static_cast<size_t>(y) * gw + x] = la;
+            b[static_cast<size_t>(y) * gw + x] = lb;
+        }
+    }
+    const double mse = se / (static_cast<double>(gw) * gh * 3);
+    const double psnr = mse > 0 ? 10 * std::log10(255.0 * 255.0 / mse) : 99.0;
+    const double c1 = 6.5025, c2 = 58.5225;  // (0.01·255)², (0.03·255)²
+    double ssim_sum = 0;
+    size_t windows = 0;
+    for (uint32_t y0 = 0; y0 + 8 <= gh; y0 += 8) {
+        for (uint32_t x0 = 0; x0 + 8 <= gw; x0 += 8) {
+            double ma = 0, mb = 0;
+            for (uint32_t y = y0; y < y0 + 8; ++y) {
+                for (uint32_t x = x0; x < x0 + 8; ++x) {
+                    ma += a[y * gw + x];
+                    mb += b[y * gw + x];
+                }
+            }
+            ma /= 64;
+            mb /= 64;
+            double va = 0, vb = 0, cov = 0;
+            for (uint32_t y = y0; y < y0 + 8; ++y) {
+                for (uint32_t x = x0; x < x0 + 8; ++x) {
+                    const double da = a[y * gw + x] - ma, db = b[y * gw + x] - mb;
+                    va += da * da;
+                    vb += db * db;
+                    cov += da * db;
+                }
+            }
+            va /= 63;
+            vb /= 63;
+            cov /= 63;
+            ssim_sum += ((2 * ma * mb + c1) * (2 * cov + c2)) /
+                        ((ma * ma + mb * mb + c1) * (va + vb + c2));
+            ++windows;
+        }
+    }
+    const double ssim = windows > 0 ? ssim_sum / windows : 1.0;
+    if (psnr < min_psnr || ssim < min_ssim) {
+        std::fprintf(stderr, "FAIL %s: PSNR %.1f dB (min %.0f), SSIM %.4f (min %.3f)\n",
+                     name.c_str(), psnr, min_psnr, ssim, min_ssim);
+        ++g_failures;
+    } else {
+        std::printf("ok %s (PSNR %.1f dB, SSIM %.4f)\n", name.c_str(), psnr, ssim);
+    }
+}
+
+// A Scene document from tests/text/, compiled like fvsc preview does.
+std::unique_ptr<fvs::CompiledScene> loadTextScene(const std::string& file) {
+    const std::string path = g_dir + "/../text/" + file;
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (f == nullptr) {
+        return nullptr;
+    }
+    std::string text;
+    char buf[4096];
+    size_t n = 0;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) {
+        text.append(buf, n);
+    }
+    std::fclose(f);
+    fvs::ParseResult parsed = fvs::parseScene(text);
+    if (!parsed.ok()) {
+        return nullptr;
+    }
+    fvs::CompileResult compiled = fvs::compile(parsed.doc);
+    return compiled.ok() ? std::move(compiled.scene) : nullptr;
 }
 
 // ---- shared fixtures -------------------------------------------------------
@@ -797,7 +900,32 @@ void sceneText(Renderer& r) {
     stage.text("影付きテキスト", {20, 180}).size(34).shadow(2, 3, 6);
     stage.text("small 12px 日本語", {20, 240}).size(12).color({1, 1, 1, 0.8f});
     const Surface& s = r.render(stage, 0.0f);
-    checkScene("text", s);
+    checkTextScene("text", s, 38, 0.98);
+}
+
+// Every text feature (tests/text/features.fvs): weights, italic, serif,
+// outline, gradient, glow, kinsoku wrapping, ellipsis, auto-fit, spans,
+// tabular digits.
+void sceneTextStyles(Renderer& r) {
+    auto scene = loadTextScene("features.fvs");
+    if (scene == nullptr) {
+        std::fprintf(stderr, "FAIL text_styles: cannot load tests/text/features.fvs\n");
+        ++g_failures;
+        return;
+    }
+    checkTextScene("text_styles", r.render(scene->stage(), 0.0f), 38, 0.98);
+}
+
+// Sizes and transforms (tests/text/probe_xform.fvs): rotated text at 14–48
+// px, 12 px text under 2×/4×/8× layer scale (SDF path), 120 px numbers.
+void sceneTextTransforms(Renderer& r) {
+    auto scene = loadTextScene("probe_xform.fvs");
+    if (scene == nullptr) {
+        std::fprintf(stderr, "FAIL text_transforms: cannot load tests/text/probe_xform.fvs\n");
+        ++g_failures;
+        return;
+    }
+    checkTextScene("text_transforms", r.render(scene->stage(), 0.0f), 38, 0.98);
 }
 
 }  // namespace
@@ -873,6 +1001,8 @@ int main(int argc, char** argv) {
     sceneUiCatalog(r);
     sceneRipple(r);
     sceneText(r);
+    sceneTextStyles(r);
+    sceneTextTransforms(r);
     if (g_failures == 0) {
         std::printf("all golden_tests passed\n");
         return 0;

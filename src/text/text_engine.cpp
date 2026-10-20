@@ -147,8 +147,10 @@ void TextEngine::build(const TextContent& content, const Mat23& m, Color color, 
         if (upright && !outlined && px <= kBitmapMaxPx) {
             // Exact-size bitmap, snapped: integer baseline, quarter-px x.
             const Vec2 o = m.apply({g.x, g.y});
-            const float oy = std::round(o.y);
-            const float xq = std::round(o.x * 4.0f) / 4.0f;
+            // Ties sit a hair off .5 so float noise between backends (CPU
+            // vs offscreen GPU transforms) never flips a baseline by 1 px.
+            const float oy = std::floor(o.y + 0.5f + 1.0f / 64.0f);
+            const float xq = std::floor(o.x * 4.0f + 0.5f + 1.0f / 64.0f) / 4.0f;
             const float xi = std::floor(xq);
             key.kind = static_cast<uint8_t>(GlyphKind::Bitmap);
             key.size = static_cast<uint16_t>(std::lround(px * 4.0f));

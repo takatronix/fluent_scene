@@ -1145,12 +1145,12 @@ struct CpuRenderer::Impl {
                         // Bilinear R8 page sample (clamp to edge).
                         const float ax = (q.uv[0] + fx * (q.uv[2] - q.uv[0])) * ps - 0.5f;
                         const float ay = (q.uv[1] + fy * (q.uv[3] - q.uv[1])) * ps - 0.5f;
-                        const int ax0 = std::clamp(static_cast<int>(std::floor(ax)), 0, ps - 1);
-                        const int ay0 = std::clamp(static_cast<int>(std::floor(ay)), 0, ps - 1);
-                        const int ax1 = std::min(ax0 + 1, ps - 1);
-                        const int ay1 = std::min(ay0 + 1, ps - 1);
-                        const float tx = std::clamp(ax - std::floor(ax), 0.0f, 1.0f);
-                        const float ty = std::clamp(ay - std::floor(ay), 0.0f, 1.0f);
+                        const float fx0 = std::floor(ax), fy0 = std::floor(ay);
+                        const float tx = ax - fx0, ty = ay - fy0;
+                        const int ax0 = std::clamp(static_cast<int>(fx0), 0, ps - 1);
+                        const int ay0 = std::clamp(static_cast<int>(fy0), 0, ps - 1);
+                        const int ax1 = std::clamp(static_cast<int>(fx0) + 1, 0, ps - 1);
+                        const int ay1 = std::clamp(static_cast<int>(fy0) + 1, 0, ps - 1);
                         const float v = (tex(ax0, ay0) * (1 - tx) + tex(ax1, ay0) * tx) * (1 - ty) +
                                         (tex(ax0, ay1) * (1 - tx) + tex(ax1, ay1) * tx) * ty;
                         const float f =

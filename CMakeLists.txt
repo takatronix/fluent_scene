@@ -221,6 +221,13 @@ add_executable(ui_tests tests/ui_tests.cpp)
 target_link_libraries(ui_tests PRIVATE fluent_scene)
 add_test(NAME ui_tests COMMAND ui_tests)
 
+# Text engine: atlas (on-demand CJK, eviction), SDF accuracy, layout.
+add_executable(text_tests tests/text_tests.cpp)
+target_link_libraries(text_tests PRIVATE fluent_scene ${FS_TEXT_LIB})
+target_include_directories(text_tests PRIVATE src)
+add_test(NAME text_tests COMMAND text_tests)
+set_tests_properties(text_tests PROPERTIES SKIP_RETURN_CODE 77)
+
 # L2 Scene layer: validation, digest, fmt, YAML↔C++ parity, linter (§14 L2).
 add_executable(scene_tests tests/scene_tests.cpp)
 target_link_libraries(scene_tests PRIVATE fluent_scene)
