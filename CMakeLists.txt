@@ -64,7 +64,6 @@ endif()
 
 add_library(fluent_scene
   src/stage.cpp
-  src/text_atlas.cpp
   src/text/font_library.cpp
   src/text/sdf.cpp
   src/text/glyph_atlas.cpp

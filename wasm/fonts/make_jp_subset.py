@@ -27,8 +27,12 @@ Layout: only the features HarfBuzz applies to horizontal text by default
 (ccmp calt liga kern mark) survive. Vertical metrics and forms, the
 Chinese/Korean locl variants and the width/proportional alternates are
 dropped, because the renderer lays out single horizontal lines. Hinting is
-kept: the atlas rasterizes hinted at 26 px, like native builds that read
-the full font. Every name record stays, including the copyright and
+kept: small upright text rasterizes light-hinted at its exact pixel size,
+like native builds that read the full font. The Bold subset
+(NotoSansJP-Bold-subset.otf) is the same cut of the Bold face:
+    python3 wasm/fonts/make_jp_subset.py \
+        --font /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc \
+        --out wasm/fonts/NotoSansJP-Bold-subset.otf Every name record stays, including the copyright and
 license that OFL section 2 requires each copy to carry.
 """
 

@@ -39,7 +39,7 @@
 
 #include "fluent_scene/stage.hpp"
 #include "render_shared.hpp"
-#include "text_atlas.hpp"
+#include "text/text_engine.hpp"
 
 // Draw-mode ids shared with shape_mask.frag.
 #include "shape_modes.h"
@@ -191,12 +191,15 @@ struct WebGPURenderer::Impl {
         uint64_t frame_used = 0;
     };
     std::map<std::pair<const void*, int>, FilterState> state_cache;
-    Tex atlas_tex;
-    uint64_t atlas_uploaded_revision = 0;
+    // Glyph atlas pages (R8) mirrored from the CPU-side GlyphAtlas; one
+    // bind group per page per frame.
+    std::vector<Tex> page_tex;
+    std::vector<uint64_t> page_rev;
+    std::vector<WGPUBindGroup> page_groups;
     uint64_t frame_counter = 0;
 
-    detail::TextAtlas atlas;
-    bool atlas_tried = false;
+    detail::TextEngine text;
+    bool text_inited = false;
 
     // ---- samplers / bind group layouts / pipelines -------------------------
 
@@ -212,7 +215,8 @@ struct WebGPURenderer::Impl {
     WGPUPipelineLayout layout_ssbo = nullptr;
 
     WGPURenderPipeline pipe_mask_shape = nullptr;  // r16float, MAX
-    WGPURenderPipeline pipe_mask_glyph = nullptr;  // r16float, MAX
+    WGPURenderPipeline pipe_mask_glyph = nullptr;  // rg16float text mask, MAX
+    WGPURenderPipeline pipe_text_comp[4] = {};     // text mask → color, blend modes
     WGPURenderPipeline pipe_mask_comp[4] = {};     // rgba16float, blend modes
     WGPURenderPipeline pipe_shape_color[4] = {};
     WGPURenderPipeline pipe_image[4] = {};
@@ -231,11 +235,6 @@ struct WebGPURenderer::Impl {
     Tex* bound_target = nullptr;
     std::vector<WGPUBindGroup> frame_groups;  // released after submit
 
-    struct TextRun {
-        std::vector<detail::TextAtlas::GlyphQuad> quads;
-        float width = 0;
-    };
-    std::map<std::string, TextRun> text_runs;
     std::map<const Layer*, uint32_t> polygon_offsets;
     std::vector<Vec2> polygon_points;
 
@@ -551,6 +550,7 @@ struct WebGPURenderer::Impl {
         WGPUShaderModule shape_mask = makeModule(kShapeMaskFragWgsl);
         WGPUShaderModule glyph_mask = makeModule(kGlyphMaskFragWgsl);
         WGPUShaderModule mask_comp = makeModule(kMaskCompositeFragWgsl);
+        WGPUShaderModule text_comp = makeModule(kTextCompositeFragWgsl);
         WGPUShaderModule shape_color = makeModule(kShapeColorFragWgsl);
         WGPUShaderModule image = makeModule(kImageFragWgsl);
         WGPUShaderModule filter = makeModule(kFilterFragWgsl);
@@ -570,10 +570,13 @@ struct WebGPURenderer::Impl {
         }
 
         pipe_mask_shape = makePipeline(quad, shape_mask, layout_ssbo, kMask, &max_blend, true);
-        pipe_mask_glyph = makePipeline(quad, glyph_mask, layout_tex, kMask, &max_blend, true);
+        pipe_mask_glyph = makePipeline(quad, glyph_mask, layout_tex, WGPUTextureFormat_RG16Float,
+                                       &max_blend, true);
         for (int b = 0; b < 4; ++b) {
             pipe_mask_comp[b] =
                 makePipeline(quad, mask_comp, layout_tex, kColor, &blends[b], true);
+            pipe_text_comp[b] =
+                makePipeline(quad, text_comp, layout_tex, kColor, &blends[b], true);
             pipe_shape_color[b] =
                 makePipeline(quad, shape_color, layout_ssbo, kColor, &blends[b], true);
             pipe_image[b] = makePipeline(quad, image, layout_tex, kColor, &blends[b], true);
@@ -592,7 +595,7 @@ struct WebGPURenderer::Impl {
                 makePipeline(fullscreen, present, layout_tex, surface_format, nullptr, false);
         }
 
-        for (WGPUShaderModule m : {quad, fullscreen, shape_mask, glyph_mask, mask_comp,
+        for (WGPUShaderModule m : {quad, fullscreen, shape_mask, glyph_mask, mask_comp, text_comp,
                                    shape_color, image, filter, filter_state, layer_mask, blur,
                                    composite, unpremul, present}) {
             wgpuShaderModuleRelease(m);
@@ -610,7 +613,9 @@ struct WebGPURenderer::Impl {
             destroyTex(st.ping);
             destroyTex(st.pong);
         }
-        destroyTex(atlas_tex);
+        for (Tex& page : page_tex) {
+            destroyTex(page);
+        }
         destroyTex(canvas);
         destroyTex(out_rgba);
         const auto releaseBuffer = [](WGPUBuffer& b) {
@@ -637,6 +642,7 @@ struct WebGPURenderer::Impl {
         releasePipe(pipe_mask_glyph);
         for (int b = 0; b < 4; ++b) {
             releasePipe(pipe_mask_comp[b]);
+            releasePipe(pipe_text_comp[b]);
             releasePipe(pipe_shape_color[b]);
             releasePipe(pipe_image[b]);
             releasePipe(pipe_composite[b]);
@@ -868,40 +874,70 @@ struct WebGPURenderer::Impl {
     // text
     // =======================================================================
 
-    void ensureAtlas() {
-        if (atlas.ready() || atlas_tried) {
-            return;
+    void ensureText() {
+        if (!text_inited) {
+            text_inited = true;
+            text.init(options.font_file);
         }
-        atlas_tried = true;
-        detail::initAtlasWithFallback(atlas, options.font_file, options.font_pixel_size);
     }
 
+    // Layout box in logical units (Stage measurement hook).
     Rect measureText(const TextContent& c) {
-        ensureAtlas();
-        if (!atlas.ready()) {
-            return {};
-        }
-        const float s = c.size / static_cast<float>(atlas.pixelSize());
-        const float w = atlas.measure(c.utf8) * s;
-        const float h = atlas.lineHeight() * s;
-        float x = c.position.x;
-        if (c.align == Align::Center) {
-            x -= w * 0.5f;
-        } else if (c.align == Align::Right) {
-            x -= w;
-        }
-        return {x, c.position.y, w, h};
+        ensureText();
+        return text.metrics(c).box;
     }
 
-    const TextRun& textRun(const std::string& utf8) {
-        auto it = text_runs.find(utf8);
-        if (it == text_runs.end()) {
-            TextRun run;
-            atlas.layout(utf8, 0, 0, 4096, run.quads);
-            run.width = atlas.measure(utf8);
-            it = text_runs.emplace(utf8, std::move(run)).first;
+    // Everything a text content may paint (offscreen extents).
+    Rect textExtent(const TextContent& c) {
+        ensureText();
+        return text.extent(c);
+    }
+
+    // Mirrors changed atlas pages: new pages whole, existing ones as their
+    // dirty row band. Queue writes land before this frame's submit; the
+    // rows written hold only glyphs new this frame (pages used this frame
+    // are never evicted), so earlier draws in the encoder are unaffected.
+    void syncPages() {
+        detail::GlyphAtlas& atlas = text.atlas();
+        for (size_t i = 0; i < atlas.pageCount(); ++i) {
+            const auto& page = atlas.page(i);
+            if (i < page_rev.size() && page_rev[i] == page.revision) {
+                continue;
+            }
+            bool fresh = false;
+            if (i >= page_tex.size()) {
+                page_tex.push_back(createTex(static_cast<int>(page.size),
+                                             static_cast<int>(page.size), WGPUTextureFormat_R8Unorm,
+                                             WGPUTextureUsage_TextureBinding |
+                                                 WGPUTextureUsage_CopyDst));
+                page_rev.push_back(0);
+                page_groups.push_back(nullptr);
+                fresh = true;
+            }
+            int y0 = page.dirty_y0, y1 = page.dirty_y1;
+            if (fresh || y1 <= y0) {
+                y0 = 0;
+                y1 = static_cast<int>(page.size);
+            }
+            WGPUTexelCopyTextureInfo dst = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
+            dst.texture = page_tex[i].tex;
+            dst.origin = {0, static_cast<uint32_t>(y0), 0};
+            WGPUTexelCopyBufferLayout layout = {};
+            layout.bytesPerRow = page.size;
+            layout.rowsPerImage = static_cast<uint32_t>(y1 - y0);
+            WGPUExtent3D size = {page.size, static_cast<uint32_t>(y1 - y0), 1};
+            wgpuQueueWriteTexture(queue, &dst, page.px.data() + static_cast<size_t>(y0) * page.size,
+                                  static_cast<size_t>(y1 - y0) * page.size, &layout, &size);
+            page_rev[i] = page.revision;
+            atlas.clearDirty(i);
         }
-        return it->second;
+    }
+
+    WGPUBindGroup pageGroup(size_t page) {
+        if (page_groups[page] == nullptr) {
+            page_groups[page] = texGroup(page_tex[page].view, sampler_linear);
+        }
+        return page_groups[page];
     }
 
     static std::string boxLabel(const Box& box) {
@@ -921,24 +957,7 @@ struct WebGPURenderer::Impl {
             return;
         }
         const Content& content = layer.content();
-        if (const auto* t = std::get_if<TextContent>(&content)) {
-            ensureAtlas();
-            if (atlas.ready()) {
-                textRun(t->utf8);
-            }
-        } else if (const auto* b = std::get_if<BoxesContent>(&content)) {
-            if (b->show_label) {
-                ensureAtlas();
-                if (atlas.ready()) {
-                    for (const Box& box : b->smoothed) {
-                        const std::string label = boxLabel(box);
-                        if (!label.empty()) {
-                            textRun(label);
-                        }
-                    }
-                }
-            }
-        } else if (const auto* p = std::get_if<PolygonContent>(&content)) {
+        if (const auto* p = std::get_if<PolygonContent>(&content)) {
             if (layer.thickness() <= 0 && p->points.size() >= 3) {
                 polygon_offsets[&layer] = static_cast<uint32_t>(polygon_points.size());
                 polygon_points.insert(polygon_points.end(), p->points.begin(), p->points.end());
@@ -995,21 +1014,6 @@ struct WebGPURenderer::Impl {
         uploadTex(entry.tex, premul.data(), v.width * 4);
     }
 
-    void uploadAtlasIfNeeded() {
-        if (!atlas.ready() || atlas.revision() == atlas_uploaded_revision) {
-            return;
-        }
-        if (atlas_tex.w != static_cast<int>(atlas.width()) ||
-            atlas_tex.h != static_cast<int>(atlas.height())) {
-            destroyTex(atlas_tex);
-            atlas_tex = createTex(static_cast<int>(atlas.width()),
-                                  static_cast<int>(atlas.height()), WGPUTextureFormat_R8Unorm,
-                                  WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
-        }
-        uploadTex(atlas_tex, atlas.pixels(), atlas.width());
-        atlas_uploaded_revision = atlas.revision();
-    }
-
     // =======================================================================
     // drawing — mirrors vulkan_renderer.cpp (and thus the CPU reference)
     // =======================================================================
@@ -1062,8 +1066,8 @@ struct WebGPURenderer::Impl {
         drawQuad(pipe_mask_shape, polygon_points.empty() ? dummy_group : points_group, push);
     }
 
-    void maskGlyph(MaskCtx& ctx, const Mat23& m, Rect glyph_local, const float uv[4]) {
-        IRect r = targetBBox(m, glyph_local, 1, ctx.box.x1, ctx.box.y1);
+    void maskGlyph(MaskCtx& ctx, const Mat23& m, const detail::TextEngine::Quad& q) {
+        IRect r = targetBBox(m, q.local, 1, ctx.box.x1, ctx.box.y1);
         r.x0 = std::max(r.x0, ctx.box.x0);
         r.y0 = std::max(r.y0, ctx.box.y0);
         if (r.empty()) {
@@ -1078,12 +1082,16 @@ struct WebGPURenderer::Impl {
         push.meta[1] = static_cast<float>(ctx.mask->h);
         push.meta[2] = ctx.aa;
         setInv(push, ctx.inv_for_mask);
-        push.pa[0] = glyph_local.x;
-        push.pa[1] = glyph_local.y;
-        push.pa[2] = glyph_local.w;
-        push.pa[3] = glyph_local.h;
-        std::memcpy(push.pb, uv, sizeof push.pb);
-        drawQuad(pipe_mask_glyph, texGroup(atlas_tex.view, sampler_linear), push);
+        push.pa[0] = q.local.x;
+        push.pa[1] = q.local.y;
+        push.pa[2] = q.local.w;
+        push.pa[3] = q.local.h;
+        std::memcpy(push.pb, q.uv, sizeof push.pb);
+        push.px2[0] = q.mode;
+        push.px2[1] = q.px_range;
+        push.px2[2] = q.dilate_fill;
+        push.px2[3] = q.dilate_outer;
+        drawQuad(pipe_mask_glyph, pageGroup(q.page), push);
     }
 
     void finishMask(MaskCtx& ctx, Tex& target, Color color, float fold_alpha, Blend blend) {
@@ -1131,31 +1139,66 @@ struct WebGPURenderer::Impl {
         drawQuad(pipe_shape_color[blendIndex(blend)], dummy_group, push);
     }
 
+    // Text: per paint group, an RG mask of glyph coverage (fill, outer),
+    // then text_composite with the group's paint — the CPU's drawText.
     void drawTextRun(Tex& target, const TextContent& c, const Mat23& m, const Mat23& inv,
                      Color color, float alpha, Blend blend, float scale) {
-        ensureAtlas();
-        if (!atlas.ready() || c.utf8.empty() || atlas_tex.tex == nullptr) {
+        ensureText();
+        detail::TextEngine::Draw draw;
+        text.build(c, m, color, draw);
+        if (draw.groups.empty()) {
             return;
         }
-        const TextRun& run = textRun(c.utf8);
-        const float s = c.size / static_cast<float>(atlas.pixelSize());
-        float align_dx = 0;
-        if (c.align != Align::Left) {
-            const float w = run.width * s;
-            align_dx = c.align == Align::Center ? -w * 0.5f : -w;
+        syncPages();
+        const bool outlined = draw.outline.a > 0;
+        for (const detail::TextEngine::Group& group : draw.groups) {
+            Rect gb{};
+            for (const auto& q : group.quads) {
+                gb = gb.w > 0 ? plan::rectUnion(gb, q.local) : q.local;
+            }
+            MaskCtx mask;
+            mask.box = targetBBox(m, gb, 1, target.w, target.h);
+            if (mask.box.empty()) {
+                continue;
+            }
+            endTarget();
+            mask.mask = acquireTransient(mask.box.x1 - mask.box.x0, mask.box.y1 - mask.box.y0,
+                                         WGPUTextureFormat_RG16Float);
+            mask.inv_for_mask = inv * Mat23::translation({static_cast<float>(mask.box.x0),
+                                                          static_cast<float>(mask.box.y0)});
+            mask.aa = 1.0f / scale;
+            ensureTarget(*mask.mask);
+            for (const auto& q : group.quads) {
+                if (q.page < page_tex.size()) {
+                    maskGlyph(mask, m, q);
+                }
+            }
+            endTarget();
+            ensureTarget(target);
+            Push push{};
+            setRect(push, mask.box);
+            push.meta[0] = static_cast<float>(target.w);
+            push.meta[1] = static_cast<float>(target.h);
+            push.meta[2] = alpha;
+            push.meta[3] = static_cast<float>((group.gradient ? 1 : 0) | (outlined ? 2 : 0));
+            setInv(push, inv);
+            push.pa[0] = draw.gradient_origin.x;
+            push.pa[1] = draw.gradient_origin.y;
+            push.pa[2] = draw.gradient_axis.x;
+            push.pa[3] = draw.gradient_axis.y;
+            const Color& to = draw.gradient_to;
+            push.pb[0] = to.r;
+            push.pb[1] = to.g;
+            push.pb[2] = to.b;
+            push.pb[3] = to.a;
+            push.px2[0] = draw.outline.r;
+            push.px2[1] = draw.outline.g;
+            push.px2[2] = draw.outline.b;
+            push.px2[3] = draw.outline.a;
+            setColor(push, group.fill);
+            drawQuad(pipe_text_comp[blendIndex(blend)],
+                     texGroup(mask.mask->view, sampler_nearest), push);
         }
-        const Rect text_box = measureText(c);
-        MaskCtx mask;
-        if (!beginMask(mask, target, m, inv, rectPad(text_box, 2), 2 * scale, 1.0f / scale)) {
-            return;
-        }
-        for (const auto& q : run.quads) {
-            const Rect lq{c.position.x + align_dx + q.x * s, c.position.y + q.y * s, q.w * s,
-                          q.h * s};
-            const float uv[4] = {q.u0, q.v0, q.u1, q.v1};
-            maskGlyph(mask, m, lq, uv);
-        }
-        finishMask(mask, target, color, alpha, blend);
     }
 
     void drawImageContent(Tex& target, const ImageContent& c, Rect bounds, const Mat23& m,
@@ -1411,7 +1454,7 @@ struct WebGPURenderer::Impl {
         // ---- offscreen path ----
         const float scale = scaleOf(m);
         Rect ext = plan::subtreeExtent(layer, parent_size,
-                                       [this](const TextContent& c) { return measureText(c); });
+                                       [this](const TextContent& c) { return textExtent(c); });
         if (ext.w <= 0 || ext.h <= 0 || scale <= 0) {
             return;
         }
@@ -1684,13 +1727,13 @@ struct WebGPURenderer::Impl {
             c.used = 0;
         }
         push_chunk_i = 0;
-        text_runs.clear();
+        text.beginFrame();
+        std::fill(page_groups.begin(), page_groups.end(), nullptr);
         polygon_offsets.clear();
         polygon_points.clear();
 
         // Pre-pass: queue writes (images, glyphs) precede the submit.
         prepassLayer(stage.root());
-        uploadAtlasIfNeeded();
         for (auto it = image_cache.begin(); it != image_cache.end();) {
             if (it->second.frame_used + 60 < frame_counter) {
                 destroyTex(it->second.tex);
@@ -1837,7 +1880,6 @@ struct WebGPURenderer::Impl {
             c.used = 0;
         }
         push_chunk_i = 0;
-        text_runs.clear();
         polygon_offsets.clear();
         polygon_points.clear();
         return readbackFinish(out_w, out_h, sampler_linear);

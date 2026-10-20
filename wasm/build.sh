@@ -6,13 +6,18 @@
 #
 #   source ~/emsdk/emsdk_env.sh && ./wasm/build.sh [--jp|--latin|--cjk] [--webgpu]
 #
-# One font is embedded, landing on the virtual FS at a path the renderer's
-# candidate list (kFontSearch, src/text_atlas.cpp) already probes:
-#   --jp     (default) wasm/fonts/NotoSansJP-subset.otf, ~1 MB: Noto Sans
-#            CJK JP cut to kana, JIS level-1 + joyo/jinmeiyo kanji, CJK
-#            punctuation, ASCII/Latin-1 (wasm/fonts/make_jp_subset.py)
-#   --latin  DejaVuSans (~750 KB, Latin only; Japanese draws hollow boxes)
-#   --cjk    the whole NotoSansCJK collection (~19 MB, every CJK glyph)
+# Fonts are embedded on the virtual FS at paths the default font list
+# (src/text/font_library.cpp, ensureDefaults) already probes — family
+# "sans", Regular 400 and Bold 700:
+#   --jp     (default) wasm/fonts/NotoSansJP-subset.otf + -Bold-subset.otf,
+#            ~1 MB each: Noto Sans CJK JP cut to kana, JIS level-1 +
+#            joyo/jinmeiyo kanji, CJK punctuation, ASCII/Latin-1
+#            (wasm/fonts/make_jp_subset.py)
+#   --latin  DejaVuSans + Bold (~1.4 MB, Latin only; Japanese draws boxes)
+#   --cjk    the whole NotoSansCJK collection (~19 MB, every CJK glyph;
+#            Bold is synthesized — another 19 MB was not worth it)
+#   --no-bold  skip the Bold face (−1 MB; bold text is synthesized)
+# More faces load at runtime: fs_register_font (wasm/api.cpp).
 # The Noto fonts carry their OFL text into wasm/dist/OFL.txt.
 #
 # --webgpu runs the glslc → naga pipe (host tools; robot image has both):
@@ -25,19 +30,24 @@ cd "$(dirname "$0")/.."
 
 FONT=jp
 WEBGPU=0
+BOLD=1
 for arg in "$@"; do
   case "$arg" in
     --jp) FONT=jp ;;
     --latin) FONT=latin ;;
     --cjk) FONT=cjk ;;
     --webgpu) WEBGPU=1 ;;
+    --no-bold) BOLD=0 ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
+EMBED=()
 case $FONT in  # source@virtual-FS path
-  jp) EMBED=wasm/fonts/NotoSansJP-subset.otf@/usr/share/fonts/opentype/noto/NotoSansCJKjp-Regular.otf ;;
-  latin) EMBED=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf@/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf ;;
-  cjk) EMBED=/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc@/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc ;;
+  jp) EMBED=(--embed-file wasm/fonts/NotoSansJP-subset.otf@/usr/share/fonts/opentype/noto/NotoSansCJKjp-Regular.otf)
+      [[ $BOLD == 1 ]] && EMBED+=(--embed-file wasm/fonts/NotoSansJP-Bold-subset.otf@/usr/share/fonts/opentype/noto/NotoSansCJKjp-Bold.otf) ;;
+  latin) EMBED=(--embed-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf@/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf)
+      [[ $BOLD == 1 ]] && EMBED+=(--embed-file /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf@/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf) ;;
+  cjk) EMBED=(--embed-file /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc@/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc) ;;
 esac
 
 EXTRA_SRC=()
@@ -55,7 +65,7 @@ if [[ $WEBGPU == 1 ]]; then
     echo "#pragma once"
   } > "$HDR"
   for s in quad.vert fullscreen.vert shape_mask.frag glyph_mask.frag \
-           mask_composite.frag shape_color.frag image.frag filter.frag \
+           mask_composite.frag text_composite.frag shape_color.frag image.frag filter.frag \
            filter_state.frag layer_mask.frag blur.frag composite.frag unpremul.frag present.frag; do
     "$GLSLC" -O -DFS_WEBGPU -I include -I "$SHADER_DIR" \
       -o "$GEN/$s.spv" "$SHADER_DIR/$s"
@@ -74,14 +84,15 @@ if [[ $WEBGPU == 1 ]]; then
 fi
 
 mkdir -p wasm/dist
-em++ -O2 -std=c++17 -msimd128 -I include \
-  src/stage.cpp src/text_atlas.cpp src/cpu_renderer.cpp src/ui.cpp src/effects.cpp \
+em++ -O2 -std=c++17 -msimd128 -I include -I src \
+  src/stage.cpp src/text/font_library.cpp src/text/sdf.cpp src/text/glyph_atlas.cpp \
+  src/text/text_layout.cpp src/text/text_engine.cpp src/cpu_renderer.cpp src/ui.cpp src/effects.cpp \
   src/fvs/diagnostics.cpp src/fvs/sha256.cpp src/fvs/yaml_parser.cpp \
   src/fvs/schema.cpp src/fvs/parser.cpp src/fvs/writer.cpp src/fvs/compiler.cpp \
   src/fvs/describe.cpp src/fvs/linter.cpp src/fvs/inspector.cpp \
   wasm/api.cpp "${EXTRA_SRC[@]}" \
   --use-port=freetype --use-port=harfbuzz \
-  --embed-file "$EMBED" \
+  "${EMBED[@]}" \
   "${EXTRA_FLAGS[@]}" \
   -sALLOW_MEMORY_GROWTH=1 \
   -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createFluentScene \
