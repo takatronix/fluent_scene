@@ -2,6 +2,7 @@
 // (WebGPU readback + wasm CPU) and writes PNGs:
 //   NODE_PATH=<dir with playwright-core> node tests/text/probe_web.mjs \
 //     <dist-dir relative to repo> <out-dir> <tag> [chrome-path]
+// SCENES=features,probe_dark picks other tests/text/*.fvs documents.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,7 +26,7 @@ const browser = await chromium.launch({
   args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--ignore-gpu-blocklist'],
 });
 fs.mkdirSync(outDir, { recursive: true });
-for (const scene of ['probe_dark', 'probe_light', 'probe_xform']) {
+for (const scene of (process.env.SCENES || 'probe_dark,probe_light,probe_xform').split(',')) {
   const page = await browser.newPage();
   page.on('console', (m) => { if (m.type() === 'error') console.error('page:', m.text()); });
   await page.goto(`${base}/tests/text/probe.html?dist=/${dist}&scene=/tests/text/${scene}.fvs`);
