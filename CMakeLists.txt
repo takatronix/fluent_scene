@@ -65,6 +65,11 @@ endif()
 add_library(fluent_scene
   src/stage.cpp
   src/text_atlas.cpp
+  src/text/font_library.cpp
+  src/text/sdf.cpp
+  src/text/glyph_atlas.cpp
+  src/text/text_layout.cpp
+  src/text/text_engine.cpp
   src/cpu_renderer.cpp
   src/ui.cpp
   src/effects.cpp
@@ -80,7 +85,7 @@ add_library(fluent_scene
   src/fvs/inspector.cpp
   src/fvs/binding.cpp
 )
-target_include_directories(fluent_scene PUBLIC include)
+target_include_directories(fluent_scene PUBLIC include PRIVATE src)
 target_link_libraries(fluent_scene PRIVATE ${FS_TEXT_LIB})
 target_compile_options(fluent_scene PRIVATE -Wall -Wextra)
 

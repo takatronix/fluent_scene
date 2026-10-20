@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "fluent_scene/geometry.hpp"
+#include "fluent_scene/text.hpp"
 #include "fluent_scene/types.hpp"
 
 namespace fluent_scene {
@@ -33,14 +34,54 @@ struct ImageContent {
     Rect source_rect{};         ///< Source crop in pixels; zero size = all.
 };
 
-/// A single run of UTF-8 text (Japanese included; shaped by HarfBuzz).
-/// `position` is the top-left of the text box in layer space (Align moves
-/// the reference edge). Missing glyphs draw a deterministic replacement box.
+/// UTF-8 text (Japanese included; shaped by HarfBuzz, drawn from a dynamic
+/// glyph atlas — exact-size bitmaps for small upright text, signed distance
+/// fields for large / transformed / outlined text; docs/design/text.md).
+/// `position` is the reference point in layer space: by default the
+/// top-left of the first line box (Align / VAlign move the reference edge).
+/// Missing glyphs draw a deterministic replacement box.
+///
+/// Every field past `align` is optional styling; the defaults reproduce
+/// plain single-line text exactly as before.
 struct TextContent {
-    std::string utf8;           ///< The text.
+    std::string utf8;           ///< The text ('\n' starts a new line).
     Vec2 position{};            ///< Reference point in layer space.
-    float size = 26;            ///< Font size in logical units.
-    Align align = Align::Left;  ///< Which edge `position` refers to.
+    float size = 26;            ///< Font size in logical units (pt() converts).
+    Align align = Align::Left;  ///< Horizontal: which edge `position` refers
+                                ///< to; also aligns lines inside the block.
+    VAlign valign = VAlign::Top;  ///< Vertical reference edge.
+
+    // ---- font ----
+    std::string font;           ///< Family ("sans", "serif", "mono", or a
+                                ///< registerFont name); empty = "sans".
+    int weight = 400;           ///< 100–900; ≥ 600 picks a Bold face when one
+                                ///< is registered, otherwise emboldens.
+    bool italic = false;        ///< Italic face, or a synthetic 12° slant.
+    float letter_spacing = 0;   ///< Extra advance after each character.
+    float line_height = 0;      ///< Baseline pitch as a multiple of size;
+                                ///< 0 = the font's own (≈1.45 for Noto CJK).
+    bool tabular = false;       ///< Fixed-width digits (OpenType tnum, plus
+                                ///< equalized advances) — numbers that
+                                ///< change every frame do not jitter.
+
+    // ---- layout box ----
+    float max_width = 0;        ///< Wrap / truncate width; 0 = unbounded.
+    float max_height = 0;       ///< Lines that would exceed it are dropped.
+    bool wrap = true;           ///< Wrap at max_width (Japanese kinsoku
+                                ///< rules); false keeps one line per '\n'.
+    int max_lines = 0;          ///< 0 = unlimited.
+    bool ellipsis = false;      ///< Mark truncated text with "…".
+    float min_size = 0;         ///< Auto-fit: when > 0, shrink `size` (not
+                                ///< below this) until the text fits
+                                ///< max_width / max_height / max_lines.
+
+    // ---- paint ----
+    TextOutline outline;        ///< Stroke around the glyphs.
+    TextGradient gradient;      ///< Fill gradient (else the layer color).
+
+    /// Rich text: when non-empty, these spans replace `utf8` and may
+    /// override font / size / weight / italic / color per run.
+    std::vector<TextSpan> spans;
 };
 
 /// A single straight line from `from` to `to`.

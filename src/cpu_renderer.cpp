@@ -38,11 +38,15 @@ namespace shapes {
 using namespace glsl;
 #include "fluent_scene/shared/shapes_shared.h"
 }  // namespace shapes
+namespace textfx {
+using namespace glsl;
+#include "fluent_scene/shared/text_shared.h"
+}  // namespace textfx
 }  // namespace fluent_scene
 
 #include "fluent_scene/stage.hpp"
 #include "render_shared.hpp"
-#include "text_atlas.hpp"
+#include "text/text_engine.hpp"
 
 namespace fluent_scene {
 
@@ -769,8 +773,8 @@ void rasterizePolygonFill(Mask& mask, const Mat23& inv, const Mat23& fwd,
 
 struct CpuRenderer::Impl {
     Options options;
-    detail::TextAtlas atlas;
-    bool atlas_tried = false;
+    detail::TextEngine text;
+    bool text_inited = false;
     Buf frame;
     std::vector<uint8_t> out_rgba;
     Surface surface;
@@ -781,36 +785,29 @@ struct CpuRenderer::Impl {
 
     // ---- fonts ------------------------------------------------------------
 
-    void ensureAtlas() {
-        if (atlas.ready() || atlas_tried) {
-            return;
+    void ensureText() {
+        if (!text_inited) {
+            text_inited = true;
+            text.init(options.font_file);
         }
-        atlas_tried = true;
-        detail::initAtlasWithFallback(atlas, options.font_file, options.font_pixel_size);
     }
 
-    // Text metrics in logical units for a content (Stage measurement hook).
+    // Layout box in logical units (Stage measurement hook).
     Rect measureText(const TextContent& c) {
-        ensureAtlas();
-        if (!atlas.ready()) {
-            return {};
-        }
-        const float s = c.size / static_cast<float>(atlas.pixelSize());
-        const float w = atlas.measure(c.utf8) * s;
-        const float h = atlas.lineHeight() * s;
-        float x = c.position.x;
-        if (c.align == Align::Center) {
-            x -= w * 0.5f;
-        } else if (c.align == Align::Right) {
-            x -= w;
-        }
-        return {x, c.position.y, w, h};
+        ensureText();
+        return text.metrics(c).box;
+    }
+
+    // Everything a text content may paint (offscreen extents).
+    Rect textExtent(const TextContent& c) {
+        ensureText();
+        return text.extent(c);
     }
 
     // ---- extent of a subtree in its own local space -----------------------
 
     plan::TextMeasure measurer() {
-        return [this](const TextContent& c) { return measureText(c); };
+        return [this](const TextContent& c) { return textExtent(c); };
     }
 
     // ---- content rasterization --------------------------------------------
@@ -1089,74 +1086,153 @@ struct CpuRenderer::Impl {
         }
     }
 
+    // Text: per paint group, glyph coverage (fill, outer) into two masks
+    // with MAX union, then one premultiplied composite — the same two
+    // steps as glyph_mask.frag + text_composite.frag (text_shared.h).
     void drawText(Buf& target, const TextContent& c, const Mat23& m, const Mat23& inv,
                   Color color, float alpha, Blend mode, float scale) {
-        ensureAtlas();
-        if (!atlas.ready() || c.utf8.empty()) {
+        (void)scale;
+        ensureText();
+        detail::TextEngine::Draw draw;
+        text.build(c, m, color, draw);
+        if (draw.groups.empty()) {
             return;
         }
-        const float s = c.size / static_cast<float>(atlas.pixelSize());
-        std::vector<detail::TextAtlas::GlyphQuad> quads;
-        atlas.layout(c.utf8, 0, 0, 4096, quads);
-        float align_dx = 0;
-        if (c.align != Align::Left) {
-            const float w = atlas.measure(c.utf8) * s;
-            align_dx = c.align == Align::Center ? -w * 0.5f : -w;
-        }
-        Mask mask;
-        const Rect text_box = measureText(c);
-        mask.reset(targetBBox(m, rectPad(text_box, 2), 2 * scale, target.w, target.h));
-        if (mask.box.empty()) {
-            return;
-        }
-        for (const auto& q : quads) {
-            // Quad in logical units.
-            const Rect lq{c.position.x + align_dx + q.x * s, c.position.y + q.y * s, q.w * s,
-                          q.h * s};
-            IRect box = targetBBox(m, lq, 1, target.w, target.h);
-            box.x0 = std::max(box.x0, mask.box.x0);
-            box.y0 = std::max(box.y0, mask.box.y0);
-            box.x1 = std::min(box.x1, mask.box.x1);
-            box.y1 = std::min(box.y1, mask.box.y1);
-            if (box.empty()) {
+        detail::GlyphAtlas& atlas = text.atlas();
+        const bool outlined = draw.outline.a > 0;
+        const float outline_luma =
+            textfx::text_luma(glsl::vec3(draw.outline.r, draw.outline.g, draw.outline.b));
+        for (const detail::TextEngine::Group& group : draw.groups) {
+            Rect gb{};
+            for (const auto& q : group.quads) {
+                gb = gb.w > 0 ? plan::rectUnion(gb, q.local) : q.local;
+            }
+            Mask fill_mask, outer_mask;
+            fill_mask.reset(targetBBox(m, gb, 1, target.w, target.h));
+            if (fill_mask.box.empty()) {
                 continue;
             }
-            const float u_span = q.u1 - q.u0;
-            const float v_span = q.v1 - q.v0;
-            for (int y = box.y0; y < box.y1; ++y) {
-                mask.touch(y, box.x0, box.x1);
-                for (int x = box.x0; x < box.x1; ++x) {
-                    const Vec2 local = inv.apply({x + 0.5f, y + 0.5f});
-                    const float fx = (local.x - lq.x) / lq.w;
-                    const float fy = (local.y - lq.y) / lq.h;
-                    if (fx < 0 || fy < 0 || fx >= 1 || fy >= 1) {
-                        continue;
+            if (outlined) {
+                outer_mask.reset(fill_mask.box);
+            }
+            for (const auto& q : group.quads) {
+                IRect box = targetBBox(m, q.local, 1, target.w, target.h);
+                box.x0 = std::max(box.x0, fill_mask.box.x0);
+                box.y0 = std::max(box.y0, fill_mask.box.y0);
+                box.x1 = std::min(box.x1, fill_mask.box.x1);
+                box.y1 = std::min(box.y1, fill_mask.box.y1);
+                if (box.empty()) {
+                    continue;
+                }
+                const auto& page = atlas.page(q.page);
+                const int ps = static_cast<int>(page.size);
+                const uint8_t* px = page.px.data();
+                const auto tex = [&](int xx, int yy) {
+                    return px[static_cast<size_t>(yy) * ps + xx] / 255.0f;
+                };
+                for (int y = box.y0; y < box.y1; ++y) {
+                    fill_mask.touch(y, box.x0, box.x1);
+                    if (outlined) {
+                        outer_mask.touch(y, box.x0, box.x1);
                     }
-                    // Bilinear R8 atlas sample.
-                    const float ax = (q.u0 + fx * u_span) * atlas.width() - 0.5f;
-                    const float ay = (q.v0 + fy * v_span) * atlas.height() - 0.5f;
-                    const int ax0 = std::clamp(static_cast<int>(std::floor(ax)), 0,
-                                               static_cast<int>(atlas.width()) - 1);
-                    const int ay0 = std::clamp(static_cast<int>(std::floor(ay)), 0,
-                                               static_cast<int>(atlas.height()) - 1);
-                    const int ax1 = std::min(ax0 + 1, static_cast<int>(atlas.width()) - 1);
-                    const int ay1 = std::min(ay0 + 1, static_cast<int>(atlas.height()) - 1);
-                    const float tx = std::clamp(ax - ax0, 0.0f, 1.0f);
-                    const float ty = std::clamp(ay - ay0, 0.0f, 1.0f);
-                    const uint8_t* px = atlas.pixels();
-                    const auto tex = [&](int xx, int yy) {
-                        return px[static_cast<size_t>(yy) * atlas.width() + xx] / 255.0f;
-                    };
-                    const float cov = (tex(ax0, ay0) * (1 - tx) + tex(ax1, ay0) * tx) * (1 - ty) +
-                                      (tex(ax0, ay1) * (1 - tx) + tex(ax1, ay1) * tx) * ty;
-                    if (cov > 0) {
-                        float* mp = mask.at(x, y);
-                        *mp = std::max(*mp, cov);
+                    for (int x = box.x0; x < box.x1; ++x) {
+                        const Vec2 local = inv.apply({x + 0.5f, y + 0.5f});
+                        const float fx = (local.x - q.local.x) / q.local.w;
+                        const float fy = (local.y - q.local.y) / q.local.h;
+                        if (fx < 0 || fy < 0 || fx >= 1 || fy >= 1) {
+                            continue;
+                        }
+                        // Bilinear R8 page sample (clamp to edge).
+                        const float ax = (q.uv[0] + fx * (q.uv[2] - q.uv[0])) * ps - 0.5f;
+                        const float ay = (q.uv[1] + fy * (q.uv[3] - q.uv[1])) * ps - 0.5f;
+                        const int ax0 = std::clamp(static_cast<int>(std::floor(ax)), 0, ps - 1);
+                        const int ay0 = std::clamp(static_cast<int>(std::floor(ay)), 0, ps - 1);
+                        const int ax1 = std::min(ax0 + 1, ps - 1);
+                        const int ay1 = std::min(ay0 + 1, ps - 1);
+                        const float tx = std::clamp(ax - std::floor(ax), 0.0f, 1.0f);
+                        const float ty = std::clamp(ay - std::floor(ay), 0.0f, 1.0f);
+                        const float v = (tex(ax0, ay0) * (1 - tx) + tex(ax1, ay0) * tx) * (1 - ty) +
+                                        (tex(ax0, ay1) * (1 - tx) + tex(ax1, ay1) * tx) * ty;
+                        const float f =
+                            textfx::text_coverage(v, q.mode, q.px_range, q.dilate_fill);
+                        if (f > 0) {
+                            float* mp = fill_mask.at(x, y);
+                            *mp = std::max(*mp, f);
+                        }
+                        if (outlined) {
+                            const float o =
+                                textfx::text_coverage(v, q.mode, q.px_range, q.dilate_outer);
+                            if (o > 0) {
+                                float* op = outer_mask.at(x, y);
+                                *op = std::max(*op, o);
+                            }
+                        }
                     }
                 }
             }
+            compositeText(target, fill_mask, outlined ? &outer_mask : nullptr, group, draw,
+                          outline_luma, inv, alpha, mode);
         }
-        compositeMask(target, mask, color, alpha, mode);
+    }
+
+    void compositeText(Buf& target, const Mask& fill_mask, const Mask* outer_mask,
+                       const detail::TextEngine::Group& group,
+                       const detail::TextEngine::Draw& draw, float outline_luma, const Mat23& inv,
+                       float alpha, Blend mode) {
+        const Color fill = group.fill;
+        const int stride = fill_mask.box.x1 - fill_mask.box.x0;
+        const Color outline = draw.outline;
+        for (int y = fill_mask.box.y0; y < fill_mask.box.y1; ++y) {
+            const size_t row = static_cast<size_t>(y - fill_mask.box.y0);
+            const int x0 = outer_mask != nullptr
+                               ? std::min(fill_mask.span_x0[row], outer_mask->span_x0[row])
+                               : fill_mask.span_x0[row];
+            const int x1 = outer_mask != nullptr
+                               ? std::max(fill_mask.span_x1[row], outer_mask->span_x1[row])
+                               : fill_mask.span_x1[row];
+            for (int x = x0; x < x1; ++x) {
+                const bool in_fill = x >= fill_mask.span_x0[row] && x < fill_mask.span_x1[row];
+                float f = in_fill ? fill_mask.cov[row * stride + (x - fill_mask.box.x0)] : 0.0f;
+                float o = f;
+                if (outer_mask != nullptr && x >= outer_mask->span_x0[row] &&
+                    x < outer_mask->span_x1[row]) {
+                    o = std::max(f, outer_mask->cov[row * stride + (x - fill_mask.box.x0)]);
+                }
+                if (o <= 0) {
+                    continue;
+                }
+                Color fc = fill;
+                if (group.gradient) {
+                    const Vec2 lp = inv.apply({x + 0.5f, y + 0.5f});
+                    const float t = textfx::text_gradient_t(
+                        glsl::vec2(lp.x, lp.y),
+                        glsl::vec2(draw.gradient_origin.x, draw.gradient_origin.y),
+                        glsl::vec2(draw.gradient_axis.x, draw.gradient_axis.y));
+                    const Color& to = draw.gradient_to;
+                    fc = {fill.r + (to.r - fill.r) * t, fill.g + (to.g - fill.g) * t,
+                          fill.b + (to.b - fill.b) * t, fill.a + (to.a - fill.a) * t};
+                }
+                const float fl = textfx::text_luma(glsl::vec3(fc.r, fc.g, fc.b));
+                const float fcov = textfx::text_contrast(f, fl);
+                float premul[4];
+                if (outer_mask != nullptr) {
+                    const float ocov = std::max(fcov, textfx::text_contrast(o, outline_luma));
+                    const float fa = fc.a * fcov * alpha;
+                    const float oa = outline.a * (ocov - fcov) * alpha;
+                    premul[0] = fc.r * fa + outline.r * oa;
+                    premul[1] = fc.g * fa + outline.g * oa;
+                    premul[2] = fc.b * fa + outline.b * oa;
+                    premul[3] = fa + oa;
+                } else {
+                    const float fa = fc.a * fcov * alpha;
+                    premul[0] = fc.r * fa;
+                    premul[1] = fc.g * fa;
+                    premul[2] = fc.b * fa;
+                    premul[3] = fa;
+                }
+                blendPremul(target.at(x, y), premul, mode);
+            }
+        }
     }
 
     // ---- background / border ---------------------------------------------
@@ -1333,6 +1409,7 @@ struct CpuRenderer::Impl {
         stage.advance(dt);
 
         ++frame_stamp;
+        text.beginFrame();
         frame.reset(static_cast<int>(out_w), static_cast<int>(out_h));
 
         // Logical canvas → output mapping (§4: Stage fit policy).
