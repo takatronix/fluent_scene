@@ -4,6 +4,8 @@
 
 #include "fluent_scene/stage.hpp"
 
+#include "text/text_layout.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -682,6 +684,160 @@ Layer& Layer::align(Align a) {
     return *this;
 }
 
+Layer& Layer::verticalAlign(VAlign v) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->valign = v;
+    } else {
+        warn("verticalAlign() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::font(const std::string& family) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->font = family;
+    } else {
+        warn("font() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::fontWeight(int weight) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->weight = std::clamp(weight, 1, 1000);
+    } else {
+        warn("fontWeight() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::italic(bool on) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->italic = on;
+    } else {
+        warn("italic() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::letterSpacing(float units) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->letter_spacing = units;
+    } else {
+        warn("letterSpacing() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::lineHeight(float multiple) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->line_height = std::max(0.0f, multiple);
+    } else {
+        warn("lineHeight() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::tabularNumbers(bool on) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->tabular = on;
+    } else {
+        warn("tabularNumbers() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::maxWidth(float units) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->max_width = std::max(0.0f, units);
+    } else {
+        warn("maxWidth() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::maxHeight(float units) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->max_height = std::max(0.0f, units);
+    } else {
+        warn("maxHeight() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::wrap(bool on) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->wrap = on;
+    } else {
+        warn("wrap() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::maxLines(int lines) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->max_lines = std::max(0, lines);
+    } else {
+        warn("maxLines() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::ellipsis(bool on) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->ellipsis = on;
+    } else {
+        warn("ellipsis() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::autoFit(float min_size) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->min_size = std::max(0.0f, min_size);
+    } else {
+        warn("autoFit() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::textOutline(float width, Color color, OutlinePosition position) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->outline = {std::max(0.0f, width), color, position};
+    } else {
+        warn("textOutline() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::textGradient(Color from, Color to, float angle_deg) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->gradient = {true, from, to, angle_deg};
+    } else {
+        warn("textGradient() applies to text content only");
+    }
+    return *this;
+}
+
+Layer& Layer::spans(const std::vector<TextSpan>& spans) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->spans = spans;
+        size_t bytes = 0;
+        for (TextSpan& span : c->spans) {
+            const size_t room = stage_->limits().max_text_bytes - std::min(
+                bytes, static_cast<size_t>(stage_->limits().max_text_bytes));
+            if (span.utf8.size() > room) {
+                warn("text spans clamped to max_text_bytes");
+                span.utf8.resize(room);
+            }
+            bytes += span.utf8.size();
+        }
+    } else {
+        warn("spans() applies to text content only");
+    }
+    return *this;
+}
+
 Layer& Layer::smoothing(float time_constant) {
     if (auto* c = std::get_if<BoxesContent>(&content_)) {
         c->smoothing = time_constant;
@@ -984,6 +1140,24 @@ Layer* Layer::hitTestInteractive(Vec2 point_in_parent, Vec2 parent_size,
 
 void Layer::warn(const std::string& message) const {
     stage_->diagnose(id_ + ": " + message);
+}
+
+Rect Stage::measureText(const TextContent& text) const {
+    if (text_measurer_) {
+        return text_measurer_(text);
+    }
+    return detail::layoutText(text).metrics.box;
+}
+
+TextMetrics Stage::textMetrics(const TextContent& text) const {
+    return detail::layoutText(text).metrics;
+}
+
+TextMetrics Stage::textMetrics(const Layer& layer) const {
+    if (const auto* t = std::get_if<TextContent>(&layer.content())) {
+        return textMetrics(*t);
+    }
+    return {};
 }
 
 }  // namespace fluent_scene

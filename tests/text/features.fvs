@@ -1,0 +1,38 @@
+# Text API showcase (docs/api/text.ja.md): weights, italic, outline,
+# gradient, glow, tabular digits, wrapping with kinsoku, ellipsis,
+# auto-fit, rich spans, vertical alignment.
+schema: fluent.scene/v1alpha2
+stage: { size: [1200, 820] }
+layers:
+  - content: { rect: { size: [1200, 820], color: [0.08, 0.09, 0.12, 1] } }
+  - content: { text: { text: "Regular 標準 400", position: [40, 30], size: 40 } }
+  - content: { text: { text: "Bold 太字 700", position: [40, 90], size: 40, weight: 700 } }
+  - content: { text: { text: "Italic 斜体", position: [40, 150], size: 40, italic: true } }
+  - content: { text: { text: "Serif 明朝体", position: [40, 210], size: 40, font: serif } }
+  - content: { text: { text: "縁取り Outline", position: [620, 30], size: 52, weight: 700,
+                       outline_width: 4, outline_color: [0.05, 0.1, 0.3, 1], color: [1, 0.85, 0.2, 1] } }
+  - content: { text: { text: "グラデーション", position: [620, 110], size: 52, weight: 700,
+                       gradient_from: [0.3, 0.9, 1, 1], gradient_to: [0.8, 0.3, 1, 1] } }
+  - content: { text: { text: "NEON 発光", position: [620, 190], size: 52, weight: 700,
+                       color: [1, 0.95, 1, 1], glow_radius: 14, glow_color: [1, 0.2, 0.8, 1] } }
+  - content: { rect: { rect: [40, 290, 520, 200], color: [1, 1, 1, 0.06] } }
+  - content: { text: { text: "日本語の折り返しは禁則処理に対応します。句読点「、」や「。」、閉じ括弧」は行頭に来ません。Long English words wrap at spaces too.",
+                       position: [50, 300], size: 24, max_width: 500, line_height: 1.5 } }
+  - content: { rect: { rect: [620, 290, 540, 60], color: [1, 1, 1, 0.06] } }
+  - content: { text: { text: "とても長いタイトルは一行に収まらないので末尾を省略記号にします",
+                       position: [630, 320], size: 28, max_width: 520, wrap: false, ellipsis: true,
+                       vertical_align: middle } }
+  - content: { rect: { rect: [620, 370, 540, 60], color: [1, 1, 1, 0.06] } }
+  - content: { text: { text: "自動縮小 auto-fit: shrinks to fit the box",
+                       position: [890, 400], size: 40, max_width: 520, wrap: false, min_size: 12,
+                       align: center, vertical_align: middle } }
+  - content: { text: { spans: [ { text: "速度 " , color: [0.7, 0.75, 0.8, 1] },
+                                { text: "88.5", size: 72, weight: 700, color: [0.4, 0.95, 1, 1] },
+                                { text: " km/h", color: [0.7, 0.75, 0.8, 1] } ],
+                       position: [640, 520], size: 28, vertical_align: baseline } }
+  - content: { text: { text: "1111.1", position: [560, 640], size: 64, tabular: true, align: right } }
+  - content: { text: { text: "8888.8", position: [560, 720], size: 64, tabular: true, align: right } }
+  - content: { text: { text: "tabular: true", position: [560, 610], size: 18, align: right, color: [0.6, 0.6, 0.6, 1] } }
+  - content: { text: { text: "1111.1", position: [1150, 640], size: 64, align: right } }
+  - content: { text: { text: "8888.8", position: [1150, 720], size: 64, align: right } }
+  - content: { text: { text: "default", position: [1150, 610], size: 18, align: right, color: [0.6, 0.6, 0.6, 1] } }

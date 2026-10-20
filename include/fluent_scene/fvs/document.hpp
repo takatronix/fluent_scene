@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "fluent_scene/filters.hpp"
+#include "fluent_scene/text.hpp"
 #include "fluent_scene/fvs/diagnostics.hpp"
 #include "fluent_scene/fvs/schema.hpp"
 #include "fluent_scene/fvs/yaml.hpp"
@@ -39,6 +40,7 @@ struct Value {
     int enum_value = 0;            ///< Enum* (underlying C++ enum value).
     std::string str;               ///< Str.
     std::vector<Vec2> points;      ///< Points.
+    std::vector<TextSpan> spans;   ///< Spans.
     float mat[6] = {1, 0, 0, 1, 0, 0};  ///< Mat23 [a, b, c, d, tx, ty].
     std::string input;             ///< Input: referenced input name.
     std::string param;             ///< Non-empty: `$params.<name>` reference.

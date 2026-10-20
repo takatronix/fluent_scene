@@ -57,7 +57,34 @@ FS_CFIELD(source, Input, 0, FS_DNONE, "input reference (type text.utf8) for live
 FS_CFIELD(position, Vec2, 0, FS_DVEC2(0, 0), "reference point in layer space")
 FS_CFIELD(size, F32, 0, FS_DF32(26), "font size in logical units")
 FS_CFIELD(align, EnumAlign, 0, FS_DSTR(left),
-          "edge the position refers to: left | center | right")
+          "edge the position refers to: left | center | right (also aligns lines)")
+FS_CFIELD(size_pt, F32, 0, FS_DNONE, "font size in points (1 pt = 4/3 units); overrides size")
+FS_CFIELD(vertical_align, EnumVAlign, 0, FS_DSTR(top),
+          "vertical reference edge: top | middle | baseline | bottom")
+FS_CFIELD(font, Str, 0, FS_DSTR(sans), "font family: sans | serif | mono | a registered name")
+FS_CFIELD(weight, F32, 0, FS_DF32(400), "font weight 100-900 (700 = bold)")
+FS_CFIELD(italic, Bool, 0, FS_DBOOL(false), "italic face or synthetic slant")
+FS_CFIELD(letter_spacing, F32, 0, FS_DF32(0), "extra advance after each character")
+FS_CFIELD(line_height, F32, 0, FS_DF32(0), "baseline pitch as a multiple of size; 0 = font's own")
+FS_CFIELD(tabular, Bool, 0, FS_DBOOL(false), "fixed-width digits (live numbers do not jitter)")
+FS_CFIELD(max_width, F32, 0, FS_DF32(0), "wrap / truncate width; 0 = unbounded")
+FS_CFIELD(max_height, F32, 0, FS_DF32(0), "drop lines past this height; 0 = unbounded")
+FS_CFIELD(wrap, Bool, 0, FS_DBOOL(true), "wrap at max_width (Japanese kinsoku rules)")
+FS_CFIELD(max_lines, F32, 0, FS_DF32(0), "at most this many lines; 0 = unlimited")
+FS_CFIELD(ellipsis, Bool, 0, FS_DBOOL(false), "mark truncated text with an ellipsis")
+FS_CFIELD(min_size, F32, 0, FS_DF32(0),
+          "auto-fit: shrink size down to this until the text fits; 0 = off")
+FS_CFIELD(outline_width, F32, 0, FS_DF32(0), "outline width in logical units (<= ~0.17 x size)")
+FS_CFIELD(outline_color, Color, 0, FS_DCOLOR(0, 0, 0, 1), "outline color")
+FS_CFIELD(outline_position, EnumOutline, 0, FS_DSTR(outside),
+          "outline placement: outside | inside | center")
+FS_CFIELD(gradient_from, Color, 0, FS_DNONE, "fill gradient start color (with gradient_to)")
+FS_CFIELD(gradient_to, Color, 0, FS_DNONE, "fill gradient end color")
+FS_CFIELD(gradient_angle, F32, 0, FS_DF32(90), "gradient direction in degrees; 90 = top to bottom")
+FS_CFIELD(glow_radius, F32, 0, FS_DNONE, "glow (the layer shadow, no offset) blur radius")
+FS_CFIELD(glow_color, Color, 0, FS_DCOLOR(1, 1, 1, 1), "glow color")
+FS_CFIELD(spans, Spans, 0, FS_DNONE,
+          "rich text: [{ text, color, size, weight, italic, font }] replacing text")
 FS_CSTYLE(color)
 FS_CONTENT_END(text)
 

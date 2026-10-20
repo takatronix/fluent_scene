@@ -99,7 +99,34 @@ std::string flowValue(const Value& v) {
         case ValueKind::EnumAlign:
         case ValueKind::EnumCap:
         case ValueKind::EnumBlend:
-        case ValueKind::EnumEase: return enumWord(v.kind, v.enum_value);
+        case ValueKind::EnumEase:
+        case ValueKind::EnumVAlign:
+        case ValueKind::EnumOutline: return enumWord(v.kind, v.enum_value);
+        case ValueKind::Spans: {
+            std::string out = "[";
+            for (size_t i = 0; i < v.spans.size(); ++i) {
+                const TextSpan& sp = v.spans[i];
+                out += (i != 0 ? ", " : "") + std::string("{ text: ") + quoted(sp.utf8);
+                if (sp.has_color) {
+                    const float c[4] = {sp.color.r, sp.color.g, sp.color.b, sp.color.a};
+                    out += ", color: " + numSeq(c, 4);
+                }
+                if (sp.size > 0) {
+                    out += ", size: " + formatNumber(sp.size);
+                }
+                if (sp.weight > 0) {
+                    out += ", weight: " + formatNumber(static_cast<float>(sp.weight));
+                }
+                if (sp.italic >= 0) {
+                    out += sp.italic != 0 ? ", italic: true" : ", italic: false";
+                }
+                if (!sp.font.empty()) {
+                    out += ", font: " + quoted(sp.font);
+                }
+                out += " }";
+            }
+            return out + "]";
+        }
         case ValueKind::MapShadow:
         case ValueKind::MapBorder: break;  // handled as field maps
     }

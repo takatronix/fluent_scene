@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "fluent_scene/filters.hpp"
+#include "fluent_scene/text.hpp"
 #include "fluent_scene/types.hpp"
 
 namespace fluent_scene::fvs {
@@ -38,6 +39,9 @@ enum class ValueKind {
     EnumCap,    ///< round | butt.
     EnumBlend,  ///< normal | add | multiply | screen.
     EnumEase,   ///< linear | ease_in | ease_out | ease_in_out.
+    EnumVAlign,   ///< top | middle | baseline | bottom.
+    EnumOutline,  ///< outside | inside | center.
+    Spans,        ///< [{ text, color, size, weight, italic, font }, ...].
     MapShadow,  ///< { offset, radius, color, opacity } — see shadowFields().
     MapBorder,  ///< { width, color } — see borderFields().
 };

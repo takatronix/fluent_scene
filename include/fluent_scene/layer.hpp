@@ -197,6 +197,17 @@ public:
         s.radius = radius;
         return shadow(s);
     }
+    /// A glow: the silhouette shadow with no offset, full strength — neon
+    /// text, highlighted shapes. One per layer (it *is* the shadow); nest a
+    /// group to combine a glow with a drop shadow.
+    Layer& glow(float radius, Color color, float strength = 1.0f) {
+        Shadow s;
+        s.offset = {0, 0};
+        s.radius = radius;
+        s.color = color;
+        s.opacity = strength;
+        return shadow(s);
+    }
     const std::optional<Shadow>& shadowValue() const { return shadow_; }
 
     /// An image-driven alpha mask over the layer's FINISHED pixels (after
@@ -259,8 +270,54 @@ public:
     Layer& sourceRect(Rect source_pixels);
     /// (text) Font size in logical units.
     Layer& size(float font_size);
-    /// (text) Which edge the text position refers to.
+    /// (text) Font size in typographic points (1 pt = 4/3 units).
+    Layer& sizePt(float points) { return size(pt(points)); }
+    /// (text) Which edge the text position refers to horizontally; also
+    /// aligns the lines of a multi-line block.
     Layer& align(Align a);
+    /// (text) Which edge the text position refers to vertically
+    /// (Top default; Middle centers the block; Baseline = first baseline).
+    Layer& verticalAlign(VAlign v);
+    /// (text) Font family: "sans" (default), "serif", "mono", or a name
+    /// given to registerFont().
+    Layer& font(const std::string& family);
+    /// (text) Weight 100–900 (400 regular, 700 bold). A real Bold face is
+    /// used when registered; otherwise the glyphs are emboldened.
+    Layer& fontWeight(int weight);
+    /// (text) fontWeight(700) / fontWeight(400).
+    Layer& bold(bool on = true) { return fontWeight(on ? FontWeight::Bold : FontWeight::Regular); }
+    /// (text) Italic face, or a synthetic 12° slant.
+    Layer& italic(bool on = true);
+    /// (text) Extra advance after each character, logical units.
+    Layer& letterSpacing(float units);
+    /// (text) Baseline pitch as a multiple of the size (0 = the font's).
+    Layer& lineHeight(float multiple);
+    /// (text) Fixed-width digits: live numbers keep their width.
+    Layer& tabularNumbers(bool on = true);
+    /// (text) Wrap width in logical units (Japanese kinsoku rules); 0 =
+    /// unbounded. With wrap(false) it truncates instead.
+    Layer& maxWidth(float units);
+    /// (text) Lines past this height are dropped (ellipsis marks the cut).
+    Layer& maxHeight(float units);
+    /// (text) Wrap at maxWidth (default true).
+    Layer& wrap(bool on);
+    /// (text) At most this many lines (0 = unlimited).
+    Layer& maxLines(int lines);
+    /// (text) Mark truncated text with "…".
+    Layer& ellipsis(bool on = true);
+    /// (text) Shrink the size (down to `min_size`) until the text fits
+    /// maxWidth / maxHeight / maxLines.
+    Layer& autoFit(float min_size);
+    /// (text) Outline around the glyphs (width in logical units; up to
+    /// ~0.17 × size).
+    Layer& textOutline(float width, Color color = Color::Black,
+                       OutlinePosition position = OutlinePosition::Outside);
+    /// (text) Linear fill gradient across the text block (angle in
+    /// degrees, 90 = top → bottom).
+    Layer& textGradient(Color from, Color to, float angle_deg = 90);
+    /// (text) Rich text: spans replace the text; each may override font,
+    /// size, weight, italic and color.
+    Layer& spans(const std::vector<TextSpan>& spans);
     /// (boxes) Temporal smoothing time constant in seconds; 0 disables.
     Layer& smoothing(float time_constant);
     /// (boxes) Draw the label and score above each box (default true).
@@ -312,8 +369,11 @@ public:
     /// attribute — the face of `$params`-bound filter params. `Clock` slots
     /// restart their count from the value set.
     Layer& setFilterParam(size_t index, int slot, float value);
-    /// Replaces the text (text content only).
+    /// Replaces the text (text content only). Cheap: the layout re-shapes
+    /// the string; glyphs already in the atlas are not rasterized again.
     Layer& setText(const std::string& utf8);
+    /// Replaces the rich-text spans (text content only).
+    Layer& setSpans(const std::vector<TextSpan>& spans) { return this->spans(spans); }
     /// Replaces the points (polyline / polygon / circles content).
     Layer& setPoints(const std::vector<Vec2>& points);
     /// Replaces the detections (boxes content only). Smoothing carries

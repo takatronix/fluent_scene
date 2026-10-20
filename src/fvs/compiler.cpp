@@ -6,6 +6,7 @@
 // the §2 "same picture from YAML and C++" contract holds by construction.
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -411,6 +412,72 @@ private:
         return layer;
     }
 
+    /// The text styling fields, through the same Layer setters C++ uses.
+    static void applyTextFields(Layer& layer, const ContentDecl& c) {
+        const auto has = [&](const char* name) { return c.find(name) != nullptr; };
+        const auto num = [&](const char* name) { return c.find(name)->value.num[0]; };
+        const auto flag = [&](const char* name) { return c.find(name)->value.flag; };
+        const auto color = [&](const char* name) { return c.find(name)->value.color(); };
+        if (const MapField* f = c.find("vertical_align")) {
+            layer.verticalAlign(static_cast<VAlign>(f->value.enum_value));
+        }
+        if (const MapField* f = c.find("font")) {
+            layer.font(f->value.str);
+        }
+        if (has("weight")) {
+            layer.fontWeight(static_cast<int>(std::lround(num("weight"))));
+        }
+        if (has("italic")) {
+            layer.italic(flag("italic"));
+        }
+        if (has("letter_spacing")) {
+            layer.letterSpacing(num("letter_spacing"));
+        }
+        if (has("line_height")) {
+            layer.lineHeight(num("line_height"));
+        }
+        if (has("tabular")) {
+            layer.tabularNumbers(flag("tabular"));
+        }
+        if (has("max_width")) {
+            layer.maxWidth(num("max_width"));
+        }
+        if (has("max_height")) {
+            layer.maxHeight(num("max_height"));
+        }
+        if (has("wrap")) {
+            layer.wrap(flag("wrap"));
+        }
+        if (has("max_lines")) {
+            layer.maxLines(static_cast<int>(std::lround(num("max_lines"))));
+        }
+        if (has("ellipsis")) {
+            layer.ellipsis(flag("ellipsis"));
+        }
+        if (has("min_size")) {
+            layer.autoFit(num("min_size"));
+        }
+        if (has("outline_width") || has("outline_color")) {
+            const MapField* pos = c.find("outline_position");
+            layer.textOutline(has("outline_width") ? num("outline_width") : 2.0f,
+                              has("outline_color") ? color("outline_color") : Color::Black,
+                              pos != nullptr ? static_cast<OutlinePosition>(pos->value.enum_value)
+                                             : OutlinePosition::Outside);
+        }
+        if (has("gradient_from") || has("gradient_to")) {
+            const Color from = has("gradient_from") ? color("gradient_from") : Color::White;
+            layer.textGradient(from, has("gradient_to") ? color("gradient_to") : from,
+                               has("gradient_angle") ? num("gradient_angle") : 90.0f);
+        }
+        if (has("glow_radius") || has("glow_color")) {
+            layer.glow(has("glow_radius") ? num("glow_radius") : 8.0f,
+                       has("glow_color") ? color("glow_color") : Color::White);
+        }
+        if (const MapField* f = c.find("spans")) {
+            layer.spans(f->value.spans);
+        }
+    }
+
     /// Creates the layer through the same drawing call a C++ author uses.
     Layer* createLayer(Layer& parent, const LayerDecl& decl) {
         if (!decl.content) {
@@ -450,9 +517,13 @@ private:
             if (const MapField* f = c.find("size")) {
                 layer->size(f->value.num[0]);
             }
+            if (const MapField* f = c.find("size_pt")) {
+                layer->sizePt(f->value.num[0]);
+            }
             if (const MapField* f = c.find("align")) {
                 layer->align(static_cast<Align>(f->value.enum_value));
             }
+            applyTextFields(*layer, c);
         } else if (name == "line") {
             layer = &parent.line(vec("from"), vec("to"));
         } else if (name == "polyline" || name == "polygon" || name == "circles") {

@@ -124,18 +124,22 @@ public:
     /// API misuse does.
     std::vector<std::string> drainDiagnostics();
 
-    /// Installs the text measurement service. Renderers own the font
-    /// engine, so they install this on first render; afterwards text layers
-    /// resolve exact automatic bounds (§15-1). Before any renderer touches
-    /// the stage, text bounds resolve as a zero rect at the text position.
+    /// Installs the text measurement service. Renderers install theirs
+    /// (sharing their layout cache) on first render; without one the stage
+    /// lays text out itself with the same engine, so measurements are
+    /// available before any renderer exists.
     void setTextMeasurer(std::function<Rect(const TextContent&)> measurer) {
         text_measurer_ = std::move(measurer);
     }
-    /// Measures a text content via the installed service (zero rect
-    /// without one).
-    Rect measureText(const TextContent& text) const {
-        return text_measurer_ ? text_measurer_(text) : Rect{};
-    }
+    /// The layout box of a text content (TextMetrics::box).
+    Rect measureText(const TextContent& text) const;
+
+    /// Full text metrics — box, ink bounds, baseline, ascent/descent, line
+    /// count and widths, the size after auto-fit — in the content's own
+    /// (layer-local) units. For layout engines: measure, then place.
+    TextMetrics textMetrics(const TextContent& text) const;
+    /// Metrics of a text layer (empty metrics for other content).
+    TextMetrics textMetrics(const Layer& layer) const;
 
 private:
     friend class Layer;

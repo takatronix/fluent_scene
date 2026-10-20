@@ -419,7 +419,9 @@ private:
             case ValueKind::EnumAlign:
             case ValueKind::EnumCap:
             case ValueKind::EnumBlend:
-            case ValueKind::EnumEase: {
+            case ValueKind::EnumEase:
+            case ValueKind::EnumVAlign:
+            case ValueKind::EnumOutline: {
                 if (!n.isPlainScalar() || !parseEnumWord(kind, n.scalar, out.enum_value)) {
                     std::string valid;
                     for (const char* w : enumWords(kind)) {
@@ -430,12 +432,92 @@ private:
                 }
                 return true;
             }
+            case ValueKind::Spans:
+                return parseSpans(n, out.spans);
             case ValueKind::MapShadow:
             case ValueKind::MapBorder:
                 error("validate.type", n.span, "internal: map kinds are parsed elsewhere");
                 return false;
         }
         return false;
+    }
+
+    /// Rich-text spans: a sequence of strings (plain runs) or mappings
+    /// { text, color, size, weight, italic, font }.
+    bool parseSpans(const YamlNode& n, std::vector<TextSpan>& out) {
+        if (!n.isSequence()) {
+            error("validate.type", n.span, "expected a span list [{ text: ..., color: ... }, ...]");
+            return false;
+        }
+        for (const YamlNode& e : n.elements) {
+            TextSpan span;
+            if (e.isScalar()) {
+                span.utf8 = e.scalar;
+                out.push_back(span);
+                continue;
+            }
+            if (!e.isMapping()) {
+                error("validate.type", e.span, "expected a span { text, color, size, ... }");
+                return false;
+            }
+            bool has_text = false;
+            for (const YamlMapEntry& f : e.entries) {
+                float num[4] = {0, 0, 0, 1};
+                if (f.key == "text") {
+                    if (!f.value.isScalar()) {
+                        error("validate.type", f.value.span, "expected a string");
+                        return false;
+                    }
+                    span.utf8 = f.value.scalar;
+                    has_text = true;
+                } else if (f.key == "font") {
+                    if (!f.value.isScalar()) {
+                        error("validate.type", f.value.span, "expected a string");
+                        return false;
+                    }
+                    span.font = f.value.scalar;
+                } else if (f.key == "color") {
+                    const bool ok = f.value.isSequence() &&
+                                    (f.value.elements.size() == 3 || f.value.elements.size() == 4) &&
+                                    readNumberSeq(f.value, 4, 3, num);
+                    if (!ok) {
+                        error("validate.type", f.value.span,
+                              "expected a color [r, g, b] or [r, g, b, a] with components 0-1");
+                        return false;
+                    }
+                    span.has_color = true;
+                    span.color = {num[0], num[1], num[2], num[3]};
+                } else if (f.key == "size" || f.key == "weight") {
+                    if (!readNumber(f.value, num[0])) {
+                        error("validate.type", f.value.span, "expected a number");
+                        return false;
+                    }
+                    if (f.key == "size") {
+                        span.size = num[0];
+                    } else {
+                        span.weight = static_cast<int>(num[0]);
+                    }
+                } else if (f.key == "italic") {
+                    bool flag = false;
+                    if (!readBool(f.value, flag)) {
+                        error("validate.type", f.value.span, "expected true or false");
+                        return false;
+                    }
+                    span.italic = flag ? 1 : 0;
+                } else {
+                    error("validate.unknown_key", f.key_span,
+                          "unknown key '" + f.key +
+                              "' (expected: text, color, size, weight, italic, font)");
+                    return false;
+                }
+            }
+            if (!has_text) {
+                error("validate.required", e.span, "a span needs 'text'");
+                return false;
+            }
+            out.push_back(span);
+        }
+        return true;
     }
 
     /// Parses a shadow/border-style mapping against `field_specs` into
@@ -917,7 +999,13 @@ private:
         };
         const std::string name = spec->name;
         if (name == "text") {
-            exactlyOne("text", "source");
+            const int given = (content.find("text") != nullptr) +
+                              (content.find("source") != nullptr) +
+                              (content.find("spans") != nullptr);
+            if (given != 1) {
+                error(given > 1 ? "validate.conflict" : "validate.required", content.span,
+                      "text needs exactly one of 'text', 'source' or 'spans'");
+            }
         } else if (name == "polyline" || name == "polygon" || name == "circles") {
             exactlyOne("points", "source");
         } else if (name == "rect") {

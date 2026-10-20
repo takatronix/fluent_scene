@@ -20,6 +20,9 @@ const char* toString(ValueKind kind) {
         case ValueKind::EnumCap: return "cap";
         case ValueKind::EnumBlend: return "blend";
         case ValueKind::EnumEase: return "ease";
+        case ValueKind::EnumVAlign: return "vertical_align";
+        case ValueKind::EnumOutline: return "outline_position";
+        case ValueKind::Spans: return "spans";
         case ValueKind::MapShadow: return "shadow";
         case ValueKind::MapBorder: return "border";
     }
@@ -53,6 +56,8 @@ namespace {
                   static_cast<float>(d)},                                             \
                  nullptr}
 #define FS_DSTR(s) FieldDefault{true, {0, 0, 0, 0}, #s}
+#define FS_DBOOL(b) FS_DSTR(b)
+#define FS_DCOLOR(r, g, b, a) FS_DRECT(r, g, b, a)
 
 // Pass 1 — one FieldSpec constant per shared style key.
 #define FS_STYLE(name, KIND, summary) \
@@ -183,6 +188,14 @@ const EnumEntry kEaseWords[] = {{"linear", static_cast<int>(Ease::Linear)},
                                 {"ease_out", static_cast<int>(Ease::Out)},
                                 {"ease_in_out", static_cast<int>(Ease::InOut)}};
 
+const EnumEntry kVAlignWords[] = {{"top", static_cast<int>(VAlign::Top)},
+                                  {"middle", static_cast<int>(VAlign::Middle)},
+                                  {"baseline", static_cast<int>(VAlign::Baseline)},
+                                  {"bottom", static_cast<int>(VAlign::Bottom)}};
+const EnumEntry kOutlineWords[] = {{"outside", static_cast<int>(OutlinePosition::Outside)},
+                                   {"inside", static_cast<int>(OutlinePosition::Inside)},
+                                   {"center", static_cast<int>(OutlinePosition::Center)}};
+
 const EnumEntry* enumEntries(ValueKind kind, size_t& count) {
     switch (kind) {
         case ValueKind::EnumFit: count = 3; return kFitWords;
@@ -190,6 +203,8 @@ const EnumEntry* enumEntries(ValueKind kind, size_t& count) {
         case ValueKind::EnumCap: count = 2; return kCapWords;
         case ValueKind::EnumBlend: count = 4; return kBlendWords;
         case ValueKind::EnumEase: count = 4; return kEaseWords;
+        case ValueKind::EnumVAlign: count = 4; return kVAlignWords;
+        case ValueKind::EnumOutline: count = 3; return kOutlineWords;
         default: count = 0; return nullptr;
     }
 }
