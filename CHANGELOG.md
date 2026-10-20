@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.20.0 — 2026-10-20 (文字の作り直し: どの大きさでもくっきり / 文字 API)
+
+旧実装は 26 px 固定のビットマップを拡大縮小していたため、大きな文字がぼやけ、
+32 px を超える字形は切れていた（OBD ビューの大きな数字）。全面的に作り直した
+（設計: docs/design/text.md、API: docs/api/text.ja.md）。
+
+- **描画**: 小さい正立文字（≤ 32 px）は画面ピクセルサイズちょうどの
+  ヒンティング付きビットマップ（ベースライン整数・x は ¼ px のサブピクセル
+  配置）、大きい・回転・拡大・縁取りは距離場（SDF、24〜256 px のサイズ
+  バケット、画面上 1 px のアンチエイリアス）。輝度依存のコントラスト補正。
+  CPU / Vulkan / WebGPU が同じ式（`shared/text_shared.h`）
+- **SDF 生成**: 縁付近は輪郭からの厳密距離、遠方は EDT のハイブリッド。
+  FreeType の sdf レンダラの約 100 倍速（64 px の漢字 0.18 ms）
+- **動的アトラス**: 固定字集合なし（CJK はその場で生成）、R8 ページ
+  （1024² × 最大 16）、ページ単位 LRU で上限付き、変更行だけを GPU へ転送
+- **フォント**: ファミリ × ウェイト × 斜体のレジストリ（`registerFont`）、
+  既定 `sans` / `serif` / `mono`、本物の Bold（無ければ合成）、合成斜体、
+  欠けた字は既定ファミリへフォールバック
+- **レイアウト**: 改行（`\n`）、`max_width` 折返し（日本語の禁則処理）、
+  `max_lines` / `max_height`、省略記号、自動縮小（`min_size`）、字間、
+  行の高さ、等幅数字（tnum + 数字幅の均一化）、縦揃え
+  （top / middle / baseline / bottom）、リッチテキスト（スパンごとの色・
+  サイズ・太さ・斜体・フォント）
+- **装飾**: 縁取り（外 / 内 / 中央）、2 色グラデーション、発光（`glow` =
+  オフセット 0 の影）
+- **計測**: `Stage::textMetrics()`（レンダラ不要）、wasm `fs_measure_text` /
+  `fs_layer_text_metrics`
+- **Scene YAML**: text に `size_pt`, `vertical_align`, `font`, `weight`,
+  `italic`, `letter_spacing`, `line_height`, `tabular`, `max_width`,
+  `max_height`, `wrap`, `max_lines`, `ellipsis`, `min_size`, `outline_*`,
+  `gradient_*`, `glow_*`, `spans`
+- **wasm**: Noto Sans JP Bold サブセットを同梱（5.47 MB、`--no-bold` で
+  4.4 MB）、`fs_layer_set_text_style`, `fs_register_font`, `fs_font_families`、
+  `_malloc` / `_free` を公開
+- **互換**: 既存のテキストはそのまま動く（位置の規則は同じ。ベースラインは
+  丸めをやめた分だけ最大 0.03 em 上）。`Options::font_pixel_size` は無視される
+- tests: `text_tests`（アトラス退避・CJK・SDF 精度・レイアウト）、golden
+  `text_styles` / `text_transforms`（PSNR/SSIM 下限）、`text_abi.test.mjs`、
+  プローブ `tests/text/`、ベンチ `examples/text_bench`
+- `fvsc preview --renderer=vulkan`
+
 ## 0.19.0 — 2026-10-19 (liquid の `pearl`: Fluent の真珠ガラス / filter の 16 スロット)
 
 - **`liquid` の `pearl` (スロット 12、既定 0)**: 材質を「虹彩のある濡れた

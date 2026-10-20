@@ -52,6 +52,9 @@ const fs = {
 | `fs_set_param_rect(inst, name, x, y, w, h)` | a `rect` param, for `frame` / `bounds` |
 | `fs_set_text(inst, input, utf8)` | feed a `text.utf8` input (every text layer with `source: $inputs.<input>`) |
 | `fs_layer_set_text(inst, layer_id, utf8)` | replace the text of one literal text layer by id |
+| `fs_layer_set_text_style(inst, layer_id, map)` | restyle a text layer from a flow-YAML map of text fields (`'{ size: 32, weight: 700, outline_width: 3 }'`); fields not in the map keep their value |
+| `fs_measure_text(inst, map)` / `fs_layer_text_metrics(inst, id)` | text metrics as JSON (`box`, `ink`, `baseline`, `ascent`, `descent`, `line_height`, `size`, `lines`, `truncated`, `line_widths`) — see [docs/api/text.ja.md](../docs/api/text.ja.md) |
+| `fs_register_font(family, weight, italic, ptr, len)` / `fs_font_families()` | add a font from fetched bytes (`_malloc`ed, copied) / list families |
 | `fs_add_layers(inst, parent_id, yaml, animated)` | graft a Scene fragment (`layers:` + optional `inputs:` / `params:`) under a declared layer (`""` = root); `animated` enters through `transition.enter` (default a fade) |
 | `fs_remove_layer(inst, id, animated)` | remove a declared layer and its subtree; `animated` leaves through `transition.exit` first. The id is free at once |
 | `fs_layer_ids(inst)` / `fs_has_layer(inst, id)` | declared ids, one per line in tree order / one check |
@@ -94,18 +97,20 @@ fs.removeLayer(inst, 'photo', 1);                   // fades out, detaches when 
 ```
 
 Design notes: [docs/design/runtime_layers.ja.md](../docs/design/runtime_layers.ja.md).
-Headless checks: `node wasm/tests/stage_api.test.mjs`, `node wasm/tests/boxes_abi.test.mjs`.
+Headless checks: `node wasm/tests/stage_api.test.mjs`, `node wasm/tests/boxes_abi.test.mjs`,
+`node wasm/tests/text_abi.test.mjs`.
 
 ## Fonts
 
-The renderer shapes text with one face: the first file it finds in
-`kFontSearch` (`src/text_atlas.cpp`). `build.sh` embeds one font at one of
-those paths:
+The default family "sans" is the first file found per weight in the list
+in `src/text/font_library.cpp` (`ensureDefaults`); `build.sh` embeds its
+fonts at those paths. Bold text uses the Bold face when embedded and is
+synthesized otherwise; more fonts load at runtime with `fs_register_font`.
 
 | flag | font | covers |
 |---|---|---|
-| `--jp` (default) | `wasm/fonts/NotoSansJP-subset.otf` (1.0 MB, committed) | 4,297 characters: kana (half-width too), the 2,965 JIS X 0208 level-1 kanji plus every jōyō and jinmeiyō kanji (3,298 kanji in all), CJK and full-width punctuation, JIS symbols (①, →, ℃ …), Greek, Cyrillic, ASCII, Latin-1 |
-| `--latin` | the host's `DejaVuSans.ttf` (0.75 MB) | Latin, Greek, Cyrillic; Japanese draws hollow boxes |
+| `--jp` (default) | `wasm/fonts/NotoSansJP-subset.otf` + `NotoSansJP-Bold-subset.otf` (1.0 MB each, committed; `--no-bold` drops the Bold) | 4,297 characters: kana (half-width too), the 2,965 JIS X 0208 level-1 kanji plus every jōyō and jinmeiyō kanji (3,298 kanji in all), CJK and full-width punctuation, JIS symbols (①, →, ℃ …), Greek, Cyrillic, ASCII, Latin-1 |
+| `--latin` | the host's `DejaVuSans.ttf` + `-Bold` (1.4 MB) | Latin, Greek, Cyrillic; Japanese draws hollow boxes |
 | `--cjk` | the host's `NotoSansCJK-Regular.ttc` (19 MB) | every CJK glyph |
 
 The subset is cut from Noto Sans CJK JP Regular (SIL OFL 1.1). Its license

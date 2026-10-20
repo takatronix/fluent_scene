@@ -63,6 +63,51 @@ stage.text("収穫完了", {40, 40}).size(48).shadow(2, 3, 6);
 影はレイヤーのシルエット（α）から生成されるので、テキストにも枠線にも
 画像にもグループ全体にも同じ書き方で掛かります。
 
+## 文字: 大きな数字・太字・縁取り（毎フレーム更新）
+
+```cpp
+Layer& speed = stage.text("0.0", {1200, 360}).size(180).bold().tabularNumbers()
+                    .align(Align::Right).verticalAlign(VAlign::Middle)
+                    .textOutline(6, {0, 0, 0, 0.7f});
+// 毎フレーム:
+speed.setText(fmt(v));   // 等幅数字なので桁が揺れない。字形はアトラスに残る
+```
+
+文字はどの大きさでもくっきり（小さい正立文字は画面ピクセルぴったりの
+ビットマップ、大きい・回転・拡大は距離場）。詳細は
+[docs/api/text.ja.md](api/text.ja.md)。
+
+## 文字: 折返し・省略・自動縮小・リッチテキスト
+
+```cpp
+stage.text(body, {40, 40}).size(22).maxWidth(480).lineHeight(1.6f)   // 禁則つき折返し
+     .maxLines(3).ellipsis();                                         // 3 行目で「…」
+stage.text(title, {640, 40}).size(48).maxWidth(600).wrap(false)
+     .autoFit(12).align(Align::Center);                               // 1 行に収まるまで縮小
+TextSpan v{"88"}; v.size = 72; v.weight = 700;
+stage.text("", {40, 600}).size(28).verticalAlign(VAlign::Baseline)
+     .spans({TextSpan{"速度 "}, v, TextSpan{" km/h"}});               // ベースライン揃え
+```
+
+```yaml
+- content: { text: { text: "とても長いタイトル", position: [640, 40], size: 48,
+                     max_width: 600, wrap: false, min_size: 12, align: center } }
+```
+
+配置を自分で決めたいときは計測: `TextMetrics m = stage.textMetrics(layer);`
+（JS は `fs_measure_text(inst, '{ text: "…", size: 64 }')` → JSON）。
+
+## 文字: 装飾（グラデーション・発光・フォント）
+
+```cpp
+stage.text("グラデーション", {40, 300}).size(56).bold()
+     .textGradient({0.3f, 0.9f, 1, 1}, {0.8f, 0.3f, 1, 1});        // 90° = 上→下
+stage.text("NEON", {40, 200}).size(64).bold().glow(14, {1, 0.2f, 0.8f, 1});
+stage.text("明朝体", {40, 400}).size(40).font("serif");
+stage.text("斜体", {40, 460}).size(40).italic();                   // 斜体面が無ければ合成
+registerFont("rounded", "/path/Rounded.ttf");                       // 好きなフォント
+```
+
 ## 検出ボックス（ラベル + 時間平滑化）
 
 ```cpp
@@ -405,8 +450,7 @@ scene_web はこれを全部配線済み: ブラウザのクリック→/pointer
 
 - `dash()` が効くのは line / polyline / polygon枠線。arc の破線は未対応
 - arc の `Cap::Butt` は未対応（丸キャップで描画）
-- テキストは1行のみ（折返し・`\n` 未対応）。ビットマップアトラス方式のため
-  極端な拡大では甘くなる
+- 縁取りの幅は約 0.17 × 文字サイズまで（距離場の範囲）
 - フィルタの色は sRGB 空間で計算（リニア化は L1 検討）
 - 裸のグループに `masksToBounds` / `background` を付けても bounds がゼロの
   ため何も起きない — `bounds()` を明示すること

@@ -36,7 +36,8 @@ public:
         /// Font file for text content; empty = search well-known system
         /// locations for a CJK-capable font (same rule as CpuRenderer).
         std::string font_file;
-        /// Rasterized glyph size in atlas pixels.
+        /// Ignored since 0.20 (glyphs rasterize at the size they are drawn;
+        /// docs/design/text.md). Kept for source compatibility.
         uint32_t font_pixel_size = 26;
     };
 

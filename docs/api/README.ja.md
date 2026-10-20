@@ -16,6 +16,7 @@ doxygen docs/api/Doxyfile      # → build/docs/api/html/index.html
 | [stage.hpp](../../include/fluent_scene/stage.hpp) | `Stage` — 論理座標系の宣言、ツリーの根、`advance(dt)`、`hitTest` |
 | [layer.hpp](../../include/fluent_scene/layer.hpp) | `Layer` — 描画呼び出し、幾何(bounds/anchor/position/frame)、属性、フィルタ、データ更新 |
 | [content.hpp](../../include/fluent_scene/content.hpp) | content 13種の定義（何を描くか） |
+| [text.hpp](../../include/fluent_scene/text.hpp) | 文字の語彙: VAlign / TextOutline / TextGradient / TextSpan / TextMetrics / registerFont — 使い方は [text.ja.md](text.ja.md) |
 | [types.hpp](../../include/fluent_scene/types.hpp) | Shadow / Border / ImageView / Box / 各enum / StageLimits |
 | [geometry.hpp](../../include/fluent_scene/geometry.hpp) | Vec2 / Rect / Mat23 / Color |
 | [filters.hpp](../../include/fluent_scene/filters.hpp) | `Filter` 値と型付き29種、`filterTable()` |
@@ -36,6 +37,7 @@ doxygen docs/api/Doxyfile      # → build/docs/api/html/index.html
 - `filters_def.h` — フィルタのメタデータ（名前・パラメータ・既定値・単位）。
   X-macro で型付きstruct・既定値・specテーブルを導出
 - `shapes_shared.h` — 全形状の SDF
+- `text_shared.h` — 字形の被覆（ビットマップ/SDF）・縁取り・コントラスト補正
 - `glsl_compat.hpp` — CPU 用の GLSL 互換シム
 
 バックエンド間で判断が揃う仕組みは `src/render_shared.hpp`（共有プラン層:
