@@ -1,0 +1,14 @@
+schema: fluent.scene/v1alpha2
+stage: { size: [800, 200] }
+layers:
+  - content: { rect: { size: [800, 200], color: [0, 0, 0, 1] } }
+  - position: [20, 20]
+    scale: [4, 1]
+    rotation: 2
+    sublayers:
+    - content: { circle: { center: [35, 40], radius: 30, color: [1, 1, 1, 1] } }
+  - position: [420, 20]
+    scale: [4, 1]
+    rotation: 2
+    sublayers:
+    - content: { text: { text: "I", position: [0, 0], size: 140, color: [1, 1, 1, 1] } }

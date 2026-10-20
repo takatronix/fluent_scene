@@ -12,9 +12,9 @@ layout(location = 0) out vec4 o_color;
 
 void main() {
     vec2 local = u_local(gl_FragCoord.xy);
-    float aa = u.meta.z;
-    float d = sd_rounded_rect(local, u.pa.xy, u.pa.zw, u.pb.x);
-    float cov = u.pb.y > 0.0 ? sd_stroke(d, u.pb.y, aa) : sd_fill(d, aa);
+    float cov = sd_rounded_rect_cov(local, u.pa.xy, u.pa.zw, u.pb.x, u.pb.y, u.meta.z,
+                                    0.5 * vec2(u.inv0.x, u.inv1.x),
+                                    0.5 * vec2(u.inv0.y, u.inv1.y));
     float a = u.color.a * u.px2.x * cov;
     o_color = vec4(u.color.rgb * a, a);
 }

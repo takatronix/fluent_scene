@@ -747,6 +747,15 @@ Layer& Layer::tabularNumbers(bool on) {
     return *this;
 }
 
+Layer& Layer::textHinting(bool on) {
+    if (auto* c = std::get_if<TextContent>(&content_)) {
+        c->hinting = on;
+    } else {
+        warn("textHinting() applies to text content only");
+    }
+    return *this;
+}
+
 Layer& Layer::maxWidth(float units) {
     if (auto* c = std::get_if<TextContent>(&content_)) {
         c->max_width = std::max(0.0f, units);

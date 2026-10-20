@@ -43,7 +43,9 @@ void main() {
     }
     float a = u.pa.w;
     if ((flags & 1) != 0) {  // rounded-rect clip, evaluated vector-crisp
-        a *= sd_fill(sd_rounded_rect(local, u.pb.xy, u.pb.zw, u.px2.x), u.meta.z);
+        a *= sd_rounded_rect_cov(local, u.pb.xy, u.pb.zw, u.px2.x, 0.0, u.meta.z,
+                                 0.5 * vec2(u.inv0.x, u.inv1.x),
+                                 0.5 * vec2(u.inv0.y, u.inv1.y));
     }
     o_color = smp * a;
 }

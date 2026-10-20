@@ -56,6 +56,8 @@ using plan::IRect;
 using plan::pathSegments;
 using plan::rectPad;
 using plan::rectUnion;
+using plan::aaParam;
+using plan::maxScaleOf;
 using plan::scaleOf;
 using plan::Seg;
 using plan::segBounds;
@@ -1116,7 +1118,7 @@ struct WebGPURenderer::Impl {
         if (scale <= 0) {
             return;
         }
-        const IRect box = targetBBox(m, r, (stroke_w + 2) * scale, target.w, target.h);
+        const IRect box = targetBBox(m, r, (stroke_w + 2) * maxScaleOf(m), target.w, target.h);
         if (box.empty()) {
             return;
         }
@@ -1125,7 +1127,7 @@ struct WebGPURenderer::Impl {
         setRect(push, box);
         push.meta[0] = static_cast<float>(target.w);
         push.meta[1] = static_cast<float>(target.h);
-        push.meta[2] = 1.0f / scale;
+        push.meta[2] = aaParam(m);
         setInv(push, m.inverse());
         const Vec2 center = r.center();
         push.pa[0] = center.x;
@@ -1246,6 +1248,7 @@ struct WebGPURenderer::Impl {
         push.px2[0] = static_cast<float>(tex.w);
         push.px2[1] = static_cast<float>(tex.h);
         push.px2[2] = alpha;
+        push.meta[2] = aaParam(m);  // antialiased dest edges (image.frag)
         drawQuad(pipe_image[blendIndex(blend)], texGroup(tex.view, sampler_linear), push);
     }
 
@@ -1260,11 +1263,11 @@ struct WebGPURenderer::Impl {
         if (scale <= 0) {
             return;
         }
-        const float aa = 1.0f / scale;
+        const float aa = aaParam(m);  // < 0: anisotropic (shapes_shared.h)
         const float th = layer.thickness();
         const Color color = layer.presentedColor();
         const Blend mode = layer.blendMode();
-        const float pad_px = (th * 0.5f + 2.0f) * scale;
+        const float pad_px = (th * 0.5f + 2.0f) * maxScaleOf(m);
 
         MaskCtx mask;
         const auto begin = [&](Rect local_bbox, float extra_pad_logical) {
@@ -1595,7 +1598,7 @@ struct WebGPURenderer::Impl {
         ensureTarget(target);
 
         const Mat23 inv = m.inverse();
-        const float aa = 1.0f / scale;
+        const float aa = aaParam(m);
         const IRect box = targetBBox(m, ext, 2, target.w, target.h);
 
         if (const auto& sh = layer.shadowValue()) {

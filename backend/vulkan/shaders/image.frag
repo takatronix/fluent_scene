@@ -1,5 +1,5 @@
 // image.frag — image content: inverse-map the fragment into layer space,
-// reject outside the destination rect, sample the (premultiplied) source
+// antialias the destination rect's edges, sample the (premultiplied) source
 // window bilinearly with the CPU reference's window clamp.
 // pa = dest rect (x,y,w,h) in local units; pb = source window in pixels
 // (x,y,w,h); px2 = (tex_w, tex_h, fold_alpha, 0).
@@ -7,6 +7,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "push_common.glsl"
+#include "fluent_scene/shared/shapes_shared.h"
 
 // Separated texture/sampler (WGSL has no combined form; Vulkan is
 // fine with either) — the define keeps every call site unchanged.
@@ -25,8 +26,12 @@ vec4 tap(int sx, int sy) {
 
 void main() {
     vec2 local = u_local(gl_FragCoord.xy);
-    if (local.x < u.pa.x || local.y < u.pa.y || local.x >= u.pa.x + u.pa.z ||
-        local.y >= u.pa.y + u.pa.w) {
+    // Antialiased dest edges (meta.z = aa, shapes_shared.h); pixel-aligned
+    // edges equal a hard clip.
+    float edge = sd_rounded_rect_cov(local, u.pa.xy + u.pa.zw * 0.5, u.pa.zw * 0.5, 0.0, 0.0,
+                                     u.meta.z, 0.5 * vec2(u.inv0.x, u.inv1.x),
+                                     0.5 * vec2(u.inv0.y, u.inv1.y));
+    if (edge <= 0.0) {
         o_color = vec4(0.0);
         return;
     }
@@ -40,5 +45,5 @@ void main() {
     int sy0 = int(base.y);
     vec4 smp = (tap(sx0, sy0) * (1.0 - t.x) + tap(sx0 + 1, sy0) * t.x) * (1.0 - t.y) +
                (tap(sx0, sy0 + 1) * (1.0 - t.x) + tap(sx0 + 1, sy0 + 1) * t.x) * t.y;
-    o_color = smp * u.px2.z;
+    o_color = smp * (u.px2.z * edge);
 }

@@ -67,6 +67,8 @@ FS_CFIELD(italic, Bool, 0, FS_DBOOL(false), "italic face or synthetic slant")
 FS_CFIELD(letter_spacing, F32, 0, FS_DF32(0), "extra advance after each character")
 FS_CFIELD(line_height, F32, 0, FS_DF32(0), "baseline pitch as a multiple of size; 0 = font's own")
 FS_CFIELD(tabular, Bool, 0, FS_DBOOL(false), "fixed-width digits (live numbers do not jitter)")
+FS_CFIELD(hinting, Bool, 0, FS_DBOOL(false),
+          "snap small text's stems to whole pixels (crisper, harsher); off = browser-like")
 FS_CFIELD(max_width, F32, 0, FS_DF32(0), "wrap / truncate width; 0 = unbounded")
 FS_CFIELD(max_height, F32, 0, FS_DF32(0), "drop lines past this height; 0 = unbounded")
 FS_CFIELD(wrap, Bool, 0, FS_DBOOL(true), "wrap at max_width (Japanese kinsoku rules)")

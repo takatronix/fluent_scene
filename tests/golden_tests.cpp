@@ -928,6 +928,63 @@ void sceneTextTransforms(Renderer& r) {
     checkTextScene("text_transforms", r.render(scene->stage(), 0.0f), 38, 0.98);
 }
 
+// Mean count of partially covered pixels (2%..98% luma between the black
+// background and white) across an edge: along rows y0..y1 scanning x0..x1
+// (horizontal = true) or along columns. ≈ the antialiasing band in pixels.
+double edgeBand(const Surface& s, int a0, int a1, int b0, int b1, bool horizontal) {
+    double total = 0;
+    for (int a = a0; a < a1; ++a) {
+        int partial = 0;
+        for (int b = b0; b < b1; ++b) {
+            const int x = horizontal ? b : a, y = horizontal ? a : b;
+            const uint8_t* p = s.row(static_cast<uint32_t>(y)) + x * 4;
+            const double l = (0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) / 255.0;
+            partial += l > 0.02 && l < 0.98;
+        }
+        total += partial;
+    }
+    return total / (a1 - a0);
+}
+
+// Antialiasing everywhere: shapes, SDF text and an image under a
+// non-uniform scale (per-pixel screen-space footprint), a rotated image's
+// edges, unhinted vs hinted small text. Besides the golden, the circle's
+// edge band must be ≈1 px along both axes (a single isotropic `aa` gave
+// 2 px across the stretched axis and 0.6 px across the other).
+void sceneAntialias(Renderer& r) {
+    Stage stage(480, 300);
+    stage.rect({0, 0, 480, 300}).color({0, 0, 0, 1});
+    auto& wide = stage.group("wide");
+    wide.bounds({0, 0, 60, 90}).anchor(0, 0).position(10, 10).scale(4, 1).rotation(2);
+    wide.circle({28, 45}, 20).color(Color::White);
+    auto& tall = stage.group("tall");
+    tall.bounds({0, 0, 60, 60}).anchor(0, 0).position(270, 10).scale(1, 3).rotation(-4);
+    tall.line({4, 4}, {50, 30}).thickness(1.5f).color(Color::White);
+    tall.arc({30, 30}, 22, 200, 340).thickness(2).color(Color::Teal);
+    tall.text("AA", {4, 34}).size(18).color(Color::Orange);
+    auto& squash = stage.group("squash");
+    squash.bounds({0, 0, 120, 40}).anchor(0, 0).position(10, 110).scale(2.5f, 0.8f).rotation(3);
+    squash.text("AA 88", {0, 0}).size(40).color(Color::White);
+    const auto img = makeTestImage(64, 48);
+    const ImageView view{64, 48, img.data(), 0};
+    stage.image(view, Fit::Fill).frame({300, 200, 96, 72}).rotation(14);
+    stage.text("Hamburgefonstiv 速度 12px", {14, 190}).size(12).color(Color::White);
+    stage.text("Hamburgefonstiv 速度 12px", {14, 210}).size(12).color(Color::White).textHinting();
+    stage.text("Hamburgefonstiv 14px", {14, 232}).size(14.5f).color(Color::White);
+    const Surface& s = r.render(stage, 0.0f);
+    // Circle: screen centre ≈ (10 + 28·4, 10 + 45) rotated 2° about the group.
+    const double across_x = edgeBand(s, 48, 62, 0, 120, true);    // left edge, rows
+    const double across_y = edgeBand(s, 90, 150, 0, 50, false);   // top edge, columns
+    if (across_x < 0.6 || across_x > 1.5 || across_y < 0.6 || across_y > 1.5) {
+        std::fprintf(stderr, "FAIL antialias: anisotropic edge band x %.2f px, y %.2f px (want ~1)\n",
+                     across_x, across_y);
+        ++g_failures;
+    } else {
+        std::printf("ok antialias band (x %.2f px, y %.2f px)\n", across_x, across_y);
+    }
+    checkTextScene("antialias", s, 38, 0.98);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1003,6 +1060,7 @@ int main(int argc, char** argv) {
     sceneText(r);
     sceneTextStyles(r);
     sceneTextTransforms(r);
+    sceneAntialias(r);
     if (g_failures == 0) {
         std::printf("all golden_tests passed\n");
         return 0;

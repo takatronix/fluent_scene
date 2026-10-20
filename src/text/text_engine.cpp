@@ -145,6 +145,13 @@ void TextEngine::buildDraw(const TextContent& content, const LaidText& laid, con
     if (s <= 0) {
         return;
     }
+    // Non-uniform scale / skew: the SDF range resolves per pixel and
+    // px_range carries −(its smallest value), from the smallest stretch.
+    const float ss = m.a * m.a + m.b * m.b + m.c * m.c + m.d * m.d;
+    const bool conformal = std::fabs(m.a * m.a + m.b * m.b - m.c * m.c - m.d * m.d) <= 2e-3f * det &&
+                           std::fabs(m.a * m.c + m.b * m.d) <= 1e-3f * det;
+    const float smin =
+        det / std::sqrt(0.5f * (ss + std::sqrt(std::max(0.0f, ss * ss - 4 * det * det))));
     const bool upright = std::fabs(m.b) < 1e-6f && std::fabs(m.c) < 1e-6f && m.a > 0 &&
                          m.d > 0 && std::fabs(m.a - m.d) <= 1e-4f * m.a;
     const bool outlined = content.outline.width > 0 && content.outline.color.a > 0;
@@ -191,7 +198,8 @@ void TextEngine::buildDraw(const TextContent& content, const LaidText& laid, con
             const float oy = std::floor(o.y + 0.5f + 1.0f / 64.0f);
             const float xq = std::floor(o.x * 4.0f + 0.5f + 1.0f / 64.0f) / 4.0f;
             const float xi = std::floor(xq);
-            key.kind = static_cast<uint8_t>(GlyphKind::Bitmap);
+            key.kind = static_cast<uint8_t>(content.hinting ? GlyphKind::BitmapHinted
+                                                            : GlyphKind::Bitmap);
             key.size = static_cast<uint16_t>(std::lround(px * 4.0f));
             key.phase = static_cast<uint8_t>(std::lround((xq - xi) * 4.0f) & 3);
             key.bold = static_cast<uint8_t>(
@@ -217,7 +225,8 @@ void TextEngine::buildDraw(const TextContent& content, const LaidText& laid, con
                        slot->h * sc};
             const float px_per_texel = sc * s;
             q.mode = 1;
-            q.px_range = 2.0f * slot->spread * px_per_texel;
+            q.px_range = conformal ? 2.0f * slot->spread * px_per_texel
+                                   : -2.0f * slot->spread * sc * smin;
             const float bold_px = g.bold * px;
             const float w_px = outlined ? clampOutline(content.outline.width, g.size) * s : 0.0f;
             switch (content.outline.position) {

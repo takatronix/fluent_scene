@@ -548,6 +548,7 @@ int fs_layer_set_text_style(FsInstance* inst, const char* layer_id, const char* 
     if (given("letter_spacing")) { next.letter_spacing = src.letter_spacing; }
     if (given("line_height")) { next.line_height = src.line_height; }
     if (given("tabular")) { next.tabular = src.tabular; }
+    if (given("hinting")) { next.hinting = src.hinting; }
     if (given("max_width")) { next.max_width = src.max_width; }
     if (given("max_height")) { next.max_height = src.max_height; }
     if (given("wrap")) { next.wrap = src.wrap; }

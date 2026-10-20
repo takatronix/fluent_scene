@@ -294,6 +294,9 @@ public:
     Layer& lineHeight(float multiple);
     /// (text) Fixed-width digits: live numbers keep their width.
     Layer& tabularNumbers(bool on = true);
+    /// (text) Snap small upright text's stems to whole pixels (crisper,
+    /// harsher). Off by default: unhinted, ¼ px positioned, like browsers.
+    Layer& textHinting(bool on = true);
     /// (text) Wrap width in logical units (Japanese kinsoku rules); 0 =
     /// unbounded. With wrap(false) it truncates instead.
     Layer& maxWidth(float units);

@@ -23,6 +23,7 @@ CJK の字は使われた時にその場で作られ、メモリは上限付き�
 | 字間 | `.letterSpacing(px)` | `letter_spacing` |
 | 行の高さ | `.lineHeight(倍率)`（0 = フォント既定 ≈1.45） | `line_height` |
 | 等幅数字 | `.tabularNumbers()` | `tabular: true` |
+| ヒンティング（小さい字の縦線を画素に揃える。既定は無し＝ブラウザと同じ柔らかい AA） | `.textHinting()` | `hinting: true` |
 | 折返し幅 | `.maxWidth(px)` / `.wrap(false)` | `max_width` / `wrap` |
 | 行数・高さの上限 | `.maxLines(n)` / `.maxHeight(px)` | `max_lines` / `max_height` |
 | 省略記号 | `.ellipsis()` | `ellipsis: true` |

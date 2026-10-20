@@ -4,10 +4,11 @@
 //
 // - No fixed glyph set: glyphs rasterize on first use (CJK needs thousands).
 // - Pages of R8 texels (default 1024², ≤ 16 pages = 16 MB), shelf-packed.
-// - Two glyph kinds share the pages:
+// - Glyph kinds share the pages:
 //     Bitmap — coverage at the exact pixel size (quarter-pixel size steps),
-//              light hinting, one of 4 horizontal subpixel phases; for small
-//              upright text, where it is the sharpest possible picture;
+//              unhinted (BitmapHinted: FreeType light hinting, opt-in via
+//              TextContent::hinting), one of 4 horizontal subpixel phases;
+//              for small upright text;
 //     Sdf    — signed distance field at a size bucket (24…256 px in √2
 //              steps) for large, rotated, scaled, outlined or bold-synthetic
 //              text; sampled with screen-space antialiasing.
@@ -27,7 +28,9 @@ namespace detail {
 
 struct FontFace;
 
-enum class GlyphKind : uint8_t { Bitmap = 0, Sdf = 1 };
+// Bitmap: unhinted coverage at the exact size; BitmapHinted: the same with
+// FreeType light (vertical) hinting; Sdf: a distance field bucket.
+enum class GlyphKind : uint8_t { Bitmap = 0, Sdf = 1, BitmapHinted = 2 };
 
 struct GlyphKey {
     uint32_t glyph = 0;

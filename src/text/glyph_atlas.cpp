@@ -103,7 +103,9 @@ bool GlyphAtlas::rasterize(const FontFace& face, const GlyphKey& key, GlyphSlot&
     bool own_box = false;
     if (key.glyph != 0) {
         const FT_Int32 flags =
-            FT_LOAD_NO_BITMAP | (sdf ? FT_LOAD_NO_HINTING : FT_LOAD_TARGET_LIGHT);
+            FT_LOAD_NO_BITMAP |
+            (key.kind == static_cast<uint8_t>(GlyphKind::BitmapHinted) ? FT_LOAD_TARGET_LIGHT
+                                                                       : FT_LOAD_NO_HINTING);
         if (FT_Load_Glyph(ft, key.glyph, flags) != 0 ||
             ft->glyph->format != FT_GLYPH_FORMAT_OUTLINE) {
             return false;

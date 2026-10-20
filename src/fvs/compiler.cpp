@@ -439,6 +439,9 @@ private:
         if (has("tabular")) {
             layer.tabularNumbers(flag("tabular"));
         }
+        if (has("hinting")) {
+            layer.textHinting(flag("hinting"));
+        }
         if (has("max_width")) {
             layer.maxWidth(num("max_width"));
         }

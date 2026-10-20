@@ -63,6 +63,10 @@ struct TextContent {
     bool tabular = false;       ///< Fixed-width digits (OpenType tnum, plus
                                 ///< equalized advances) — numbers that
                                 ///< change every frame do not jitter.
+    bool hinting = false;       ///< Small upright text: snap stems to whole
+                                ///< pixels (FreeType light hinting) — crisper
+                                ///< but harsher. Off = unhinted outlines at
+                                ///< ¼ px positions, like browsers.
 
     // ---- layout box ----
     float max_width = 0;        ///< Wrap / truncate width; 0 = unbounded.

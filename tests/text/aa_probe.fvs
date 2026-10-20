@@ -1,0 +1,25 @@
+schema: fluent.scene/v1alpha2
+stage: { size: [640, 420] }
+layers:
+  - content: { rect: { size: [640, 420], color: [0.96, 0.95, 0.93, 1] } }
+  - content: { text: { text: "Hamburgefonstiv 速度 12px", position: [10, 8], size: 12, color: [0.1, 0.1, 0.12, 1] } }
+  - content: { text: { text: "Hamburgefonstiv 速度 14px", position: [10, 28], size: 14, color: [0.1, 0.1, 0.12, 1] } }
+  - content: { text: { text: "Hamburgefonstiv 速度 20px", position: [10, 50], size: 20, color: [0.1, 0.1, 0.12, 1] } }
+  - content: { rect: { rect: [0, 80, 640, 340], color: [0.07, 0.08, 0.1, 1] } }
+  - content: { text: { text: "123.4", position: [10, 84], size: 96, color: [1, 1, 1, 1] } }
+  - position: [300, 110]
+    rotation: 17
+    sublayers:
+    - content: { text: { text: "電池出力 kW", position: [0, 0], size: 16, color: [1, 1, 1, 1] } }
+  - content: { arc: { center: [470, 300], radius: 100, start_deg: 135, end_deg: 405, color: [0.17, 0.18, 0.21, 1], thickness: 14, cap: round } }
+  - content: { arc: { center: [470, 300], radius: 100, start_deg: 135, end_deg: 250, color: [0.3, 0.75, 1, 1], thickness: 3 } }
+  - content: { line: { from: [470, 300], to: [393, 238], color: [1, 1, 1, 1], thickness: 1.5 } }
+  - content: { line: { from: [470, 300], to: [540, 240], color: [1, 0.4, 0.3, 1], thickness: 2 } }
+  - content: { text: { text: "12 px on dark 0123456789", position: [10, 220], size: 12, color: [0.85, 0.86, 0.9, 1] } }
+  - content: { text: { text: "14 px on dark 0123456789", position: [10, 240], size: 14, color: [0.85, 0.86, 0.9, 1] } }
+  - content: { text: { text: "20 px 電池出力 0123", position: [10, 262], size: 20, color: [0.85, 0.86, 0.9, 1] } }
+  - position: [60, 360]
+    scale: [3, 1.2]
+    rotation: 33
+    sublayers:
+    - content: { text: { text: "Skew 88", position: [0, 0], size: 14, color: [1, 0.8, 0.4, 1] } }

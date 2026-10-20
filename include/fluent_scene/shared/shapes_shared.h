@@ -23,9 +23,55 @@
 // pixel in local units). 1 well inside, 0 well outside, smooth over ~1px.
 float sd_fill(float d, float aa) { return clamp(0.5 - d / max(aa, 1e-6), 0.0, 1.0); }
 
+// A stroke as a filled distance: the band of `width` centered on d=0.
+float sd_stroke_field(float d, float width) { return abs(d) - width * 0.5; }
+
 // Stroke coverage: a band of `width` centered on the d=0 contour.
 float sd_stroke(float d, float width, float aa) {
-    return sd_fill(abs(d) - width * 0.5, aa);
+    return sd_fill(sd_stroke_field(d, width), aa);
+}
+
+// ---- anisotropic transforms ------------------------------------------------
+//
+// Under rotation + uniform scale one output pixel is `aa` local units in
+// every direction, so sd_fill(d, aa) is an exact 1 px ramp. A non-uniform
+// scale (or skew) stretches pixels into parallelograms: a single `aa` would
+// blur one axis and stair-step the other. The renderers then pass
+// aa = −(local units per pixel along the *longest* pixel axis) and every
+// field is evaluated four more times, half a pixel along each screen axis:
+//
+//     |∇f| in output pixels = 2 · length(max one-sided |Δf| per axis)
+//
+// One-sided maxima (not central differences) keep the gradient right on the
+// centerline of a thin stroke, where |d| has a kink. Pixels farther than
+// half the longest footprint from the edge are decided without the extra
+// evaluations. Every backend runs these same steps — no screen derivatives,
+// so CPU, Vulkan and WebGPU agree and WGSL's uniformity rules never bite.
+
+// Screen-space footprint (local units per output pixel along the field's
+// gradient) from the field at p and at p ± half a pixel along x and y.
+float sd_aniso_aa(float f, float fxp, float fxm, float fyp, float fym) {
+    float gx = max(abs(fxp - f), abs(f - fxm));
+    float gy = max(abs(fyp - f), abs(f - fym));
+    return 2.0 * length(vec2(gx, gy));
+}
+
+// 0 / 1 when the field is decided without a gradient (|f| ≥ half the
+// longest footprint `amax`), −1 when sd_aniso_aa is needed.
+float sd_aniso_early(float f, float amax) {
+    if (f >= 0.5 * amax) {
+        return 0.0;
+    }
+    if (f <= -0.5 * amax) {
+        return 1.0;
+    }
+    return -1.0;
+}
+
+// Fill coverage from a field and its screen footprint (floored so a field
+// with a locally vanishing gradient cannot turn into a hard step).
+float sd_fill_aniso(float f, float footprint, float amax) {
+    return sd_fill(f, max(footprint, amax * 0.05));
 }
 
 // ---- primitive distances ---------------------------------------------------
@@ -103,4 +149,30 @@ float sd_grid(vec2 p, float spacing) {
     float s = max(spacing, 1e-3);
     vec2 q = p - floor(p * (1.0 / s) + vec2(0.5, 0.5)) * s;
     return min(abs(q.x), abs(q.y));
+}
+
+// Rounded-rect fill (thickness 0) or stroke coverage for `aa` > 0 (one
+// pixel's local size) or aa < 0 (anisotropic: −longest footprint, `hx` / `hy`
+// = half a pixel step along x / y in local units). Layer backgrounds and
+// masksToBounds clips use it on every backend.
+float sd_rounded_rect_field(vec2 p, vec2 center, vec2 half_size, float radius, float stroke) {
+    float d = sd_rounded_rect(p, center, half_size, radius);
+    return stroke > 0.0 ? sd_stroke_field(d, stroke) : d;
+}
+
+float sd_rounded_rect_cov(vec2 p, vec2 center, vec2 half_size, float radius, float stroke,
+                          float aa, vec2 hx, vec2 hy) {
+    float f = sd_rounded_rect_field(p, center, half_size, radius, stroke);
+    if (aa > 0.0) {
+        return sd_fill(f, aa);
+    }
+    float early = sd_aniso_early(f, -aa);
+    if (early >= 0.0) {
+        return early;
+    }
+    float g = sd_aniso_aa(f, sd_rounded_rect_field(p + hx, center, half_size, radius, stroke),
+                          sd_rounded_rect_field(p - hx, center, half_size, radius, stroke),
+                          sd_rounded_rect_field(p + hy, center, half_size, radius, stroke),
+                          sd_rounded_rect_field(p - hy, center, half_size, radius, stroke));
+    return sd_fill_aniso(f, g, -aa);
 }

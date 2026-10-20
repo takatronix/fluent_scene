@@ -29,6 +29,38 @@ inline float scaleOf(const Mat23& m) {
     return det > 0 ? std::sqrt(det) : 0.0f;
 }
 
+// Largest stretch of m (output px per local unit along its longest axis).
+inline float maxScaleOf(const Mat23& m) {
+    const float ss = m.a * m.a + m.b * m.b + m.c * m.c + m.d * m.d;
+    const float det = m.a * m.d - m.b * m.c;
+    const float disc = std::sqrt(std::max(0.0f, ss * ss - 4 * det * det));
+    return std::sqrt(0.5f * (ss + disc));
+}
+
+// True when m maps circles to circles (rotation, uniform scale, mirror):
+// one `aa` = 1 / scaleOf(m) is then exact in every direction.
+inline bool isConformal(const Mat23& m) {
+    const float det = std::fabs(m.a * m.d - m.b * m.c);
+    return std::fabs(m.a * m.a + m.b * m.b - m.c * m.c - m.d * m.d) <= 2e-3f * det &&
+           std::fabs(m.a * m.c + m.b * m.d) <= 1e-3f * det;
+}
+
+// The `aa` every shape coverage uses (shapes_shared.h): local units per
+// output pixel when m is conformal; otherwise the negated footprint along
+// the pixel's longest axis (= 1 / smallest stretch), which switches the
+// shape code to per-pixel screen-space gradients.
+inline float aaParam(const Mat23& m) {
+    const float s = scaleOf(m);
+    if (s <= 0) {
+        return 0.0f;
+    }
+    if (isConformal(m)) {
+        return 1.0f / s;
+    }
+    const float smax = maxScaleOf(m);
+    return -smax / (s * s);  // 1 / smin, smin = det / smax
+}
+
 struct IRect {
     int x0 = 0, y0 = 0, x1 = 0, y1 = 0;  // half-open
     bool empty() const { return x1 <= x0 || y1 <= y0; }

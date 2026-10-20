@@ -382,6 +382,49 @@ void testMissingGlyph() {
 
 }  // namespace
 
+// Small text is unhinted by default (browser-like: stems keep their true
+// position and weight, so more pixels carry grey antialiasing); hinting()
+// opts back into FreeType light hinting, which snaps stems to whole pixels.
+// The same text, same ink, both ways — and the key keeps them apart.
+void testHinting(const FontFace& face) {
+    const auto render = [](bool hinting, int& partial, int& solid, double& ink) {
+        Stage stage(260, 30);
+        stage.rect({0, 0, 260, 30}).color({1, 1, 1, 1});
+        stage.text("Hamburgefonstiv 速度表示", {4, 6}).size(14).color({0, 0, 0, 1}).textHinting(hinting);
+        CpuRenderer cpu;
+        const Surface& s = cpu.render(stage, 0);
+        partial = solid = 0;
+        ink = 0;
+        for (uint32_t y = 0; y < s.height; ++y) {
+            for (uint32_t x = 0; x < s.width; ++x) {
+                const double t = 1.0 - s.row(y)[x * 4 + 1] / 255.0;  // coverage
+                ink += t;
+                partial += t > 0.1 && t < 0.9;
+                solid += t >= 0.9;
+            }
+        }
+    };
+    int p0, s0, p1, s1;
+    double i0, i1;
+    render(false, p0, s0, i0);
+    render(true, p1, s1, i1);
+    std::printf("hinting: off %d grey / %d solid px, on %d / %d (ink %.0f vs %.0f)\n", p0, s0, p1,
+                s1, i0, i1);
+    CHECK(p0 > p1 && s0 < s1);                  // unhinted: softer stems
+    CHECK(std::fabs(i0 - i1) < 0.08 * i1);      // ... at the same weight
+    GlyphAtlas atlas;
+    GlyphKey k;
+    k.glyph = FontLibrary::instance().glyphIndex(face, 'H');
+    k.face = face.id;
+    k.size = 14 * 4;
+    k.kind = static_cast<uint8_t>(GlyphKind::Bitmap);
+    const GlyphSlot* a = atlas.get(face, k);
+    k.kind = static_cast<uint8_t>(GlyphKind::BitmapHinted);
+    const GlyphSlot* b = atlas.get(face, k);
+    CHECK(a != nullptr && b != nullptr && a != b);
+    CHECK(atlas.stats().rasterized == 2);
+}
+
 int main() {
     FontLibrary::instance().ensureDefaults();
     const FontFace* face = FontLibrary::instance().resolve("sans", 400, false);
@@ -395,6 +438,7 @@ int main() {
     testLayout();
     testLayerApi();
     testMissingGlyph();
+    testHinting(*face);
     std::printf(g_failures == 0 ? "PASS\n" : "FAIL (%d)\n", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

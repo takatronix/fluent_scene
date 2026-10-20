@@ -244,6 +244,30 @@ void rasterizePart(Mask& mask, const Mat23& inv, const Mat23& fwd, Rect local_bb
     }
 }
 
+// Coverage of a shape field (shapes_shared.h: fill-form signed distance)
+// through `m`: one sd_fill when m is conformal, otherwise the screen-space
+// gradient from half-pixel steps (the same steps as shape_mask.frag).
+struct AaFrame {
+    float aa;  // plan::aaParam: > 0 conformal, < 0 anisotropic
+    vec2 hx, hy;
+    AaFrame(const Mat23& m, const Mat23& inv)
+        : aa(plan::aaParam(m)), hx{inv.a * 0.5f, inv.b * 0.5f}, hy{inv.c * 0.5f, inv.d * 0.5f} {}
+    template <typename FieldFn>
+    float cover(vec2 p, FieldFn field) const {
+        const float f = field(p);
+        if (aa > 0) {
+            return shapes::sd_fill(f, aa);
+        }
+        const float early = shapes::sd_aniso_early(f, -aa);
+        if (early >= 0) {
+            return early;
+        }
+        const float g = shapes::sd_aniso_aa(f, field(p + hx), field(p - hx), field(p + hy),
+                                            field(p - hy));
+        return shapes::sd_fill_aniso(f, g, -aa);
+    }
+};
+
 void compositeMask(Buf& target, const Mask& mask, Color color, float alpha, Blend mode) {
     const int stride = mask.box.x1 - mask.box.x0;
     for (int y = mask.box.y0; y < mask.box.y1; ++y) {
@@ -825,10 +849,11 @@ struct CpuRenderer::Impl {
             return;
         }
         const float aa = 1.0f / scale;
+        const AaFrame af(m, inv);
         const float th = layer.thickness();
         const Color color = layer.presentedColor();
         const Blend mode = layer.blendMode();
-        const float pad_px = (th * 0.5f + 2.0f) * scale;
+        const float pad_px = (th * 0.5f + 2.0f) * plan::maxScaleOf(m);
 
         // Shared plumbing: build a mask over the whole content, rasterize
         // parts into it, composite once.
@@ -838,9 +863,10 @@ struct CpuRenderer::Impl {
                                   target.w, target.h));
             return !mask.box.empty();
         };
-        const auto part = [&](Rect local_bbox, float extra_pad_logical, auto coverage) {
+        // `field` returns the fill-form signed distance (negative inside).
+        const auto part = [&](Rect local_bbox, float extra_pad_logical, auto field) {
             rasterizePart(mask, inv, m, local_bbox, pad_px + extra_pad_logical * scale,
-                          target.w, target.h, coverage);
+                          target.w, target.h, [&](vec2 p) { return af.cover(p, field); });
         };
         const auto finish = [&] { compositeMask(target, mask, color, alpha, mode); };
 
@@ -850,11 +876,11 @@ struct CpuRenderer::Impl {
                 const vec2 b = gv(s.b);
                 if (capstyle == Cap::Butt) {
                     part(segBounds(s), 0, [&, a, b](vec2 p) {
-                        return shapes::sd_fill(shapes::sd_segment_butt(p, a, b, th * 0.5f), aa);
+                        return shapes::sd_segment_butt(p, a, b, th * 0.5f);
                     });
                 } else {
                     part(segBounds(s), 0, [&, a, b](vec2 p) {
-                        return shapes::sd_stroke(shapes::sd_segment(p, a, b), th, aa);
+                        return shapes::sd_stroke_field(shapes::sd_segment(p, a, b), th);
                     });
                 }
             }
@@ -880,13 +906,14 @@ struct CpuRenderer::Impl {
                 if (th > 0) {
                     strokeSegs(dashSegments(pathSegments(c->points, true), layer.dashValue()),
                                layer.capValue());
-                } else if (inv.b == 0 && inv.c == 0 && !detail::g_cpu_polygon_reference) {
+                } else if (inv.b == 0 && inv.c == 0 && af.aa > 0 &&
+                           !detail::g_cpu_polygon_reference) {
                     rasterizePolygonFill(mask, inv, m, c->points, layer.contentBounds(), pad_px,
                                          aa, target.w, target.h);
                 } else {
                     const auto& pts = c->points;
                     part(layer.contentBounds(), 0, [&](vec2 p) {
-                        return shapes::sd_fill(polygonDistance(pts, p), aa);
+                        return polygonDistance(pts, p);
                     });
                 }
                 finish();
@@ -899,7 +926,7 @@ struct CpuRenderer::Impl {
                                           std::min(half.x, half.y));
                 part(c->rect, 0, [&, center, half, cr](vec2 p) {
                     const float d = shapes::sd_rounded_rect(p, center, half, cr);
-                    return th > 0 ? shapes::sd_stroke(d, th, aa) : shapes::sd_fill(d, aa);
+                    return th > 0 ? shapes::sd_stroke_field(d, th) : d;
                 });
                 finish();
             }
@@ -907,7 +934,7 @@ struct CpuRenderer::Impl {
             if (begin(layer.contentBounds(), 0)) {
                 part(layer.contentBounds(), 0, [&](vec2 p) {
                     const float d = shapes::sd_circle(p, gv(c->center), c->radius);
-                    return th > 0 ? shapes::sd_stroke(d, th, aa) : shapes::sd_fill(d, aa);
+                    return th > 0 ? shapes::sd_stroke_field(d, th) : d;
                 });
                 finish();
             }
@@ -918,7 +945,7 @@ struct CpuRenderer::Impl {
                                  2 * c->radius};
                     part(b, 0, [&, center](vec2 p) {
                         const float d = shapes::sd_circle(p, gv(center), c->radius);
-                        return th > 0 ? shapes::sd_stroke(d, th, aa) : shapes::sd_fill(d, aa);
+                        return th > 0 ? shapes::sd_stroke_field(d, th) : d;
                     });
                 }
                 finish();
@@ -933,7 +960,7 @@ struct CpuRenderer::Impl {
                 a1 = std::min(a1, a0 + 2 * kPi);
                 part(layer.contentBounds(), 0, [&, a0, a1](vec2 p) {
                     const float d = shapes::sd_arc(p, gv(c->center), c->radius, a0, a1);
-                    return shapes::sd_fill(d - th * 0.5f, aa);
+                    return d - th * 0.5f;
                 });
                 finish();
             }
@@ -951,7 +978,7 @@ struct CpuRenderer::Impl {
                     const vec2 w1 = gv({neck.x - side.x, neck.y - side.y});
                     strokeSegs({{c->from, neck}}, layer.capValue());
                     part(rectPad(segBounds({neck, c->to}), head), 0, [&, tip, w0, w1](vec2 p) {
-                        return shapes::sd_fill(shapes::sd_triangle(p, tip, w0, w1), aa);
+                        return shapes::sd_triangle(p, tip, w0, w1);
                     });
                     finish();
                 }
@@ -972,10 +999,14 @@ struct CpuRenderer::Impl {
                 const vec2 center = gv(bounds.center());
                 const vec2 half{bounds.w * 0.5f, bounds.h * 0.5f};
                 const float spacing = c->spacing;
-                part(bounds, 0, [&, center, half, spacing](vec2 p) {
-                    const float lines = shapes::sd_stroke(shapes::sd_grid(p, spacing), th, aa);
-                    const float inside =
-                        shapes::sd_fill(shapes::sd_rounded_rect(p, center, half, 0.0f), aa);
+                rasterizePart(mask, inv, m, bounds, pad_px, target.w, target.h,
+                              [&, center, half, spacing](vec2 p) {
+                    const float lines = af.cover(p, [&](vec2 q) {
+                        return shapes::sd_stroke_field(shapes::sd_grid(q, spacing), th);
+                    });
+                    const float inside = af.cover(p, [&](vec2 q) {
+                        return shapes::sd_rounded_rect(q, center, half, 0.0f);
+                    });
                     return lines * inside;
                 });
                 finish();
@@ -989,7 +1020,7 @@ struct CpuRenderer::Impl {
                                               std::min(half.x, half.y));
                     part(box.rect, 0, [&, center, half, cr](vec2 p) {
                         const float d = shapes::sd_rounded_rect(p, center, half, cr);
-                        return th > 0 ? shapes::sd_stroke(d, th, aa) : shapes::sd_fill(d, aa);
+                        return th > 0 ? shapes::sd_stroke_field(d, th) : d;
                     });
                 }
                 finish();
@@ -1057,11 +1088,18 @@ struct CpuRenderer::Impl {
             out[2] = p[2] / 255.0f * a;
             out[3] = a;
         };
+        // The dest rect's edges are antialiased like any shape (a rotated
+        // or sub-pixel-placed image has no stair-steps); pixel-aligned
+        // edges come out exactly as a hard clip would.
+        const AaFrame af(m, inv);
+        const vec2 dest_center = gv(dest.center());
+        const vec2 dest_half{dest.w * 0.5f, dest.h * 0.5f};
         for (int y = box.y0; y < box.y1; ++y) {
             for (int x = box.x0; x < box.x1; ++x) {
                 const Vec2 local = inv.apply({x + 0.5f, y + 0.5f});
-                if (local.x < dest.x || local.y < dest.y || local.x >= dest.x + dest.w ||
-                    local.y >= dest.y + dest.h) {
+                const float edge = shapes::sd_rounded_rect_cov(gv(local), dest_center, dest_half,
+                                                               0.0f, 0.0f, af.aa, af.hx, af.hy);
+                if (edge <= 0) {
                     continue;
                 }
                 const float sxf = src.x + (local.x - dest.x) * (src.w / dest.w) - 0.5f;
@@ -1079,7 +1117,7 @@ struct CpuRenderer::Impl {
                 for (int ch = 0; ch < 4; ++ch) {
                     acc[ch] = (t00[ch] * (1 - tx) + t10[ch] * tx) * (1 - ty) +
                               (t01[ch] * (1 - tx) + t11[ch] * tx) * ty;
-                    acc[ch] *= alpha;
+                    acc[ch] *= alpha * edge;
                 }
                 blendPremul(target.at(x, y), acc, mode);
             }
@@ -1129,6 +1167,24 @@ struct CpuRenderer::Impl {
                 const auto tex = [&](int xx, int yy) {
                     return px[static_cast<size_t>(yy) * ps + xx] / 255.0f;
                 };
+                // Bilinear R8 page sample (clamp to edge) at a local point,
+                // clamped into the glyph's tile.
+                const auto sample = [&](Vec2 lp) {
+                    const float fx = std::clamp((lp.x - q.local.x) / q.local.w, 0.0f, 1.0f);
+                    const float fy = std::clamp((lp.y - q.local.y) / q.local.h, 0.0f, 1.0f);
+                    const float ax = (q.uv[0] + fx * (q.uv[2] - q.uv[0])) * ps - 0.5f;
+                    const float ay = (q.uv[1] + fy * (q.uv[3] - q.uv[1])) * ps - 0.5f;
+                    const float fx0 = std::floor(ax), fy0 = std::floor(ay);
+                    const float tx = ax - fx0, ty = ay - fy0;
+                    const int ax0 = std::clamp(static_cast<int>(fx0), 0, ps - 1);
+                    const int ay0 = std::clamp(static_cast<int>(fy0), 0, ps - 1);
+                    const int ax1 = std::clamp(static_cast<int>(fx0) + 1, 0, ps - 1);
+                    const int ay1 = std::clamp(static_cast<int>(fy0) + 1, 0, ps - 1);
+                    return (tex(ax0, ay0) * (1 - tx) + tex(ax1, ay0) * tx) * (1 - ty) +
+                           (tex(ax0, ay1) * (1 - tx) + tex(ax1, ay1) * tx) * ty;
+                };
+                const Vec2 hx{inv.a * 0.5f, inv.b * 0.5f}, hy{inv.c * 0.5f, inv.d * 0.5f};
+                const float max_dilate = std::max(std::fabs(q.dilate_fill), std::fabs(q.dilate_outer));
                 for (int y = box.y0; y < box.y1; ++y) {
                     fill_mask.touch(y, box.x0, box.x1);
                     if (outlined) {
@@ -1141,26 +1197,27 @@ struct CpuRenderer::Impl {
                         if (fx < 0 || fy < 0 || fx >= 1 || fy >= 1) {
                             continue;
                         }
-                        // Bilinear R8 page sample (clamp to edge).
-                        const float ax = (q.uv[0] + fx * (q.uv[2] - q.uv[0])) * ps - 0.5f;
-                        const float ay = (q.uv[1] + fy * (q.uv[3] - q.uv[1])) * ps - 0.5f;
-                        const float fx0 = std::floor(ax), fy0 = std::floor(ay);
-                        const float tx = ax - fx0, ty = ay - fy0;
-                        const int ax0 = std::clamp(static_cast<int>(fx0), 0, ps - 1);
-                        const int ay0 = std::clamp(static_cast<int>(fy0), 0, ps - 1);
-                        const int ax1 = std::clamp(static_cast<int>(fx0) + 1, 0, ps - 1);
-                        const int ay1 = std::clamp(static_cast<int>(fy0) + 1, 0, ps - 1);
-                        const float v = (tex(ax0, ay0) * (1 - tx) + tex(ax1, ay0) * tx) * (1 - ty) +
-                                        (tex(ax0, ay1) * (1 - tx) + tex(ax1, ay1) * tx) * ty;
+                        const float v = sample(local);
+                        float range = q.px_range;
+                        if (range < 0) {  // anisotropic (text_shared.h)
+                            range = -range;
+                            if (!textfx::text_aniso_far(v, range, max_dilate)) {
+                                range = textfx::text_aniso_range(
+                                    v, sample({local.x + hx.x, local.y + hx.y}),
+                                    sample({local.x - hx.x, local.y - hx.y}),
+                                    sample({local.x + hy.x, local.y + hy.y}),
+                                    sample({local.x - hy.x, local.y - hy.y}), range);
+                            }
+                        }
                         const float f =
-                            textfx::text_coverage(v, q.mode, q.px_range, q.dilate_fill);
+                            textfx::text_coverage(v, q.mode, range, q.dilate_fill);
                         if (f > 0) {
                             float* mp = fill_mask.at(x, y);
                             *mp = std::max(*mp, f);
                         }
                         if (outlined) {
                             const float o =
-                                textfx::text_coverage(v, q.mode, q.px_range, q.dilate_outer);
+                                textfx::text_coverage(v, q.mode, range, q.dilate_outer);
                             if (o > 0) {
                                 float* op = outer_mask.at(x, y);
                                 *op = std::max(*op, o);
@@ -1246,17 +1303,17 @@ struct CpuRenderer::Impl {
         if (scale <= 0) {
             return;
         }
-        const float aa = 1.0f / scale;
+        const AaFrame af(m, inv);
         const vec2 center = gv(r.center());
         const vec2 half{r.w * 0.5f, r.h * 0.5f};
         const float cr = std::min(corner, std::min(half.x, half.y));
-        const IRect box = targetBBox(m, r, (stroke_w + 2) * scale, target.w, target.h);
+        const IRect box =
+            targetBBox(m, r, (stroke_w + 2) * plan::maxScaleOf(m), target.w, target.h);
         for (int y = box.y0; y < box.y1; ++y) {
             for (int x = box.x0; x < box.x1; ++x) {
                 const Vec2 lp = inv.apply({x + 0.5f, y + 0.5f});
-                const float d = shapes::sd_rounded_rect(gv(lp), center, half, cr);
-                const float cov =
-                    stroke_w > 0 ? shapes::sd_stroke(d, stroke_w, aa) : shapes::sd_fill(d, aa);
+                const float cov = shapes::sd_rounded_rect_cov(gv(lp), center, half, cr, stroke_w,
+                                                              af.aa, af.hx, af.hy);
                 if (cov > 0) {
                     blendPixel(target.at(x, y), color, alpha * cov, mode);
                 }
@@ -1346,7 +1403,7 @@ struct CpuRenderer::Impl {
         const vec2 mask_half{r.bounds.w * 0.5f, r.bounds.h * 0.5f};
         const float mask_cr =
             std::min(layer.cornerRadius(), std::min(mask_half.x, mask_half.y));
-        const float aa = 1.0f / scale;
+        const AaFrame af(m, inv);
 
         if (const auto& sh = layer.shadowValue()) {
             // Silhouette → blur → tint, composited under the body.
@@ -1387,8 +1444,8 @@ struct CpuRenderer::Impl {
                 }
                 float a = opacity;
                 if (layer.masksToBounds()) {
-                    a *= shapes::sd_fill(
-                        shapes::sd_rounded_rect(gv(local), mask_center, mask_half, mask_cr), aa);
+                    a *= shapes::sd_rounded_rect_cov(gv(local), mask_center, mask_half, mask_cr,
+                                                     0.0f, af.aa, af.hx, af.hy);
                     if (a <= 0) {
                         continue;
                     }

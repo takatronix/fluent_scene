@@ -519,6 +519,7 @@ std::string layoutKey(const TextContent& c) {
     putf(c.letter_spacing);
     putf(c.line_height);
     puti(c.tabular);
+    puti(c.hinting);
     putf(c.max_width);
     putf(c.max_height);
     puti(c.wrap);
