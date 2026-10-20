@@ -102,6 +102,11 @@ public:
     // cannot be placed (atlas exhausted this frame).
     const GlyphSlot* get(const FontFace& face, const GlyphKey& key);
 
+    // Marks a page as used this frame (cached draws skip get()).
+    void touchPage(size_t i) { pages_[i].last_used = frame_; }
+    // Bumps whenever any slot may have moved (a page was wiped).
+    uint64_t epoch() const { return stats_.evicted_pages; }
+
     size_t pageCount() const { return pages_.size(); }
     const Page& page(size_t i) const { return pages_[i]; }
     void clearDirty(size_t i) {

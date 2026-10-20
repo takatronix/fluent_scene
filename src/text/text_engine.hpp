@@ -73,9 +73,11 @@ public:
     // offscreen extents and Stage::measureText.
     Rect extent(const TextContent& content);
 
-    // Builds the draw for `content` under `m` (local → target px) with the
-    // layer color `color` (fill unless a span overrides it).
-    void build(const TextContent& content, const Mat23& m, Color color, Draw& out);
+    // The draw for `content` under `m` (local → target px) with the layer
+    // color `color` (fill unless a span overrides it). Cached with the
+    // layout: an unchanged text under an unchanged transform reuses last
+    // frame's quads. Valid until the next call into the engine.
+    const Draw& build(const TextContent& content, const Mat23& m, Color color);
 
     GlyphAtlas& atlas() { return atlas_; }
     uint64_t layoutsBuilt() const { return layouts_built_; }
@@ -84,7 +86,16 @@ private:
     struct CacheEntry {
         LaidText laid;
         uint64_t frame = 0;
+        bool has_draw = false;
+        Mat23 draw_m{};
+        Color draw_color{};
+        uint64_t draw_epoch = 0;
+        std::vector<uint16_t> draw_pages;
+        Draw draw;
     };
+    CacheEntry& entry(const TextContent& content);
+    void buildDraw(const TextContent& content, const LaidText& laid, const Mat23& m, Color color,
+                   Draw& out);
     GlyphAtlas atlas_;
     std::unordered_map<std::string, CacheEntry> cache_;
     uint64_t frame_ = 1;

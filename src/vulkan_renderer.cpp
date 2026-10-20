@@ -1260,8 +1260,7 @@ struct VulkanRenderer::Impl {
     void drawTextRun(Image& target, const TextContent& c, const Mat23& m, const Mat23& inv,
                      Color color, float alpha, Blend blend, float scale) {
         ensureText();
-        detail::TextEngine::Draw draw;
-        text.build(c, m, color, draw);
+        const detail::TextEngine::Draw& draw = text.build(c, m, color);
         if (draw.groups.empty()) {
             return;
         }

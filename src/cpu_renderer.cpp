@@ -1093,8 +1093,7 @@ struct CpuRenderer::Impl {
                   Color color, float alpha, Blend mode, float scale) {
         (void)scale;
         ensureText();
-        detail::TextEngine::Draw draw;
-        text.build(c, m, color, draw);
+        const detail::TextEngine::Draw& draw = text.build(c, m, color);
         if (draw.groups.empty()) {
             return;
         }

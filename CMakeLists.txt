@@ -162,6 +162,9 @@ target_link_libraries(bench PRIVATE fluent_scene)
 
 # ---- fvsc: the Scene compiler CLI (§13) -------------------------------------
 
+add_executable(text_bench examples/text_bench.cpp)
+target_link_libraries(text_bench PRIVATE fluent_scene)
+
 add_executable(fvsc tools/fvsc.cpp)
 target_link_libraries(fvsc PRIVATE fluent_scene)
 

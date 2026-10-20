@@ -62,7 +62,7 @@ void TextEngine::beginFrame() {
     }
 }
 
-const LaidText& TextEngine::layout(const TextContent& content) {
+TextEngine::CacheEntry& TextEngine::entry(const TextContent& content) {
     if (!inited_) {
         init(font_file_);
     }
@@ -78,8 +78,10 @@ const LaidText& TextEngine::layout(const TextContent& content) {
         it = cache_.emplace(std::move(key), std::move(e)).first;
     }
     it->second.frame = frame_;
-    return it->second.laid;
+    return it->second;
 }
+
+const LaidText& TextEngine::layout(const TextContent& content) { return entry(content).laid; }
 
 TextMetrics TextEngine::metrics(const TextContent& content) { return layout(content).metrics; }
 
@@ -93,10 +95,47 @@ Rect TextEngine::extent(const TextContent& content) {
     return {r.x - pad, r.y - pad, r.w + 2 * pad, r.h + 2 * pad};
 }
 
-void TextEngine::build(const TextContent& content, const Mat23& m, Color color, Draw& out) {
+const TextEngine::Draw& TextEngine::build(const TextContent& content, const Mat23& m,
+                                          Color color) {
+    CacheEntry& e = entry(content);
+    const auto same = [](const Mat23& a, const Mat23& b) {
+        return a.a == b.a && a.b == b.b && a.c == b.c && a.d == b.d && a.tx == b.tx &&
+               a.ty == b.ty;
+    };
+    if (e.has_draw && e.draw_epoch == atlas_.epoch() && same(e.draw_m, m) &&
+        e.draw_color.r == color.r && e.draw_color.g == color.g && e.draw_color.b == color.b &&
+        e.draw_color.a == color.a) {
+        for (uint16_t p : e.draw_pages) {
+            atlas_.touchPage(p);
+        }
+        return e.draw;
+    }
+    const uint64_t failed_before = atlas_.stats().failed;
+    buildDraw(content, e.laid, m, color, e.draw);
+    // Glyph rasterization inside buildDraw may have wiped a page that
+    // earlier glyphs of this very draw sit on only if they were placed in
+    // an earlier frame — pages used this frame are never wiped — so the
+    // draw is consistent; remember the epoch after building.
+    e.has_draw = atlas_.stats().failed == failed_before;  // retry missing glyphs
+    e.draw_m = m;
+    e.draw_color = color;
+    e.draw_epoch = atlas_.epoch();
+    e.draw_pages.clear();
+    for (const Group& g : e.draw.groups) {
+        for (const Quad& q : g.quads) {
+            if (std::find(e.draw_pages.begin(), e.draw_pages.end(), q.page) ==
+                e.draw_pages.end()) {
+                e.draw_pages.push_back(q.page);
+            }
+        }
+    }
+    return e.draw;
+}
+
+void TextEngine::buildDraw(const TextContent& content, const LaidText& laid, const Mat23& m,
+                           Color color, Draw& out) {
     out.groups.clear();
     out.bounds = {};
-    const LaidText& laid = layout(content);
     if (!laid.ok || laid.glyphs.empty()) {
         return;
     }
