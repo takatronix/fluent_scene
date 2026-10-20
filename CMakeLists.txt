@@ -103,7 +103,7 @@ if(Vulkan_FOUND AND FS_GLSLC)
   foreach(FS_SHADER quad.vert fullscreen.vert shape_mask.frag glyph_mask.frag
           mask_composite.frag shape_color.frag image.frag filter.frag
           filter_state.frag layer_mask.frag blur.frag
-          composite.frag unpremul.frag)
+          composite.frag unpremul.frag text_composite.frag)
     set(FS_SHADER_INC ${FS_SHADER_GEN}/${FS_SHADER}.inc)
     add_custom_command(
       OUTPUT ${FS_SHADER_INC}
@@ -115,6 +115,7 @@ if(Vulkan_FOUND AND FS_GLSLC)
               ${FS_SHADER_DIR}/shape_modes.h
               ${CMAKE_CURRENT_SOURCE_DIR}/include/fluent_scene/shared/shapes_shared.h
               ${CMAKE_CURRENT_SOURCE_DIR}/include/fluent_scene/shared/filters_shared.h
+              ${CMAKE_CURRENT_SOURCE_DIR}/include/fluent_scene/shared/text_shared.h
       COMMENT "glslc ${FS_SHADER}")
     list(APPEND FS_SHADER_INCS ${FS_SHADER_INC})
   endforeach()

@@ -1,10 +1,13 @@
-// glyph_mask.frag — one text glyph's coverage from the R8 atlas into the
-// mask (MAX blending; glyphs union like every other multi-part content).
-// pa = glyph rect in local units (x, y, w, h); pb = atlas uv (u0, v0, u1, v1).
+// glyph_mask.frag — one glyph's (fill, outer) coverage from an atlas page
+// into the text mask (MAX blending; glyphs union like every other
+// multi-part content). Math: fluent_scene/shared/text_shared.h.
+// pa = glyph tile in local units (x, y, w, h); pb = page uv (u0, v0, u1, v1);
+// px2 = (mode 0 bitmap / 1 SDF, px_range, dilate_fill px, dilate_outer px).
 
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "push_common.glsl"
+#include "fluent_scene/shared/text_shared.h"
 
 // Separated texture/sampler (WGSL has no combined form; Vulkan is
 // fine with either) — the define keeps every call site unchanged.
@@ -12,18 +15,21 @@ layout(set = 0, binding = 0) uniform texture2D atlas_tex_t;
 layout(set = 0, binding = 1) uniform sampler atlas_tex_s;
 #define atlas_tex sampler2D(atlas_tex_t, atlas_tex_s)
 
-layout(location = 0) out float o_cov;
+layout(location = 0) out vec2 o_cov;
 
 void main() {
     vec2 local = u_local(gl_FragCoord.xy);
     vec2 f = (local - u.pa.xy) / u.pa.zw;
     if (f.x < 0.0 || f.y < 0.0 || f.x >= 1.0 || f.y >= 1.0) {
-        o_cov = 0.0;
+        o_cov = vec2(0.0);
         return;
     }
     vec2 uv = u.pb.xy + f * (u.pb.zw - u.pb.xy);
     // textureLod, not texture: the early-out above is per-fragment control
-    // flow, and WGSL forbids implicit-derivative sampling there. The atlas
-    // has one mip, so lod 0 is the same picture on every backend.
-    o_cov = textureLod(atlas_tex, uv, 0.0).r;
+    // flow, and WGSL forbids implicit-derivative sampling there. Pages have
+    // one mip; the SDF antialiasing width comes from px2.y instead of
+    // derivatives, so it is identical on every backend.
+    float v = textureLod(atlas_tex, uv, 0.0).r;
+    o_cov = vec2(text_coverage(v, u.px2.x, u.px2.y, u.px2.z),
+                 text_coverage(v, u.px2.x, u.px2.y, u.px2.w));
 }
