@@ -1,0 +1,47 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>fluent_scene text probe</title>
+<canvas id="gpu"></canvas>
+<script type="module">
+// Renders one probe scene with the wasm build on WebGPU (offscreen
+// readback) and the wasm CPU renderer; returns both as PNG data URLs.
+// ?dist=<dir with fluent_scene.mjs>&scene=<.fvs url>. Driven by
+// probe_web.mjs; also usable by hand.
+const q = new URLSearchParams(location.search);
+const dist = q.get('dist') || '/wasm/dist';
+async function toPng(px, w, h, stride) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const img = new ImageData(w, h);
+  for (let y = 0; y < h; y++) img.data.set(px.subarray(y * stride, y * stride + w * 4), y * w * 4);
+  c.getContext('2d').putImageData(img, 0, 0);
+  return c.toDataURL('image/png');
+}
+window.probe = async () => {
+  const { default: create } = await import(dist + '/fluent_scene.mjs');
+  const mod = await create({ locateFile: (f) => dist + '/' + f });
+  const c = (n, r, a) => mod.cwrap(n, r, a);
+  const yaml = await (await fetch(q.get('scene'))).text();
+  const inst = c('fs_create', 'number', ['number'])(mod.stringToNewUTF8(yaml));
+  if (!inst) return { error: c('fs_error', 'string', [])() };
+  const w = c('fs_stage_width', 'number', ['number'])(inst), h = c('fs_stage_height', 'number', ['number'])(inst);
+  const out = { w, h };
+  let t0 = performance.now();
+  const p = c('fs_render', 'number', ['number', 'number', 'number', 'number'])(inst, 0, w, h);
+  out.cpu_ms = performance.now() - t0;
+  out.cpu = await toPng(mod.HEAPU8.subarray(p, p + h * w * 4), w, h, w * 4);
+  if (mod._fs_webgpu_init && navigator.gpu) {
+    c('fs_webgpu_init', null, ['string'])('#gpu');
+    const st = c('fs_webgpu_status', 'number', []);
+    t0 = performance.now();
+    while (st() === 0 && performance.now() - t0 < 8000) await new Promise((r) => setTimeout(r, 30));
+    if (st() !== 1) { out.gpu_error = c('fs_webgpu_error', 'string', [])(); return out; }
+    if (!c('fs_webgpu_read_begin', 'number', ['number', 'number', 'number', 'number'])(inst, 0, w, h)) { out.gpu_error = 'read_begin'; return out; }
+    const read = c('fs_webgpu_read_pixels', 'number', []);
+    let px = 0; t0 = performance.now();
+    while (!(px = read()) && performance.now() - t0 < 8000) await new Promise((r) => setTimeout(r, 20));
+    if (!px) { out.gpu_error = 'readback timeout'; return out; }
+    out.gpu = await toPng(mod.HEAPU8.subarray(px, px + h * w * 4), w, h, w * 4);
+  }
+  return out;
+};
+</script>

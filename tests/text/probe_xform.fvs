@@ -1,0 +1,31 @@
+schema: fluent.scene/v1alpha2
+stage: { size: [1200, 760] }
+layers:
+  - content: { rect: { size: [1200, 760], color: [0.07, 0.08, 0.1, 1] } }
+  - position: [40, 60]
+    rotation: 8
+    sublayers:
+    - content: { text: { text: "14px 回転 Rotate 42.5", position: [0, 0], size: 14, align: left, color: [1, 1, 1, 1] } }
+  - position: [400, 90]
+    rotation: -12
+    sublayers:
+    - content: { text: { text: "26px 回転 Rotate 42.5", position: [0, 0], size: 26, align: left, color: [1, 1, 1, 1] } }
+  - position: [760, 120]
+    rotation: 20
+    sublayers:
+    - content: { text: { text: "48px 回転 Rotate 42.5", position: [0, 0], size: 48, align: left, color: [1, 1, 1, 1] } }
+  - position: [40, 230]
+    scale: [2, 2]
+    sublayers:
+    - content: { text: { text: "12px×2 速度 88", position: [0, 0], size: 12, align: left, color: [0.95, 0.9, 0.6, 1] } }
+  - position: [40, 380]
+    scale: [4, 4]
+    sublayers:
+    - content: { text: { text: "12px×4 速度 88", position: [0, 0], size: 12, align: left, color: [0.95, 0.9, 0.6, 1] } }
+  - position: [40, 530]
+    scale: [8, 8]
+    sublayers:
+    - content: { text: { text: "12px×8 速度 88", position: [0, 0], size: 12, align: left, color: [0.95, 0.9, 0.6, 1] } }
+  - content: { text: { text: "111.1", position: [1150, 300], size: 120, align: right, color: [0.4, 0.9, 1, 1] } }
+  - content: { text: { text: "888.8", position: [1150, 430], size: 120, align: right, color: [0.4, 0.9, 1, 1] } }
+  - content: { text: { text: "123.4", position: [1150, 560], size: 120, align: right, color: [0.4, 0.9, 1, 1] } }

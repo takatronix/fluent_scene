@@ -1,7 +1,8 @@
 // fvsc — the Fluent Scene compiler CLI (§13).
 //
 //   fvsc validate <scene.fvs>            type-check + design lints + digest
-//   fvsc preview  <scene.fvs> [-o out.ppm] [--size WxH]   compile and render
+//   fvsc preview  <scene.fvs> [-o out.ppm] [--size WxH] [--renderer=vulkan]
+//                                        compile and render (CPU by default)
 //   fvsc fmt      <scene.fvs> [-i]       canonical form (§13-8)
 //   fvsc digest   <scene.fvs>            canonical digest only
 //   fvsc describe --json                 capability catalog (§13-1)
@@ -12,10 +13,15 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <memory>
+#include <stdexcept>
 #include <sstream>
 #include <string>
 
 #include "fluent_scene/cpu_renderer.hpp"
+#ifdef FS_HAVE_VULKAN
+#include "fluent_scene/vulkan_renderer.hpp"
+#endif
 #include "fluent_scene/fvs/compiler.hpp"
 #include "fluent_scene/fvs/document.hpp"
 #include "fluent_scene/fvs/linter.hpp"
@@ -29,7 +35,7 @@ int usage() {
     std::fprintf(stderr,
                  "usage:\n"
                  "  fvsc validate <scene.fvs> [--strict]\n"
-                 "  fvsc preview  <scene.fvs> [-o out.ppm] [--size WxH]\n"
+                 "  fvsc preview  <scene.fvs> [-o out.ppm] [--size WxH] [--renderer=vulkan]\n"
                  "  fvsc fmt      <scene.fvs> [-i]\n"
                  "  fvsc digest   <scene.fvs>\n"
                  "  fvsc describe --json\n");
@@ -105,7 +111,8 @@ int cmdValidate(const std::string& path, bool strict) {
     return 0;
 }
 
-int cmdPreview(const std::string& path, const std::string& out_path, uint32_t w, uint32_t h) {
+int cmdPreview(const std::string& path, const std::string& out_path, uint32_t w, uint32_t h,
+               bool vulkan) {
     std::string text;
     if (!readFile(path, text)) {
         return 2;
@@ -121,9 +128,27 @@ int cmdPreview(const std::string& path, const std::string& out_path, uint32_t w,
         return 1;
     }
     Stage& stage = compiled.scene->stage();
-    CpuRenderer renderer;
-    const Surface& frame = (w != 0 && h != 0) ? renderer.render(stage, w, h, 0.0f)
-                                              : renderer.render(stage, 0.0f);
+    std::unique_ptr<Renderer> renderer;
+#ifdef FS_HAVE_VULKAN
+    if (vulkan) {
+        try {
+            renderer = std::make_unique<VulkanRenderer>();
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "fvsc: %s\n", e.what());
+            return 2;
+        }
+    }
+#else
+    if (vulkan) {
+        std::fprintf(stderr, "fvsc: built without the Vulkan backend\n");
+        return 2;
+    }
+#endif
+    if (!renderer) {
+        renderer = std::make_unique<CpuRenderer>();
+    }
+    const Surface& frame = (w != 0 && h != 0) ? renderer->render(stage, w, h, 0.0f)
+                                              : renderer->render(stage, 0.0f);
     if (!writePpm(frame, out_path)) {
         return 2;
     }
@@ -206,8 +231,13 @@ int main(int argc, char** argv) {
     if (cmd == "preview") {
         std::string out_path = "preview.ppm";
         uint32_t w = 0, h = 0;
+        bool vulkan = false;
         for (int i = 3; i < argc; ++i) {
-            if (std::strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+            if (std::strcmp(argv[i], "--renderer=vulkan") == 0) {
+                vulkan = true;
+            } else if (std::strcmp(argv[i], "--renderer=cpu") == 0) {
+                vulkan = false;
+            } else if (std::strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
                 out_path = argv[++i];
             } else if (std::strcmp(argv[i], "--size") == 0 && i + 1 < argc) {
                 unsigned pw = 0, ph = 0;
@@ -220,7 +250,7 @@ int main(int argc, char** argv) {
                 return usage();
             }
         }
-        return cmdPreview(path, out_path, w, h);
+        return cmdPreview(path, out_path, w, h, vulkan);
     }
     if (cmd == "fmt") {
         bool in_place = false;

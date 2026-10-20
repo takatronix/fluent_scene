@@ -1,0 +1,12 @@
+schema: fluent.scene/v1alpha2
+stage: { size: [2200, 1180] }
+layers:
+  - content: { rect: { size: [2200, 1180], color: [0.06, 0.07, 0.09, 1] } }
+  - content: { text: { text: "10px Hamburgefonstiv 0123456789 あいうえお カタカナ 漢字表示速度", position: [12, 12], size: 10, align: left, color: [0.95, 0.96, 0.98, 1] } }
+  - content: { text: { text: "14px Hamburgefonstiv 0123456789 あいうえお カタカナ 漢字表示速度", position: [12, 33], size: 14, align: left, color: [0.95, 0.96, 0.98, 1] } }
+  - content: { text: { text: "20px Hamburgefonstiv 0123456789 あいうえお カタカナ 漢字表示速度", position: [12, 60], size: 20, align: left, color: [0.95, 0.96, 0.98, 1] } }
+  - content: { text: { text: "26px Hamburgefonstiv 0123456789 あいうえお カタカナ 漢字表示速度", position: [12, 96], size: 26, align: left, color: [0.95, 0.96, 0.98, 1] } }
+  - content: { text: { text: "40px Hamburgefonstiv 0123456789 あいうえお カタカナ 漢字表示速度", position: [12, 141], size: 40, align: left, color: [0.95, 0.96, 0.98, 1] } }
+  - content: { text: { text: "72px Hamburgefonstiv 0123456789 あいうえお カタカナ 漢字表示速度", position: [12, 207], size: 72, align: left, color: [0.95, 0.96, 0.98, 1] } }
+  - content: { text: { text: "160px Ag8 漢あ", position: [12, 321], size: 160, align: left, color: [0.95, 0.96, 0.98, 1] } }
+  - content: { text: { text: "300px Ag8 漢あ", position: [12, 551], size: 300, align: left, color: [0.95, 0.96, 0.98, 1] } }
