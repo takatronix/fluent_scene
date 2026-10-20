@@ -374,6 +374,205 @@ int fs_layer_set_text(FsInstance* inst, const char* layer_id, const char* utf8) 
     return 1;
 }
 
+// ---- text (docs/api/text.ja.md) ---------------------------------------------
+
+namespace {
+
+// Compiles `{ text map }` (the Scene text content vocabulary, flow YAML) as
+// a one-layer document; nullptr + g_error on rejection.
+std::unique_ptr<fvs::CompiledScene> compileTextMap(const char* map, Layer*& layer) {
+    layer = nullptr;
+    const std::string doc = std::string("schema: fluent.scene/v1alpha2\nlayers:\n  - id: t\n    "
+                                        "content: { text: ") +
+                            (map != nullptr && *map != 0 ? map : "{ text: \"\" }") + " }\n";
+    fvs::ParseResult parsed = fvs::parseScene(doc);
+    if (!parsed.ok()) {
+        for (const auto& d : parsed.diagnostics.items()) {
+            g_error += "[" + d.code + "] " + d.message + "\n";
+        }
+        return nullptr;
+    }
+    fvs::CompileResult compiled = fvs::compile(parsed.doc);
+    if (!compiled.ok()) {
+        for (const auto& d : compiled.diagnostics.items()) {
+            g_error += "[" + d.code + "] " + d.message + "\n";
+        }
+        return nullptr;
+    }
+    layer = compiled.scene->stage().find("t");
+    return std::move(compiled.scene);
+}
+
+std::string num(float v) {
+    char b[32];
+    std::snprintf(b, sizeof b, "%.3f", v);
+    std::string s(b);
+    while (!s.empty() && s.back() == '0') {
+        s.pop_back();
+    }
+    if (!s.empty() && s.back() == '.') {
+        s.pop_back();
+    }
+    return s == "-0" ? "0" : s;
+}
+
+std::string rectJson(const Rect& r) {
+    return "[" + num(r.x) + "," + num(r.y) + "," + num(r.w) + "," + num(r.h) + "]";
+}
+
+std::string metricsJson(const TextMetrics& m) {
+    std::string widths = "[";
+    for (size_t i = 0; i < m.line_widths.size(); ++i) {
+        widths += (i != 0 ? "," : "") + num(m.line_widths[i]);
+    }
+    widths += "]";
+    return "{\"box\":" + rectJson(m.box) + ",\"ink\":" + rectJson(m.ink) +
+           ",\"baseline\":" + num(m.baseline) + ",\"ascent\":" + num(m.ascent) +
+           ",\"descent\":" + num(m.descent) + ",\"line_height\":" + num(m.line_height) +
+           ",\"size\":" + num(m.size) + ",\"lines\":" + std::to_string(m.lines) +
+           ",\"truncated\":" + (m.truncated ? "true" : "false") + ",\"line_widths\":" + widths +
+           "}";
+}
+
+}  // namespace
+
+/// Registers a font for the whole module: `data`/`size` are the bytes of a
+/// TTF/OTF/TTC the page fetched (copied; free them afterwards). `family` is
+/// the name Scene `font:` uses ("sans" replaces/extends the default).
+/// Returns 1 on success.
+EMSCRIPTEN_KEEPALIVE
+int fs_register_font(const char* family, int weight, int italic, const uint8_t* data, int size) {
+    return registerFontData(family != nullptr ? family : "", data,
+                            size > 0 ? static_cast<size_t>(size) : 0, weight > 0 ? weight : 400,
+                            italic != 0)
+               ? 1
+               : 0;
+}
+
+/// The known font families, one per line.
+EMSCRIPTEN_KEEPALIVE
+const char* fs_font_families() {
+    static std::string out;
+    out.clear();
+    for (const std::string& f : fontFamilies()) {
+        out += f + "\n";
+    }
+    return out.c_str();
+}
+
+/// Measures text without a layer: `text_map` is a text content in flow
+/// YAML — `{ text: "88.5", size: 64, weight: 700, max_width: 300 }` — the
+/// same fields a Scene `content: { text: ... }` takes. Returns JSON
+/// {box, ink, baseline, ascent, descent, line_height, size, lines,
+/// truncated, line_widths} in logical units, or "" (fs_error()) on a bad map.
+EMSCRIPTEN_KEEPALIVE
+const char* fs_measure_text(FsInstance* inst, const char* text_map) {
+    g_error.clear();
+    static std::string out;
+    out.clear();
+    Layer* layer = nullptr;
+    auto scene = compileTextMap(text_map, layer);
+    if (scene == nullptr || layer == nullptr) {
+        return out.c_str();
+    }
+    const Stage& stage = inst != nullptr ? inst->scene->stage() : scene->stage();
+    out = metricsJson(stage.textMetrics(*layer));
+    return out.c_str();
+}
+
+/// Metrics (JSON, as fs_measure_text) of the text layer `layer_id` as it is
+/// now; "" when the id is unknown or not text.
+EMSCRIPTEN_KEEPALIVE
+const char* fs_layer_text_metrics(FsInstance* inst, const char* layer_id) {
+    static std::string out;
+    out.clear();
+    Layer* target = inst != nullptr ? inst->scene->stage().find(layer_id) : nullptr;
+    if (target == nullptr || !std::holds_alternative<TextContent>(target->content())) {
+        return out.c_str();
+    }
+    out = metricsJson(inst->scene->stage().textMetrics(*target));
+    return out.c_str();
+}
+
+/// Restyles the text layer `layer_id` from a flow-YAML text map (any text
+/// content fields: size, weight, outline_width, max_width, spans, ...;
+/// `color` and `glow_*` style the layer). Fields the map omits keep their
+/// current value — except that `text` / `spans` / `position` are only
+/// replaced when given. Cheap enough per frame; returns 0 for an unknown
+/// id or a bad map (fs_error()).
+EMSCRIPTEN_KEEPALIVE
+int fs_layer_set_text_style(FsInstance* inst, const char* layer_id, const char* text_map) {
+    g_error.clear();
+    Layer* target = inst != nullptr ? inst->scene->stage().find(layer_id) : nullptr;
+    if (target == nullptr || !std::holds_alternative<TextContent>(target->content())) {
+        return 0;
+    }
+    // Parse the map against the current content: start from a document
+    // carrying only the map, then copy the fields it set.
+    Layer* parsed = nullptr;
+    std::string map = text_map != nullptr ? text_map : "{}";
+    const auto given = [&](const char* key) {
+        const std::string k = std::string(key) + ":";
+        size_t at = map.find(k);
+        while (at != std::string::npos) {
+            const char before = at == 0 ? ' ' : map[at - 1];
+            if (before == ' ' || before == '{' || before == ',' || before == '\n') {
+                return true;
+            }
+            at = map.find(k, at + 1);
+        }
+        return false;
+    };
+    std::string with_text = map;
+    // compileTextMap needs exactly one of text / spans: add a placeholder.
+    const size_t brace = with_text.find('{');
+    if (!given("text") && !given("spans") && brace != std::string::npos) {
+        with_text.insert(brace + 1, map.find(':') != std::string::npos ? " text: \"\"," : " text: \"\"");
+    }
+    auto scene = compileTextMap(with_text.c_str(), parsed);
+    if (scene == nullptr || parsed == nullptr) {
+        return 0;
+    }
+    const TextContent& src = std::get<TextContent>(parsed->content());
+    const TextContent cur = std::get<TextContent>(target->content());
+    TextContent next = cur;
+    if (given("text")) { next.utf8 = src.utf8; next.spans.clear(); }
+    if (given("spans")) { next.spans = src.spans; }
+    if (given("position")) { next.position = src.position; }
+    if (given("size") || given("size_pt")) { next.size = src.size; }
+    if (given("align")) { next.align = src.align; }
+    if (given("vertical_align")) { next.valign = src.valign; }
+    if (given("font")) { next.font = src.font; }
+    if (given("weight")) { next.weight = src.weight; }
+    if (given("italic")) { next.italic = src.italic; }
+    if (given("letter_spacing")) { next.letter_spacing = src.letter_spacing; }
+    if (given("line_height")) { next.line_height = src.line_height; }
+    if (given("tabular")) { next.tabular = src.tabular; }
+    if (given("max_width")) { next.max_width = src.max_width; }
+    if (given("max_height")) { next.max_height = src.max_height; }
+    if (given("wrap")) { next.wrap = src.wrap; }
+    if (given("max_lines")) { next.max_lines = src.max_lines; }
+    if (given("ellipsis")) { next.ellipsis = src.ellipsis; }
+    if (given("min_size")) { next.min_size = src.min_size; }
+    if (given("outline_width") || given("outline_color") || given("outline_position")) {
+        next.outline = src.outline;
+    }
+    if (given("gradient_from") || given("gradient_to") || given("gradient_angle")) {
+        next.gradient = src.gradient;
+    }
+    Layer& t = *target;
+    t.setTextContent(next);
+    if (given("color")) {
+        t.color(parsed->colorValue());
+    }
+    if (given("glow_radius") || given("glow_color")) {
+        if (parsed->shadowValue()) {
+            t.shadow(*parsed->shadowValue());
+        }
+    }
+    return 1;
+}
+
 /// Grafts the layers of a Scene fragment (`layers:` plus optional
 /// `inputs:` / `params:` — see docs/design/runtime_layers.ja.md) under the
 /// declared layer `parent_id` ("" = the stage root), on top of its

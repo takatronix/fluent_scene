@@ -97,6 +97,7 @@ em++ -O2 -std=c++17 -msimd128 -I include -I src \
   -sALLOW_MEMORY_GROWTH=1 \
   -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createFluentScene \
   -sEXPORTED_RUNTIME_METHODS=cwrap,HEAPU8,HEAPF32,stringToNewUTF8 \
+  -sEXPORTED_FUNCTIONS=_malloc,_free \
   -sENVIRONMENT=web,node \
   -o wasm/dist/fluent_scene.mjs
 # OFL 1.1 §2: each copy of the font travels with its copyright and license.

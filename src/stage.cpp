@@ -819,6 +819,19 @@ Layer& Layer::textGradient(Color from, Color to, float angle_deg) {
     return *this;
 }
 
+Layer& Layer::setTextContent(const TextContent& content) {
+    if (std::holds_alternative<TextContent>(content_)) {
+        const std::string utf8 = content.utf8;
+        const std::vector<TextSpan> runs = content.spans;
+        content_ = content;
+        setText(utf8);
+        spans(runs);
+    } else {
+        warn("setTextContent() applies to text content only");
+    }
+    return *this;
+}
+
 Layer& Layer::spans(const std::vector<TextSpan>& spans) {
     if (auto* c = std::get_if<TextContent>(&content_)) {
         c->spans = spans;

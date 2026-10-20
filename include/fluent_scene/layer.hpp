@@ -372,6 +372,9 @@ public:
     /// Replaces the text (text content only). Cheap: the layout re-shapes
     /// the string; glyphs already in the atlas are not rasterized again.
     Layer& setText(const std::string& utf8);
+    /// Replaces the whole text content — text, spans and every style field
+    /// (text content only; same byte limits as setText / setSpans).
+    Layer& setTextContent(const TextContent& content);
     /// Replaces the rich-text spans (text content only).
     Layer& setSpans(const std::vector<TextSpan>& spans) { return this->spans(spans); }
     /// Replaces the points (polyline / polygon / circles content).
