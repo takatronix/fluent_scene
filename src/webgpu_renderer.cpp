@@ -853,6 +853,39 @@ struct WebGPURenderer::Impl {
         return transient_pool.back().get();
     }
 
+    // A coverage mask: any free texture of the format at least w×h (the
+    // smallest, at most 4× the bucketed area), else a new one of the bucketed
+    // size. The mask's pixels are its top-left w×h; the rest stays cleared,
+    // so compositing over the whole texture (maskRect) adds nothing there.
+    Tex* acquireMask(int w, int h, WGPUTextureFormat format) {
+        const int bw = plan::maskBucket(w), bh = plan::maskBucket(h);
+        Tex* best = nullptr;
+        for (auto& t : transient_pool) {
+            if (!t->in_use && t->format == format && t->w >= w && t->h >= h &&
+                static_cast<int64_t>(t->w) * t->h <= 4LL * bw * bh &&
+                (best == nullptr || static_cast<int64_t>(t->w) * t->h <
+                                        static_cast<int64_t>(best->w) * best->h)) {
+                best = t.get();
+            }
+        }
+        if (best != nullptr) {
+            best->in_use = true;
+            best->needs_clear = true;
+            best->frame_used = frame_counter;
+            return best;
+        }
+        return acquireTransient(bw, bh, format);
+    }
+
+    // A mask is free again once its composite is recorded: the next mask's
+    // pass comes later in the same encoder (endTarget before every acquire),
+    // so one texture serves many masks in a frame.
+    static void releaseMask(Tex* t) { t->in_use = false; }
+
+    static IRect maskRect(const IRect& box, const Tex& mask) {
+        return {box.x0, box.y0, box.x0 + mask.w, box.y0 + mask.h};
+    }
+
     void releaseAllTransients() {
         for (auto& t : transient_pool) {
             t->in_use = false;
@@ -1036,8 +1069,8 @@ struct WebGPURenderer::Impl {
             return false;
         }
         endTarget();
-        ctx.mask = acquireTransient(ctx.box.x1 - ctx.box.x0, ctx.box.y1 - ctx.box.y0,
-                                    WGPUTextureFormat_R16Float);
+        ctx.mask = acquireMask(ctx.box.x1 - ctx.box.x0, ctx.box.y1 - ctx.box.y0,
+                               WGPUTextureFormat_R16Float);
         ctx.inv_for_mask = inv * Mat23::translation({static_cast<float>(ctx.box.x0),
                                                      static_cast<float>(ctx.box.y0)});
         ctx.aa = aa;
@@ -1100,13 +1133,14 @@ struct WebGPURenderer::Impl {
         endTarget();
         ensureTarget(target);
         Push push{};
-        setRect(push, ctx.box);
+        setRect(push, maskRect(ctx.box, *ctx.mask));
         push.meta[0] = static_cast<float>(target.w);
         push.meta[1] = static_cast<float>(target.h);
         push.pa[0] = fold_alpha;
         setColor(push, color);
         drawQuad(pipe_mask_comp[blendIndex(blend)], texGroup(ctx.mask->view, sampler_nearest),
                  push);
+        releaseMask(ctx.mask);
     }
 
     void drawRoundedRect(Tex& target, Rect r, float corner, float stroke_w, const Mat23& m,
@@ -1163,8 +1197,8 @@ struct WebGPURenderer::Impl {
                 continue;
             }
             endTarget();
-            mask.mask = acquireTransient(mask.box.x1 - mask.box.x0, mask.box.y1 - mask.box.y0,
-                                         WGPUTextureFormat_RG16Float);
+            mask.mask = acquireMask(mask.box.x1 - mask.box.x0, mask.box.y1 - mask.box.y0,
+                                    WGPUTextureFormat_RG16Float);
             mask.inv_for_mask = inv * Mat23::translation({static_cast<float>(mask.box.x0),
                                                           static_cast<float>(mask.box.y0)});
             mask.aa = 1.0f / scale;
@@ -1177,7 +1211,7 @@ struct WebGPURenderer::Impl {
             endTarget();
             ensureTarget(target);
             Push push{};
-            setRect(push, mask.box);
+            setRect(push, maskRect(mask.box, *mask.mask));
             push.meta[0] = static_cast<float>(target.w);
             push.meta[1] = static_cast<float>(target.h);
             push.meta[2] = alpha;
@@ -1199,6 +1233,7 @@ struct WebGPURenderer::Impl {
             setColor(push, group.fill);
             drawQuad(pipe_text_comp[blendIndex(blend)],
                      texGroup(mask.mask->view, sampler_nearest), push);
+            releaseMask(mask.mask);
         }
     }
 
@@ -1760,6 +1795,11 @@ struct WebGPURenderer::Impl {
             std::remove_if(transient_pool.begin(), transient_pool.end(),
                            [&](std::unique_ptr<Tex>& t) {
                                if (t->in_use || t->frame_used + kTransientGraceFrames >= frame_counter) return false;
+                               // destroy, not just release: in the browser a released
+                               // texture keeps its memory until the JS GC runs
+                               // (thousands piled up, then the device was lost); its
+                               // last use was in a frame already submitted
+                               wgpuTextureDestroy(t->tex);
                                destroyTex(*t);
                                return true;
                            }),

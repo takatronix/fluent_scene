@@ -231,6 +231,7 @@ struct WebGLRenderer::Impl {
     struct Cmd {
         enum Kind { Target, Draw } kind = Draw;
         GLuint fbo = 0;          // Target: 0 = the canvas's own framebuffer
+        GLuint target_tex = 0;   // Target: its texture (unbound from the units first)
         bool clear = false;
         int vp_w = 0, vp_h = 0;
         const Pipe* pipe = nullptr;
@@ -556,6 +557,7 @@ struct WebGLRenderer::Impl {
         Cmd c;
         c.kind = Cmd::Target;
         c.fbo = img.fbo;
+        c.target_tex = img.tex;
         c.clear = img.needs_clear;
         c.vp_w = img.w;
         c.vp_h = img.h;
@@ -623,6 +625,41 @@ struct WebGLRenderer::Impl {
         transient_pool.back()->needs_clear = true;
         transient_pool.back()->frame_used = frame_counter;
         return transient_pool.back().get();
+    }
+
+    // A coverage mask: any free texture of the format at least w×h (the
+    // smallest, at most 4× the bucketed area), else a new one of the bucketed
+    // size. The mask's pixels are its top-left w×h; the rest stays cleared,
+    // so compositing over the whole texture (maskRect) adds nothing there.
+    Tex* acquireMask(int w, int h, Fmt format) {
+        const int bw = plan::maskBucket(w), bh = plan::maskBucket(h);
+        Tex* best = nullptr;
+        for (auto& t : transient_pool) {
+            if (!t->in_use && t->format == format && t->w >= w && t->h >= h &&
+                static_cast<int64_t>(t->w) * t->h <= 4LL * bw * bh &&
+                (best == nullptr || static_cast<int64_t>(t->w) * t->h <
+                                        static_cast<int64_t>(best->w) * best->h)) {
+                best = t.get();
+            }
+        }
+        if (best != nullptr) {
+            best->in_use = true;
+            best->needs_clear = true;
+            best->frame_used = frame_counter;
+            return best;
+        }
+        return acquireTransient(bw, bh, format);
+    }
+
+    // A mask is free again once its composite is recorded: the replay runs the
+    // commands in order (the next mask's Target, with its clear, comes after
+    // this composite), so one texture serves many masks in a frame — and the
+    // frame no longer creates a texture + framebuffer (+ a status check that
+    // stalls) for every moving needle and counting number.
+    static void releaseMask(Tex* t) { t->in_use = false; }
+
+    static IRect maskRect(const IRect& box, const Tex& mask) {
+        return {box.x0, box.y0, box.x0 + mask.w, box.y0 + mask.h};
     }
 
     void releaseAllTransients() {
@@ -790,8 +827,7 @@ struct WebGLRenderer::Impl {
             return false;
         }
         endTarget();
-        ctx.mask = acquireTransient(ctx.box.x1 - ctx.box.x0, ctx.box.y1 - ctx.box.y0,
-                                    Fmt::R16F);
+        ctx.mask = acquireMask(ctx.box.x1 - ctx.box.x0, ctx.box.y1 - ctx.box.y0, Fmt::R16F);
         ctx.inv_for_mask = inv * Mat23::translation({static_cast<float>(ctx.box.x0),
                                                      static_cast<float>(ctx.box.y0)});
         ctx.aa = aa;
@@ -854,13 +890,14 @@ struct WebGLRenderer::Impl {
         endTarget();
         ensureTarget(target);
         Push push{};
-        setRect(push, ctx.box);
+        setRect(push, maskRect(ctx.box, *ctx.mask));
         push.meta[0] = static_cast<float>(target.w);
         push.meta[1] = static_cast<float>(target.h);
         push.pa[0] = fold_alpha;
         setColor(push, color);
         drawQuad(pipe_mask_comp[blendIndex(blend)], texGroup(ctx.mask, sampler_nearest),
                  push);
+        releaseMask(ctx.mask);
     }
 
     void drawRoundedRect(Tex& target, Rect r, float corner, float stroke_w, const Mat23& m,
@@ -917,8 +954,8 @@ struct WebGLRenderer::Impl {
                 continue;
             }
             endTarget();
-            mask.mask = acquireTransient(mask.box.x1 - mask.box.x0, mask.box.y1 - mask.box.y0,
-                                         Fmt::RG16F);
+            mask.mask = acquireMask(mask.box.x1 - mask.box.x0, mask.box.y1 - mask.box.y0,
+                                    Fmt::RG16F);
             mask.inv_for_mask = inv * Mat23::translation({static_cast<float>(mask.box.x0),
                                                           static_cast<float>(mask.box.y0)});
             mask.aa = 1.0f / scale;
@@ -931,7 +968,7 @@ struct WebGLRenderer::Impl {
             endTarget();
             ensureTarget(target);
             Push push{};
-            setRect(push, mask.box);
+            setRect(push, maskRect(mask.box, *mask.mask));
             push.meta[0] = static_cast<float>(target.w);
             push.meta[1] = static_cast<float>(target.h);
             push.meta[2] = alpha;
@@ -953,6 +990,7 @@ struct WebGLRenderer::Impl {
             setColor(push, group.fill);
             drawQuad(pipe_text_comp[blendIndex(blend)],
                      texGroup(mask.mask, sampler_nearest), push);
+            releaseMask(mask.mask);
         }
     }
 
@@ -1606,6 +1644,19 @@ struct WebGLRenderer::Impl {
                 break;
             }
             if (c.kind == Cmd::Target) {
+                // A mask is reused within the frame: the texture the last
+                // composite sampled may be this target now — never leave it
+                // bound for sampling (a feedback loop) while drawing into it.
+                for (int u = 0; u < 3; ++u) {
+                    if (c.target_tex != 0 && unit_tex[u] == c.target_tex) {
+                        if (active_unit_cache != u) {
+                            glActiveTexture(GL_TEXTURE0 + u);
+                            active_unit_cache = u;
+                        }
+                        glBindTexture(GL_TEXTURE_2D, 0);
+                        unit_tex[u] = 0;
+                    }
+                }
                 glBindFramebuffer(GL_FRAMEBUFFER, c.fbo);
                 glViewport(0, 0, c.vp_w, c.vp_h);
                 if (c.clear) {

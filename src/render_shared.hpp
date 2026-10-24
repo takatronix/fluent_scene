@@ -185,6 +185,26 @@ inline bool safeOpacityFold(const Layer& layer) {
     return true;
 }
 
+// Coverage masks (shapes, text) are allocated a little larger than asked —
+// up to the next quarter of a power of two, 16 px at least — so a mask whose
+// box grows or shrinks by a pixel every frame (a needle, a counting number)
+// reuses a pooled texture instead of creating one. Large masks keep their
+// size (they are few, and a padded one could pass the device's limit).
+inline int maskBucket(int v) {
+    if (v <= 16) {
+        return 16;
+    }
+    if (v > 2048) {
+        return v;
+    }
+    int p = 1;
+    while (p < v) {
+        p <<= 1;
+    }
+    const int step = std::max(16, p / 4);
+    return (v + step - 1) / step * step;
+}
+
 inline bool needsOffscreen(const Layer& layer, float opacity) {
     return !layer.filters().empty() || layer.shadowValue().has_value() ||
            layer.maskValue().valid() ||
